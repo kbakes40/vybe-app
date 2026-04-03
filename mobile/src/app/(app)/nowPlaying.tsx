@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, Pressable, Dimensions, Linking, ActivityIndicator } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -23,6 +23,7 @@ import {
   Cloud,
   Plus,
   Download,
+  Check,
 } from 'lucide-react-native';
 import Animated, {
   useSharedValue,
@@ -33,6 +34,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { usePlaybackController } from '@/stores/playbackController';
+import { useDownloadsStore, downloadYouTubeTrack } from '@/stores/downloadsStore';
 import { openInSoundCloud } from '@/lib/soundcloudHandoff';
 import { formatDuration } from '@/data/mockData';
 
@@ -166,20 +168,13 @@ export default function NowPlayingScreen() {
   const isExternalPlayback = isYouTube || isYouTubeMusic;
   const ytVideoId = currentTrack?.youtubeId || currentTrack?.youtubeMusicId || null;
 
+  const isTrackDownloaded = useDownloadsStore(s => s.isTrackDownloaded);
+  const isDownloaded = currentTrack ? isTrackDownloaded(currentTrack.id) : false;
   const [isDownloadPending, setIsDownloadPending] = useState(false);
-  const downloadPendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const playButtonStyle = useAnimatedStyle(() => ({
     transform: [{ scale: playScale.value }],
   }));
-
-  useEffect(() => {
-    return () => {
-      if (downloadPendingTimeoutRef.current) {
-        clearTimeout(downloadPendingTimeoutRef.current);
-      }
-    };
-  }, []);
 
   const handleClose = () => {
     // Light haptic when collapsing full player back to mini player
@@ -262,16 +257,23 @@ export default function NowPlayingScreen() {
     handleOpenExternal();
   }, [handleOpenExternal]);
 
-  const handleDownloadPlaceholder = useCallback(() => {
+  const handleDownload = useCallback(async () => {
+    if (!currentTrack || !ytVideoId || isDownloadPending || isDownloaded) return;
     setIsDownloadPending(true);
-    handleShareTrack();
-    if (downloadPendingTimeoutRef.current) {
-      clearTimeout(downloadPendingTimeoutRef.current);
-    }
-    downloadPendingTimeoutRef.current = setTimeout(() => {
+    try {
+      const result = await downloadYouTubeTrack(
+        currentTrack,
+        process.env.EXPO_PUBLIC_BACKEND_URL!
+      );
+      if (result.success) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (e) {
+      console.error('[NowPlaying] Download failed', e);
+    } finally {
       setIsDownloadPending(false);
-    }, 1800);
-  }, [handleShareTrack]);
+    }
+  }, [currentTrack, ytVideoId, isDownloadPending, isDownloaded]);
 
 
 
@@ -509,16 +511,23 @@ export default function NowPlayingScreen() {
                       </Text>
                     </Pressable>
                     <Pressable
-                      onPress={handleDownloadPlaceholder}
-                      className="flex-row items-center justify-center bg-white/10 rounded-full py-2.5 px-4"
+                      onPress={handleDownload}
+                      disabled={isDownloadPending || isDownloaded}
+                      className="flex-row items-center justify-center rounded-full py-2.5 px-4"
+                      style={{ backgroundColor: isDownloaded ? 'rgba(34,197,94,0.2)' : 'rgba(255,255,255,0.1)' }}
                     >
                       {isDownloadPending ? (
                         <ActivityIndicator size="small" color="#fff" />
+                      ) : isDownloaded ? (
+                        <Check size={16} color="#22c55e" />
                       ) : (
                         <Download size={16} color="#fff" />
                       )}
-                      <Text className="text-white text-sm font-medium ml-2">
-                        {isDownloadPending ? 'Downloading...' : 'Download'}
+                      <Text
+                        className="text-sm font-medium ml-2"
+                        style={{ color: isDownloaded ? '#22c55e' : '#fff' }}
+                      >
+                        {isDownloadPending ? 'Downloading...' : isDownloaded ? 'Downloaded' : 'Download'}
                       </Text>
                     </Pressable>
                   </View>
