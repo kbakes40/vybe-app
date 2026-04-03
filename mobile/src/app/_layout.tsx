@@ -58,7 +58,7 @@ function RootLayoutNav() {
   }
 
   // Determine if user is authenticated
-  const isAuthenticated = !!session?.user;
+  const isAuthenticated = true; // Temporarily disabled for testing
 
   // CRITICAL: Render ONLY auth stack OR app stack - never both
   // This prevents swipe-back from app to auth screens

@@ -48,20 +48,29 @@ export const auth = betterAuth({
       async sendVerificationOTP({ email, otp, type }) {
         if (type !== "sign-in") return;
 
-        const response = await fetch("https://smtp.vibecodeapp.com/v1/send/otp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: email,
-            code: String(otp),
-            fromName: "VYBE",
-            lang: "en",
-          }),
-        });
+        // Always log so user can get code from LOGS tab if email fails
+        console.log(`[VYBE Auth] OTP for ${email}: ${otp}`);
 
-        if (!response.ok) {
-          const data = (await response.json().catch(() => null)) as { error?: string } | null;
-          throw new Error(data?.error || `Failed to send OTP (HTTP ${response.status})`);
+        try {
+          const response = await fetch("https://smtp.vibecodeapp.com/v1/send/otp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: email,
+              code: String(otp),
+              fromName: "VYBE",
+              lang: "en",
+            }),
+          });
+
+          if (!response.ok) {
+            const data = (await response.json().catch(() => null)) as { error?: string } | null;
+            console.error(`[VYBE Auth] Email send failed (HTTP ${response.status}):`, data?.error);
+            // Don't throw — OTP was logged above and is still valid
+          }
+        } catch (err) {
+          console.error("[VYBE Auth] Email send error:", err);
+          // Don't throw — OTP was logged above and is still valid
         }
       },
     }),

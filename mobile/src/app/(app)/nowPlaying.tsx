@@ -342,6 +342,7 @@ export default function NowPlayingScreen() {
                     <YoutubePlayer
                       ref={youtubePlayerRef}
                       height={VIDEO_HEIGHT}
+                      width={VIDEO_WIDTH}
                       videoId={ytVideoId}
                       play={isPlaying}
                       onChangeState={(state: string) => {
@@ -442,6 +443,7 @@ export default function NowPlayingScreen() {
                     <YoutubePlayer
                       ref={youtubePlayerRef}
                       height={VIDEO_HEIGHT}
+                      width={VIDEO_WIDTH}
                       videoId={ytVideoId}
                       play={isPlaying}
                       onChangeState={(state: string) => {
