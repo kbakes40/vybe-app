@@ -4,8 +4,8 @@
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "DARK_MODE=class expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit"
@@ -139,6 +139,7 @@
     "react-native-vision-camera": "^4.6.4",
     "react-native-web": "^0.20.0",
     "react-native-webview": "13.13.5",
+    "react-native-youtube-iframe": "^2.4.1",
     "reanimated-tab-view": "^0.4.0",
     "tailwind-merge": "^3.2.0",
     "tailwindcss": "^3.4.17",

@@ -33,6 +33,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { WebView } from 'react-native-webview';
+import YoutubePlayer from 'react-native-youtube-iframe';
 import { usePlaybackController } from '@/stores/playbackController';
 import { openInSoundCloud } from '@/lib/soundcloudHandoff';
 import { formatDuration } from '@/data/mockData';
@@ -124,6 +125,7 @@ export default function NowPlayingScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const webViewRef = useRef<WebView>(null);
+  const youtubePlayerRef = useRef<any>(null);
 
   const currentTrack = usePlaybackController(s => s.currentTrack);
   const playbackState = usePlaybackController(s => s.playbackState);
@@ -210,7 +212,7 @@ export default function NowPlayingScreen() {
       return;
     }
 
-    if ((isYouTube || isYouTubeMusic) && webViewRef.current) {
+    if (isYouTubeMusic && webViewRef.current) {
       if (isPlaying) {
         webViewRef.current.injectJavaScript('player.pauseVideo(); true;');
       } else {
@@ -228,8 +230,11 @@ export default function NowPlayingScreen() {
     // SoundCloud and YouTube Music are external-only - no seeking
     if (isSoundCloud) return;
 
-    if ((isYouTube || isYouTubeMusic) && webViewRef.current) {
+    if (isYouTubeMusic && webViewRef.current) {
       webViewRef.current.injectJavaScript(`player.seekTo(${value}, true); true;`);
+    }
+    if (isYouTube && youtubePlayerRef.current) {
+      youtubePlayerRef.current.seekTo(value);
     }
     seekTo(value);
   };
@@ -427,7 +432,97 @@ export default function NowPlayingScreen() {
 
             {/* Artwork / Video / Embed */}
             <View className="items-center justify-center flex-1 px-10">
-              {(isYouTube || isYouTubeMusic) && ytVideoId ? (
+              {isYouTube && ytVideoId ? (
+                <View
+                  style={{
+                    width: ARTWORK_SIZE,
+                    height: ARTWORK_SIZE,
+                    borderRadius: 12,
+                    overflow: 'hidden',
+                    backgroundColor: '#000',
+                  }}
+                >
+                  <YoutubePlayer
+                    ref={youtubePlayerRef}
+                    height={ARTWORK_SIZE}
+                    videoId={ytVideoId}
+                    play={isPlaying}
+                    onChangeState={(state) => {
+                      if (state === 'ended') {
+                        setPlaybackState('paused');
+                      } else if (state === 'playing') {
+                        setPlaybackState('playing');
+                      } else if (state === 'paused') {
+                        setPlaybackState('paused');
+                      } else if (state === 'buffering') {
+                        setPlaybackState('buffering');
+                      }
+                    }}
+                    onProgress={(progress) => {
+                      setProgress(progress.currentTime);
+                      if (progress.duration && progress.duration > 0) {
+                        usePlaybackController.setState({ duration: progress.duration });
+                      }
+                    }}
+                    onError={(error) => {
+                      console.log('[YouTube] Player error:', error);
+                      setYtLoadError(true);
+                      setPlaybackState('error');
+                    }}
+                    onReady={() => {
+                      setYtLoadError(false);
+                    }}
+                  />
+                  {/* YouTube Error overlay with fallback */}
+                  {ytLoadError && (
+                    <View
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0, 0, 0, 0.95)',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: 24,
+                      }}
+                    >
+                      <YouTubeIcon size={48} />
+                      <Text className="text-white font-semibold mt-3 text-base">
+                        Playback unavailable in VYBE
+                      </Text>
+                      <Text className="text-white/60 mt-1 text-sm text-center">
+                        This video cannot be played within the app
+                      </Text>
+                      <View className="flex-row mt-6">
+                        <Pressable
+                          onPress={() => {
+                            console.log('[YouTube] User tapped retry');
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            setYtLoadError(false);
+                            // Reload not needed for YoutubePlayer
+                          }}
+                          className="flex-row items-center bg-white/10 rounded-full py-3 px-5 mr-3"
+                        >
+                          <RefreshCw size={16} color="#fff" />
+                          <Text className="text-white text-sm font-medium ml-2">Retry</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                            handleOpenExternal();
+                          }}
+                          className="flex-row items-center bg-[#FF0000] rounded-full py-3 px-5"
+                        >
+                          <ExternalLink size={16} color="#fff" />
+                          <Text className="text-white text-sm font-medium ml-2">Open in YouTube</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              ) : isYouTubeMusic && ytVideoId ? (
                 <View
                   style={{
                     width: ARTWORK_SIZE,
