@@ -56,6 +56,16 @@ export const registerSoundCloudAdapter = (adapter: PlayerAdapter | null) => {
   soundcloudAdapterRef = adapter;
 };
 
+/** YouTube pool registers after IFrame API warms; Home taps can race this. */
+const waitForYouTubeAdapter = async (maxMs: number): Promise<PlayerAdapter | null> => {
+  const started = Date.now();
+  while (Date.now() - started < maxMs) {
+    if (youtubeAdapterRef) return youtubeAdapterRef;
+    await new Promise<void>(resolve => setTimeout(resolve, 100));
+  }
+  return youtubeAdapterRef;
+};
+
 // Initialize audio session with proper settings
 const initializeAudioSession = async (): Promise<void> => {
   if (audioSessionInitialized) return;
@@ -277,18 +287,31 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       silentRetryCount: 0,
     });
 
-    // Get adapter for this source
-    const adapter = getAdapterForSource(source);
+    // Get adapter for this source (YouTube pool may not be registered on first tap)
+    let adapter = getAdapterForSource(source);
+    if ((source === 'youtube' || source === 'youtube_music') && !adapter) {
+      adapter = await waitForYouTubeAdapter(12_000);
+    }
 
     if (adapter) {
-      // External source (YouTube) - adapter handles playback
       try {
         await adapter.prepare(track);
+        // For all sources including YouTube: call play() after prepare().
+        // loadVideoById auto-plays in most cases, but calling playVideo() explicitly
+        // ensures playback starts even if the player was in a cued/stopped state.
+        // The pool HTML's playVideo() is defensive (no-ops if already playing).
         await adapter.play();
+        set({ playbackState: 'playing' });
       } catch (e) {
         console.log('[PlaybackController] Adapter error:', e);
         set({ playbackState: 'error', error: 'Failed to start playback' });
       }
+    } else if (source === 'youtube' || source === 'youtube_music') {
+      console.error('[PlaybackController] YouTube adapter not ready after wait');
+      set({
+        playbackState: 'error',
+        error: 'YouTube player is still loading. Tap again in a moment.',
+      });
     } else {
       // VYBE native audio
       try {
@@ -372,11 +395,23 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
     const adapter = getAdapterForSource(currentSource ?? undefined);
 
+    if (__DEV__) {
+      console.log('[PlaybackController] play()', {
+        source: currentSource,
+        hasAdapter: !!adapter,
+        hasVybeSound: !!vybeSound,
+      });
+    }
+
     if (adapter) {
       await adapter.play();
+      // Inline YoutubePlayer uses `play={isPlaying}`; pool stateChange also confirms.
+      set({ playbackState: 'playing' });
     } else if (vybeSound) {
       await vybeSound.playAsync();
       set({ playbackState: 'playing' });
+    } else if (__DEV__ && (currentSource === 'youtube' || currentSource === 'youtube_music')) {
+      console.warn('[PlaybackController] play() skipped: no YouTube adapter registered');
     }
   },
 
@@ -387,11 +422,18 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
     const adapter = getAdapterForSource(currentSource ?? undefined);
 
+    if (__DEV__) {
+      console.log('[PlaybackController] pause()', { source: currentSource, hasAdapter: !!adapter });
+    }
+
     if (adapter) {
       await adapter.pause();
+      set({ playbackState: 'paused' });
     } else if (vybeSound) {
       await vybeSound.pauseAsync();
       set({ playbackState: 'paused' });
+    } else if (__DEV__ && (currentSource === 'youtube' || currentSource === 'youtube_music')) {
+      console.warn('[PlaybackController] pause() skipped: no YouTube adapter registered');
     }
   },
 
