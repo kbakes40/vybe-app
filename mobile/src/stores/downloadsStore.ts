@@ -1,8 +1,23 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { MMKV } from 'react-native-mmkv';
 import * as FileSystem from 'expo-file-system';
 import { Track } from '@/types/music';
+
+const downloadsStorage = new MMKV({ id: 'vybe-downloads-storage' });
+
+const mmkvStorage = {
+  getItem: (name: string) => {
+    const value = downloadsStorage.getString(name);
+    return value ?? null;
+  },
+  setItem: (name: string, value: string) => {
+    downloadsStorage.set(name, value);
+  },
+  removeItem: (name: string) => {
+    downloadsStorage.delete(name);
+  },
+};
 
 export interface DownloadedTrack extends Track {
   isDownloaded: true;
@@ -98,7 +113,7 @@ export const useDownloadsStore = create<DownloadsState>()(
     }),
     {
       name: 'vybe-downloads',
-      storage: createJSONStorage(() => AsyncStorage),
+      storage: createJSONStorage(() => mmkvStorage),
       partialize: (state) => ({ downloads: state.downloads }),
     }
   )

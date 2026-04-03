@@ -10,6 +10,7 @@ import { discoveryRouter } from "./routes/discovery";
 import { discoverRouter } from "./routes/discover";
 import { freepdRouter } from "./routes/freepd";
 import { musicgenRouter } from "./routes/musicgen";
+import { youtubeRouter } from "./routes/youtube";
 import { logger } from "hono/logger";
 
 // Type the Hono app with user/session variables
@@ -75,6 +76,7 @@ app.route("/api/discovery", discoveryRouter);
 app.route("/api/discover", discoverRouter);
 app.route("/api/freepd", freepdRouter);
 app.route("/api/musicgen", musicgenRouter);
+app.route("/api/youtube", youtubeRouter);
 
 const port = Number(process.env.PORT) || 3000;
 

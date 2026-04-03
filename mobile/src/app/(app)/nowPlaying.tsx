@@ -5,6 +5,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
+import * as FileSystem from 'expo-file-system';
 import {
   Play,
   Pause,
@@ -23,6 +24,8 @@ import {
   Cloud,
   RefreshCw,
   Plus,
+  Download,
+  Check,
 } from 'lucide-react-native';
 import Animated, {
   useSharedValue,
@@ -34,6 +37,7 @@ import Animated, {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import YoutubePlayer from 'react-native-youtube-iframe';
 import { usePlaybackController } from '@/stores/playbackController';
+import { useDownloadsStore } from '@/stores/downloadsStore';
 import { openInSoundCloud } from '@/lib/soundcloudHandoff';
 import { formatDuration } from '@/data/mockData';
 
@@ -41,6 +45,12 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ARTWORK_SIZE = SCREEN_WIDTH - 80;
 const VIDEO_WIDTH = ARTWORK_SIZE;
 const VIDEO_HEIGHT = Math.round((ARTWORK_SIZE * 9) / 16);
+
+const normalizePlaybackSeconds = (value: number): number => {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  // Some sources report ms-like values; convert to seconds for UI/store consistency.
+  return value > 100000 ? value / 1000 : value;
+};
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -154,6 +164,8 @@ export default function NowPlayingScreen() {
   const toggleShuffle = usePlaybackController(s => s.toggleShuffle);
   const toggleRepeat = usePlaybackController(s => s.toggleRepeat);
   const toggleLike = usePlaybackController(s => s.toggleLike);
+  const addDownload = useDownloadsStore(s => s.addDownload);
+  const isTrackDownloaded = useDownloadsStore(s => s.isTrackDownloaded);
 
   const playScale = useSharedValue(1);
   const translateY = useSharedValue(0);
@@ -168,6 +180,7 @@ export default function NowPlayingScreen() {
 
   // YouTube playback state
   const [ytLoadError, setYtLoadError] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   // Reset YouTube error state when track changes
   useEffect(() => {
@@ -179,6 +192,44 @@ export default function NowPlayingScreen() {
   const playButtonStyle = useAnimatedStyle(() => ({
     transform: [{ scale: playScale.value }],
   }));
+  const isDownloaded = currentTrack ? isTrackDownloaded(currentTrack.id) : false;
+
+  // Keep progress and duration synced to the actual embedded YouTube player.
+  // This fills gaps when onProgress events are sparse on some videos/devices.
+  useEffect(() => {
+    if (!(isYouTube || isYouTubeMusic) || !ytVideoId || !youtubePlayerRef.current) {
+      return;
+    }
+
+    const intervalId = setInterval(async () => {
+      try {
+        const player = youtubePlayerRef.current;
+        if (!player) return;
+
+        const [currentTime, currentDuration] = await Promise.all([
+          player.getCurrentTime?.(),
+          player.getDuration?.(),
+        ]);
+
+        if (typeof currentTime === 'number' && Number.isFinite(currentTime)) {
+          setProgress(normalizePlaybackSeconds(currentTime));
+        }
+
+        if (
+          typeof currentDuration === 'number' &&
+          Number.isFinite(currentDuration) &&
+          currentDuration > 0 &&
+          normalizePlaybackSeconds(currentDuration) !== duration
+        ) {
+          usePlaybackController.setState({ duration: normalizePlaybackSeconds(currentDuration) });
+        }
+      } catch {
+        // Ignore transient bridge errors while the player initializes.
+      }
+    }, 500);
+
+    return () => clearInterval(intervalId);
+  }, [isYouTube, isYouTubeMusic, ytVideoId, duration, setProgress]);
 
   const handleClose = () => {
     // Light haptic when collapsing full player back to mini player
@@ -205,17 +256,30 @@ export default function NowPlayingScreen() {
     opacity: interpolate(translateY.value, [0, 300], [1, 0.5]),
   }));
 
-  const handlePlayPause = () => {
+  const handlePlayPause = async () => {
     // SoundCloud is external-only - open externally instead of playing
     if (isSoundCloud) {
       handleOpenExternal();
       return;
     }
 
+    // For embedded YouTube players, keep store state in lockstep so the
+    // `play` prop immediately controls the iframe player.
+    if (isYouTube || isYouTubeMusic) {
+      if (isPlaying) {
+        setPlaybackState('paused');
+        await pause();
+      } else {
+        setPlaybackState('playing');
+        await play();
+      }
+      return;
+    }
+
     if (isPlaying) {
-      pause();
+      await pause();
     } else {
-      play();
+      await play();
     }
   };
 
@@ -223,7 +287,7 @@ export default function NowPlayingScreen() {
     // SoundCloud and YouTube Music are external-only - no seeking
     if (isSoundCloud) return;
 
-    if (isYouTube && youtubePlayerRef.current) {
+    if ((isYouTube || isYouTubeMusic) && youtubePlayerRef.current) {
       youtubePlayerRef.current.seekTo(value);
     }
     seekTo(value);
@@ -236,7 +300,7 @@ export default function NowPlayingScreen() {
   };
 
   const handleSeekBackward = () => {
-    if (isSoundCloud || isYouTubeMusic) return;
+    if (isSoundCloud) return;
     const newProgress = Math.max(progress - 15, 0);
     handleSeek(newProgress);
   };
@@ -253,6 +317,67 @@ export default function NowPlayingScreen() {
     }
   }, [isYouTube, isYouTubeMusic, isSoundCloud, currentTrack]);
 
+  const handleDownloadTrack = useCallback(async () => {
+    if (!currentTrack || !ytVideoId || isDownloading || isDownloaded) return;
+
+    const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
+    if (!baseUrl) {
+      usePlaybackController.setState({ error: 'Missing EXPO_PUBLIC_BACKEND_URL' });
+      setPlaybackState('error');
+      return;
+    }
+
+    try {
+      setIsDownloading(true);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+      const downloadDir = `${FileSystem.documentDirectory}downloads`;
+      const dirInfo = await FileSystem.getInfoAsync(downloadDir);
+      if (!dirInfo.exists) {
+        await FileSystem.makeDirectoryAsync(downloadDir, { intermediates: true });
+      }
+
+      const targetUri = `${downloadDir}/${currentTrack.id}.mp4`;
+      const response = await FileSystem.downloadAsync(
+        `${baseUrl}/api/youtube/audio/${ytVideoId}`,
+        targetUri
+      );
+
+      if (response.status !== 200) {
+        throw new Error(`Download failed with status ${response.status}`);
+      }
+
+      const fileInfo = await FileSystem.getInfoAsync(response.uri, { size: true });
+      addDownload({
+        ...currentTrack,
+        source: 'vybe',
+        audioUrl: response.uri,
+        localFilePath: response.uri,
+        isDownloaded: true,
+        importedAt: Date.now(),
+        isUserImported: false,
+        fileSize: fileInfo.exists ? (fileInfo.size ?? 0) : 0,
+        fileFormat: 'MP4',
+      });
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (downloadError) {
+      console.error('[NowPlaying] Download failed:', downloadError);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      usePlaybackController.setState({ error: 'Failed to download track audio' });
+      setPlaybackState('error');
+    } finally {
+      setIsDownloading(false);
+    }
+  }, [
+    currentTrack,
+    ytVideoId,
+    isDownloading,
+    isDownloaded,
+    addDownload,
+    setPlaybackState,
+  ]);
+
 
 
   if (!currentTrack) {
@@ -264,7 +389,13 @@ export default function NowPlayingScreen() {
   }
 
   // SoundCloud: show static progress (external only)
-  const progressPercent = isSoundCloud ? 0 : (duration > 0 ? (progress / duration) * 100 : 0);
+  const displayProgress = normalizePlaybackSeconds(progress);
+  const displayDuration = normalizePlaybackSeconds(duration);
+  const progressPercent = isSoundCloud
+    ? 0
+    : displayDuration > 0
+      ? (displayProgress / displayDuration) * 100
+      : 0;
 
 
 
@@ -320,22 +451,20 @@ export default function NowPlayingScreen() {
 
             {/* Artwork / Video / Embed */}
             <View className="items-center justify-center flex-1 px-10">
-              {isYouTube && ytVideoId ? (
+              {isExternalPlayback && ytVideoId ? (
                 <View
                   style={{
                     width: ARTWORK_SIZE,
-                    height: ARTWORK_SIZE,
+                    height: VIDEO_HEIGHT,
                     borderRadius: 12,
                     overflow: 'hidden',
                     backgroundColor: '#000',
-                    justifyContent: 'center',
                   }}
                 >
                   <View
                     style={{
                       width: VIDEO_WIDTH,
                       height: VIDEO_HEIGHT,
-                      alignSelf: 'center',
                       backgroundColor: '#000',
                     }}
                   >
@@ -357,9 +486,11 @@ export default function NowPlayingScreen() {
                         }
                       }}
                       onProgress={(progress: { currentTime: number; duration: number }) => {
-                        setProgress(progress.currentTime);
+                        setProgress(normalizePlaybackSeconds(progress.currentTime));
                         if (progress.duration && progress.duration > 0) {
-                          usePlaybackController.setState({ duration: progress.duration });
+                          usePlaybackController.setState({
+                            duration: normalizePlaybackSeconds(progress.duration),
+                          });
                         }
                       }}
                       onError={(error: any) => {
@@ -372,7 +503,7 @@ export default function NowPlayingScreen() {
                       }}
                     />
                   </View>
-                  {/* YouTube Error overlay with fallback */}
+                  {/* YouTube / YouTube Music error overlay */}
                   {ytLoadError && (
                     <View
                       style={{
@@ -387,7 +518,7 @@ export default function NowPlayingScreen() {
                         padding: 24,
                       }}
                     >
-                      <YouTubeIcon size={48} />
+                      {isYouTubeMusic ? <YouTubeMusicIcon size={48} /> : <YouTubeIcon size={48} />}
                       <Text className="text-white font-semibold mt-3 text-base">
                         Playback unavailable in VYBE
                       </Text>
@@ -397,10 +528,8 @@ export default function NowPlayingScreen() {
                       <View className="flex-row mt-6">
                         <Pressable
                           onPress={() => {
-                            console.log('[YouTube] User tapped retry');
                             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                             setYtLoadError(false);
-                            // Reload not needed for YoutubePlayer
                           }}
                           className="flex-row items-center bg-white/10 rounded-full py-3 px-5 mr-3"
                         >
@@ -415,85 +544,11 @@ export default function NowPlayingScreen() {
                           className="flex-row items-center bg-[#FF0000] rounded-full py-3 px-5"
                         >
                           <ExternalLink size={16} color="#fff" />
-                          <Text className="text-white text-sm font-medium ml-2">Open in YouTube</Text>
+                          <Text className="text-white text-sm font-medium ml-2">
+                            {isYouTubeMusic ? 'Open in YouTube Music' : 'Open in YouTube'}
+                          </Text>
                         </Pressable>
                       </View>
-                    </View>
-                  )}
-                </View>
-              ) : isYouTubeMusic && ytVideoId ? (
-                <View
-                  style={{
-                    width: ARTWORK_SIZE,
-                    height: ARTWORK_SIZE,
-                    borderRadius: 12,
-                    overflow: 'hidden',
-                    backgroundColor: '#000',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <View
-                    style={{
-                      width: VIDEO_WIDTH,
-                      height: VIDEO_HEIGHT,
-                      alignSelf: 'center',
-                      backgroundColor: '#000',
-                    }}
-                  >
-                    <YoutubePlayer
-                      ref={youtubePlayerRef}
-                      height={VIDEO_HEIGHT}
-                      width={VIDEO_WIDTH}
-                      videoId={ytVideoId}
-                      play={isPlaying}
-                      onChangeState={(state: string) => {
-                        if (state === 'ended') {
-                          setPlaybackState('paused');
-                        } else if (state === 'playing') {
-                          setPlaybackState('playing');
-                        } else if (state === 'paused') {
-                          setPlaybackState('paused');
-                        } else if (state === 'buffering') {
-                          setPlaybackState('buffering');
-                        }
-                      }}
-                      onProgress={(progress: { currentTime: number; duration: number }) => {
-                        setProgress(progress.currentTime);
-                        if (progress.duration && progress.duration > 0) {
-                          usePlaybackController.setState({ duration: progress.duration });
-                        }
-                      }}
-                      onError={(error: any) => {
-                        console.log('[YouTube Music] Player error:', error);
-                        setYtLoadError(true);
-                        setPlaybackState('error');
-                      }}
-                      onReady={() => {
-                        setYtLoadError(false);
-                      }}
-                    />
-                  </View>
-                  {ytLoadError && (
-                    <View
-                      style={{
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        backgroundColor: 'rgba(0, 0, 0, 0.95)',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        padding: 24,
-                      }}
-                    >
-                      <YouTubeMusicIcon size={48} />
-                      <Text className="text-white font-semibold mt-3 text-base">
-                        Playback unavailable in VYBE
-                      </Text>
-                      <Text className="text-white/60 mt-1 text-sm text-center">
-                        This video cannot be played within the app
-                      </Text>
                     </View>
                   )}
                 </View>
@@ -611,15 +666,33 @@ export default function NowPlayingScreen() {
               {/* Open in external app button - not shown for YouTube Music (CTA is on artwork) */}
               {isExternalPlayback ? (
                 <View>
-                  <Pressable
-                    onPress={handleOpenExternal}
-                    className="flex-row items-center justify-center bg-white/10 rounded-full py-2.5 px-4 mt-4 self-start"
-                  >
-                    <ExternalLink size={16} color="#fff" />
-                    <Text className="text-white text-sm font-medium ml-2">
-                      {isYouTubeMusic ? 'Watch on YouTube Music' : 'Watch on YouTube'}
-                    </Text>
-                  </Pressable>
+                  <View className="flex-row items-center mt-4">
+                    <Pressable
+                      onPress={handleOpenExternal}
+                      className="flex-row items-center justify-center bg-white/10 rounded-full py-2.5 px-4 mr-3"
+                    >
+                      <ExternalLink size={16} color="#fff" />
+                      <Text className="text-white text-sm font-medium ml-2">
+                        {isYouTubeMusic ? 'Watch on YouTube Music' : 'Watch on YouTube'}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={handleDownloadTrack}
+                      disabled={isDownloading || isDownloaded}
+                      className="flex-row items-center justify-center bg-white/10 rounded-full py-2.5 px-4"
+                    >
+                      {isDownloading ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : isDownloaded ? (
+                        <Check size={16} color="#22C55E" />
+                      ) : (
+                        <Download size={16} color="#fff" />
+                      )}
+                      <Text className="text-white text-sm font-medium ml-2">
+                        {isDownloading ? 'Downloading...' : isDownloaded ? 'Downloaded' : 'Download'}
+                      </Text>
+                    </Pressable>
+                  </View>
                   {isSoundCloud && (
                     <Text className="text-white/40 text-xs mt-2">
                       Opens SoundCloud search. Availability depends on the creator.
@@ -638,7 +711,7 @@ export default function NowPlayingScreen() {
                     const x = e.nativeEvent.locationX;
                     const width = SCREEN_WIDTH - 64;
                     const percent = x / width;
-                    handleSeek(Math.floor(percent * duration));
+                    handleSeek(Math.floor(percent * displayDuration));
                   }}
                   disabled={isSoundCloud}
                 >
@@ -651,10 +724,16 @@ export default function NowPlayingScreen() {
                 </Pressable>
                 <View className="flex-row justify-between mt-2">
                   <Text className="text-white/40 text-xs">
-                    {isSoundCloud ? '--:--' : formatDuration(Math.floor(progress))}
+                    {isSoundCloud ? '--:--' : formatDuration(Math.floor(displayProgress))}
                   </Text>
                   <Text className="text-white/40 text-xs">
-                    {isSoundCloud ? (currentTrack.duration ? formatDuration(currentTrack.duration) : '--:--') : (duration > 0 ? formatDuration(Math.floor(duration)) : '--:--')}
+                    {isSoundCloud
+                      ? currentTrack.duration
+                        ? formatDuration(currentTrack.duration)
+                        : '--:--'
+                      : displayDuration > 0
+                        ? formatDuration(Math.floor(displayDuration))
+                        : '--:--'}
                   </Text>
                 </View>
               </View>
