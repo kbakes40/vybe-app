@@ -156,15 +156,15 @@ export function MiniPlayer() {
   const appearAnimation = useSharedValue(0);
   const loadingRotation = useSharedValue(0);
 
-  // Animate progress bar smoothly (static for YouTube Music and SoundCloud - external only)
+  // Animate progress bar smoothly (static for SoundCloud - external only)
   useEffect(() => {
-    if (isYouTubeMusic || isSoundCloud) {
+    if (isSoundCloud) {
       progressWidth.value = 0;
       return;
     }
     const percent = duration > 0 ? (progress / duration) * 100 : 0;
     progressWidth.value = withTiming(percent, { duration: 200 });
-  }, [progress, duration, isYouTubeMusic, isSoundCloud]);
+  }, [progress, duration, isSoundCloud]);
 
   // Appear animation when track changes
   useEffect(() => {
@@ -214,12 +214,6 @@ export function MiniPlayer() {
 
   const handlePlayPause = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-    // YouTube Music is discovery-only - open externally
-    if (isYouTubeMusic && currentTrack?.youtubeMusicUrl) {
-      Linking.openURL(currentTrack.youtubeMusicUrl);
-      return;
-    }
 
     // SoundCloud is external-only - open search in SoundCloud
     if (isSoundCloud && currentTrack) {
@@ -378,12 +372,11 @@ export function MiniPlayer() {
             style={[
               styles.playButton,
               buttonAnimatedStyle,
-              isYouTubeMusic && { backgroundColor: '#FF0000', borderRadius: 20 },
               isSoundCloud && { backgroundColor: '#FF5500', borderRadius: 20 },
             ]}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            {isYouTubeMusic || isSoundCloud ? (
+            {isSoundCloud ? (
               <ExternalLink size={20} color="#fff" />
             ) : isPlaying ? (
               <Pause size={22} color="#fff" fill="#fff" />

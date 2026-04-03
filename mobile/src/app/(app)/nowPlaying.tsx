@@ -32,7 +32,6 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { WebView } from 'react-native-webview';
 import YoutubePlayer from 'react-native-youtube-iframe';
 import { usePlaybackController } from '@/stores/playbackController';
 import { openInSoundCloud } from '@/lib/soundcloudHandoff';
@@ -124,7 +123,6 @@ function YouTubeMusicIcon({ size = 16 }: { size?: number }) {
 export default function NowPlayingScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const webViewRef = useRef<WebView>(null);
   const youtubePlayerRef = useRef<any>(null);
 
   const currentTrack = usePlaybackController(s => s.currentTrack);
@@ -206,19 +204,12 @@ export default function NowPlayingScreen() {
   }));
 
   const handlePlayPause = () => {
-    // SoundCloud and YouTube Music are external-only - open externally instead of playing
+    // SoundCloud is external-only - open externally instead of playing
     if (isSoundCloud) {
       handleOpenExternal();
       return;
     }
 
-    if (isYouTubeMusic && webViewRef.current) {
-      if (isPlaying) {
-        webViewRef.current.injectJavaScript('player.pauseVideo(); true;');
-      } else {
-        webViewRef.current.injectJavaScript('player.playVideo(); true;');
-      }
-    }
     if (isPlaying) {
       pause();
     } else {
@@ -230,9 +221,6 @@ export default function NowPlayingScreen() {
     // SoundCloud and YouTube Music are external-only - no seeking
     if (isSoundCloud) return;
 
-    if (isYouTubeMusic && webViewRef.current) {
-      webViewRef.current.injectJavaScript(`player.seekTo(${value}, true); true;`);
-    }
     if (isYouTube && youtubePlayerRef.current) {
       youtubePlayerRef.current.seekTo(value);
     }
@@ -263,31 +251,7 @@ export default function NowPlayingScreen() {
     }
   }, [isYouTube, isYouTubeMusic, isSoundCloud, currentTrack]);
 
-  const onYouTubeMessage = useCallback((event: { nativeEvent: { data: string } }) => {
-    try {
-      const data = JSON.parse(event.nativeEvent.data);
-      if (data.type === 'stateChange') {
-        if (data.state === 1) {
-          setPlaybackState('playing');
-        } else if (data.state === 2 || data.state === 0) {
-          setPlaybackState('paused');
-          if (data.state === 0) {
-            next();
-          }
-        }
-      } else if (data.type === 'timeUpdate') {
-        setProgress(data.currentTime);
-        if (data.duration && data.duration > 0) {
-          usePlaybackController.setState({ duration: data.duration });
-        }
-      } else if (data.type === 'error') {
-        setYtLoadError(true);
-        setPlaybackState('error');
-      }
-    } catch {
-      // Ignore parse errors
-    }
-  }, [setPlaybackState, setProgress, next, setYtLoadError]);
+
 
   if (!currentTrack) {
     return (
@@ -297,89 +261,11 @@ export default function NowPlayingScreen() {
     );
   }
 
-  // SoundCloud and YouTube Music: show static progress (external only)
+  // SoundCloud: show static progress (external only)
   const progressPercent = isSoundCloud ? 0 : (duration > 0 ? (progress / duration) * 100 : 0);
 
-  // YouTube embed HTML with IFrame API
-  const youtubeHTML = ytVideoId ? `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-      <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body {
-          width: 100%;
-          height: 100%;
-          background: #0A0A0A;
-          overflow: hidden;
-        }
-        #player {
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-        }
-      </style>
-    </head>
-    <body>
-      <div id="player"></div>
-      <script>
-        var tag = document.createElement('script');
-        tag.src = "https://www.youtube.com/iframe_api";
-        var firstScriptTag = document.getElementsByTagName('script')[0];
-        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
-        var player;
-        function onYouTubeIframeAPIReady() {
-          player = new YT.Player('player', {
-            videoId: '${ytVideoId}',
-            playerVars: {
-              'autoplay': 1,
-              'playsinline': 1,
-              'controls': 0,
-              'modestbranding': 1,
-              'rel': 0,
-              'showinfo': 0,
-              'fs': 0,
-              'iv_load_policy': 3,
-            },
-            events: {
-              'onReady': onPlayerReady,
-              'onStateChange': onPlayerStateChange,
-              'onError': onPlayerError
-            }
-          });
-        }
 
-        function onPlayerReady(event) {
-          event.target.playVideo();
-          setInterval(function() {
-            if (player && player.getCurrentTime) {
-              window.ReactNativeWebView.postMessage(JSON.stringify({
-                type: 'timeUpdate',
-                currentTime: player.getCurrentTime(),
-                duration: player.getDuration()
-              }));
-            }
-          }, 500);
-        }
-
-        function onPlayerStateChange(event) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'stateChange',
-            state: event.data
-          }));
-        }
-
-        function onPlayerError(event) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'error', code: event.data }));
-        }
-      </script>
-    </body>
-    </html>
-  ` : '';
 
   return (
     <GestureDetector gesture={panGesture}>
@@ -447,7 +333,7 @@ export default function NowPlayingScreen() {
                     height={ARTWORK_SIZE}
                     videoId={ytVideoId}
                     play={isPlaying}
-                    onChangeState={(state) => {
+                    onChangeState={(state: string) => {
                       if (state === 'ended') {
                         setPlaybackState('paused');
                       } else if (state === 'playing') {
@@ -458,13 +344,13 @@ export default function NowPlayingScreen() {
                         setPlaybackState('buffering');
                       }
                     }}
-                    onProgress={(progress) => {
+                    onProgress={(progress: { currentTime: number; duration: number }) => {
                       setProgress(progress.currentTime);
                       if (progress.duration && progress.duration > 0) {
                         usePlaybackController.setState({ duration: progress.duration });
                       }
                     }}
-                    onError={(error) => {
+                    onError={(error: any) => {
                       console.log('[YouTube] Player error:', error);
                       setYtLoadError(true);
                       setPlaybackState('error');
@@ -532,21 +418,37 @@ export default function NowPlayingScreen() {
                     backgroundColor: '#000',
                   }}
                 >
-                  <WebView
-                    ref={webViewRef}
-                    source={{ html: youtubeHTML }}
-                    style={{ flex: 1, backgroundColor: '#000' }}
-                    allowsInlineMediaPlayback
-                    mediaPlaybackRequiresUserAction={false}
-                    onMessage={onYouTubeMessage}
-                    scrollEnabled={false}
-                    bounces={false}
-                    onError={(e) => {
-                      console.log('[YouTube] WebView error:', e.nativeEvent);
+                  <YoutubePlayer
+                    ref={youtubePlayerRef}
+                    height={ARTWORK_SIZE}
+                    videoId={ytVideoId}
+                    play={isPlaying}
+                    onChangeState={(state: string) => {
+                      if (state === 'ended') {
+                        setPlaybackState('paused');
+                      } else if (state === 'playing') {
+                        setPlaybackState('playing');
+                      } else if (state === 'paused') {
+                        setPlaybackState('paused');
+                      } else if (state === 'buffering') {
+                        setPlaybackState('buffering');
+                      }
+                    }}
+                    onProgress={(progress: { currentTime: number; duration: number }) => {
+                      setProgress(progress.currentTime);
+                      if (progress.duration && progress.duration > 0) {
+                        usePlaybackController.setState({ duration: progress.duration });
+                      }
+                    }}
+                    onError={(error: any) => {
+                      console.log('[YouTube Music] Player error:', error);
                       setYtLoadError(true);
+                      setPlaybackState('error');
+                    }}
+                    onReady={() => {
+                      setYtLoadError(false);
                     }}
                   />
-                  {/* YouTube Error overlay with fallback */}
                   {ytLoadError && (
                     <View
                       style={{
@@ -561,39 +463,13 @@ export default function NowPlayingScreen() {
                         padding: 24,
                       }}
                     >
-                      <YouTubeIcon size={48} />
+                      <YouTubeMusicIcon size={48} />
                       <Text className="text-white font-semibold mt-3 text-base">
                         Playback unavailable in VYBE
                       </Text>
                       <Text className="text-white/60 mt-1 text-sm text-center">
                         This video cannot be played within the app
                       </Text>
-                      <View className="flex-row mt-6">
-                        <Pressable
-                          onPress={() => {
-                            console.log('[YouTube] User tapped retry');
-                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                            setYtLoadError(false);
-                            if (webViewRef.current) {
-                              webViewRef.current.reload();
-                            }
-                          }}
-                          className="flex-row items-center bg-white/10 rounded-full py-3 px-5 mr-3"
-                        >
-                          <RefreshCw size={16} color="#fff" />
-                          <Text className="text-white text-sm font-medium ml-2">Retry</Text>
-                        </Pressable>
-                        <Pressable
-                          onPress={() => {
-                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                            handleOpenExternal();
-                          }}
-                          className="flex-row items-center bg-[#FF0000] rounded-full py-3 px-5"
-                        >
-                          <ExternalLink size={16} color="#fff" />
-                          <Text className="text-white text-sm font-medium ml-2">Open in YouTube</Text>
-                        </Pressable>
-                      </View>
                     </View>
                   )}
                 </View>
@@ -730,31 +606,31 @@ export default function NowPlayingScreen() {
 
 {/* SoundCloud Download removed - not supported in VYBE currently */}
 
-              {/* Progress Bar - static for YouTube Music */}
+              {/* Progress Bar - static for SoundCloud */}
               <View className="mt-6">
                 <Pressable
                   onPress={(e) => {
-                    if (isYouTubeMusic) return; // No seeking for YouTube Music
+                    if (isSoundCloud) return; // No seeking for SoundCloud
                     const x = e.nativeEvent.locationX;
                     const width = SCREEN_WIDTH - 64;
                     const percent = x / width;
                     handleSeek(Math.floor(percent * duration));
                   }}
-                  disabled={isYouTubeMusic}
+                  disabled={isSoundCloud}
                 >
                   <View className="h-1 bg-white/20 rounded-full overflow-hidden">
                     <View
-                      className={`h-full rounded-full ${isYouTubeMusic ? 'bg-white/30' : 'bg-white'}`}
+                      className={`h-full rounded-full ${isSoundCloud ? 'bg-white/30' : 'bg-white'}`}
                       style={{ width: `${progressPercent}%` }}
                     />
                   </View>
                 </Pressable>
                 <View className="flex-row justify-between mt-2">
                   <Text className="text-white/40 text-xs">
-                    {isYouTubeMusic ? '--:--' : formatDuration(Math.floor(progress))}
+                    {isSoundCloud ? '--:--' : formatDuration(Math.floor(progress))}
                   </Text>
                   <Text className="text-white/40 text-xs">
-                    {isYouTubeMusic ? (currentTrack.duration ? formatDuration(currentTrack.duration) : '--:--') : (duration > 0 ? formatDuration(Math.floor(duration)) : '--:--')}
+                    {isSoundCloud ? (currentTrack.duration ? formatDuration(currentTrack.duration) : '--:--') : (duration > 0 ? formatDuration(Math.floor(duration)) : '--:--')}
                   </Text>
                 </View>
               </View>
