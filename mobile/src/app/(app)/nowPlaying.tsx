@@ -39,6 +39,8 @@ import { formatDuration } from '@/data/mockData';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ARTWORK_SIZE = SCREEN_WIDTH - 80;
+const VIDEO_WIDTH = ARTWORK_SIZE;
+const VIDEO_HEIGHT = Math.round((ARTWORK_SIZE * 9) / 16);
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -326,39 +328,49 @@ export default function NowPlayingScreen() {
                     borderRadius: 12,
                     overflow: 'hidden',
                     backgroundColor: '#000',
+                    justifyContent: 'center',
                   }}
                 >
-                  <YoutubePlayer
-                    ref={youtubePlayerRef}
-                    height={ARTWORK_SIZE}
-                    videoId={ytVideoId}
-                    play={isPlaying}
-                    onChangeState={(state: string) => {
-                      if (state === 'ended') {
-                        setPlaybackState('paused');
-                      } else if (state === 'playing') {
-                        setPlaybackState('playing');
-                      } else if (state === 'paused') {
-                        setPlaybackState('paused');
-                      } else if (state === 'buffering') {
-                        setPlaybackState('buffering');
-                      }
+                  <View
+                    style={{
+                      width: VIDEO_WIDTH,
+                      height: VIDEO_HEIGHT,
+                      alignSelf: 'center',
+                      backgroundColor: '#000',
                     }}
-                    onProgress={(progress: { currentTime: number; duration: number }) => {
-                      setProgress(progress.currentTime);
-                      if (progress.duration && progress.duration > 0) {
-                        usePlaybackController.setState({ duration: progress.duration });
-                      }
-                    }}
-                    onError={(error: any) => {
-                      console.log('[YouTube] Player error:', error);
-                      setYtLoadError(true);
-                      setPlaybackState('error');
-                    }}
-                    onReady={() => {
-                      setYtLoadError(false);
-                    }}
-                  />
+                  >
+                    <YoutubePlayer
+                      ref={youtubePlayerRef}
+                      height={VIDEO_HEIGHT}
+                      videoId={ytVideoId}
+                      play={isPlaying}
+                      onChangeState={(state: string) => {
+                        if (state === 'ended') {
+                          setPlaybackState('paused');
+                        } else if (state === 'playing') {
+                          setPlaybackState('playing');
+                        } else if (state === 'paused') {
+                          setPlaybackState('paused');
+                        } else if (state === 'buffering') {
+                          setPlaybackState('buffering');
+                        }
+                      }}
+                      onProgress={(progress: { currentTime: number; duration: number }) => {
+                        setProgress(progress.currentTime);
+                        if (progress.duration && progress.duration > 0) {
+                          usePlaybackController.setState({ duration: progress.duration });
+                        }
+                      }}
+                      onError={(error: any) => {
+                        console.log('[YouTube] Player error:', error);
+                        setYtLoadError(true);
+                        setPlaybackState('error');
+                      }}
+                      onReady={() => {
+                        setYtLoadError(false);
+                      }}
+                    />
+                  </View>
                   {/* YouTube Error overlay with fallback */}
                   {ytLoadError && (
                     <View
@@ -416,39 +428,49 @@ export default function NowPlayingScreen() {
                     borderRadius: 12,
                     overflow: 'hidden',
                     backgroundColor: '#000',
+                    justifyContent: 'center',
                   }}
                 >
-                  <YoutubePlayer
-                    ref={youtubePlayerRef}
-                    height={ARTWORK_SIZE}
-                    videoId={ytVideoId}
-                    play={isPlaying}
-                    onChangeState={(state: string) => {
-                      if (state === 'ended') {
-                        setPlaybackState('paused');
-                      } else if (state === 'playing') {
-                        setPlaybackState('playing');
-                      } else if (state === 'paused') {
-                        setPlaybackState('paused');
-                      } else if (state === 'buffering') {
-                        setPlaybackState('buffering');
-                      }
+                  <View
+                    style={{
+                      width: VIDEO_WIDTH,
+                      height: VIDEO_HEIGHT,
+                      alignSelf: 'center',
+                      backgroundColor: '#000',
                     }}
-                    onProgress={(progress: { currentTime: number; duration: number }) => {
-                      setProgress(progress.currentTime);
-                      if (progress.duration && progress.duration > 0) {
-                        usePlaybackController.setState({ duration: progress.duration });
-                      }
-                    }}
-                    onError={(error: any) => {
-                      console.log('[YouTube Music] Player error:', error);
-                      setYtLoadError(true);
-                      setPlaybackState('error');
-                    }}
-                    onReady={() => {
-                      setYtLoadError(false);
-                    }}
-                  />
+                  >
+                    <YoutubePlayer
+                      ref={youtubePlayerRef}
+                      height={VIDEO_HEIGHT}
+                      videoId={ytVideoId}
+                      play={isPlaying}
+                      onChangeState={(state: string) => {
+                        if (state === 'ended') {
+                          setPlaybackState('paused');
+                        } else if (state === 'playing') {
+                          setPlaybackState('playing');
+                        } else if (state === 'paused') {
+                          setPlaybackState('paused');
+                        } else if (state === 'buffering') {
+                          setPlaybackState('buffering');
+                        }
+                      }}
+                      onProgress={(progress: { currentTime: number; duration: number }) => {
+                        setProgress(progress.currentTime);
+                        if (progress.duration && progress.duration > 0) {
+                          usePlaybackController.setState({ duration: progress.duration });
+                        }
+                      }}
+                      onError={(error: any) => {
+                        console.log('[YouTube Music] Player error:', error);
+                        setYtLoadError(true);
+                        setPlaybackState('error');
+                      }}
+                      onReady={() => {
+                        setYtLoadError(false);
+                      }}
+                    />
+                  </View>
                   {ytLoadError && (
                     <View
                       style={{
