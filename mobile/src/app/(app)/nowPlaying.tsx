@@ -160,18 +160,19 @@ export default function NowPlayingScreen() {
   const isYouTube = currentSource === 'youtube';
   const isYouTubeMusic = currentSource === 'youtube_music';
   const isSoundCloud = currentSource === 'soundcloud';
-  const isExternalPlayback = isYouTube; // Only YouTube has in-app playback now
-  const isExternalOnly = isSoundCloud || isYouTubeMusic; // These open externally
+  const isExternalPlayback = isYouTube || isYouTubeMusic;
+  const isExternalOnly = isSoundCloud;
+  const ytVideoId = currentTrack?.youtubeId || currentTrack?.youtubeMusicId || null;
 
   // YouTube playback state
   const [ytLoadError, setYtLoadError] = useState(false);
 
   // Reset YouTube error state when track changes
   useEffect(() => {
-    if (isYouTube) {
+    if (isYouTube || isYouTubeMusic) {
       setYtLoadError(false);
     }
-  }, [currentTrack?.id, isYouTube]);
+  }, [currentTrack?.id, isYouTube, isYouTubeMusic]);
 
   const playButtonStyle = useAnimatedStyle(() => ({
     transform: [{ scale: playScale.value }],
@@ -204,12 +205,12 @@ export default function NowPlayingScreen() {
 
   const handlePlayPause = () => {
     // SoundCloud and YouTube Music are external-only - open externally instead of playing
-    if (isSoundCloud || isYouTubeMusic) {
+    if (isSoundCloud) {
       handleOpenExternal();
       return;
     }
 
-    if (isYouTube && webViewRef.current) {
+    if ((isYouTube || isYouTubeMusic) && webViewRef.current) {
       if (isPlaying) {
         webViewRef.current.injectJavaScript('player.pauseVideo(); true;');
       } else {
@@ -225,16 +226,16 @@ export default function NowPlayingScreen() {
 
   const handleSeek = (value: number) => {
     // SoundCloud and YouTube Music are external-only - no seeking
-    if (isSoundCloud || isYouTubeMusic) return;
+    if (isSoundCloud) return;
 
-    if (isYouTube && webViewRef.current) {
+    if ((isYouTube || isYouTubeMusic) && webViewRef.current) {
       webViewRef.current.injectJavaScript(`player.seekTo(${value}, true); true;`);
     }
     seekTo(value);
   };
 
   const handleSeekForward = () => {
-    if (isSoundCloud || isYouTubeMusic) return;
+    if (isSoundCloud) return;
     const newProgress = Math.min(progress + 15, duration);
     handleSeek(newProgress);
   };
@@ -289,10 +290,10 @@ export default function NowPlayingScreen() {
   }
 
   // SoundCloud and YouTube Music: show static progress (external only)
-  const progressPercent = (isSoundCloud || isYouTubeMusic) ? 0 : (duration > 0 ? (progress / duration) * 100 : 0);
+  const progressPercent = isSoundCloud ? 0 : (duration > 0 ? (progress / duration) * 100 : 0);
 
   // YouTube embed HTML with IFrame API
-  const youtubeHTML = currentTrack.youtubeId ? `
+  const youtubeHTML = ytVideoId ? `
     <!DOCTYPE html>
     <html>
     <head>
@@ -325,7 +326,7 @@ export default function NowPlayingScreen() {
         var player;
         function onYouTubeIframeAPIReady() {
           player = new YT.Player('player', {
-            videoId: '${currentTrack.youtubeId}',
+            videoId: '${ytVideoId}',
             playerVars: {
               'autoplay': 1,
               'playsinline': 1,
@@ -382,7 +383,7 @@ export default function NowPlayingScreen() {
               </Pressable>
               <View className="items-center">
                 <Text className="text-white/60 text-xs uppercase tracking-wider">
-                  {(isYouTubeMusic || isSoundCloud) ? 'Discovered on' : 'Playing from'}
+                  {isSoundCloud ? 'Discovered on' : 'Playing from'}
                 </Text>
                 <View className="flex-row items-center mt-1">
                   {isYouTube ? (
@@ -418,7 +419,7 @@ export default function NowPlayingScreen() {
 
             {/* Artwork / Video / Embed */}
             <View className="items-center justify-center flex-1 px-10">
-              {isYouTube && currentTrack.youtubeId ? (
+              {(isYouTube || isYouTubeMusic) && ytVideoId ? (
                 <View
                   style={{
                     width: ARTWORK_SIZE,
@@ -555,68 +556,6 @@ export default function NowPlayingScreen() {
                     </Pressable>
                   </LinearGradient>
                 </View>
-              ) : isYouTubeMusic ? (
-                /* YouTube Music - Discovery only, no inline playback */
-                <View
-                  style={{
-                    width: ARTWORK_SIZE,
-                    height: ARTWORK_SIZE,
-                    borderRadius: 12,
-                    overflow: 'hidden',
-                    backgroundColor: '#0A0A0A',
-                  }}
-                >
-                  {/* Album artwork with overlay */}
-                  <Image
-                    source={{ uri: currentTrack.artwork }}
-                    style={{
-                      width: ARTWORK_SIZE,
-                      height: ARTWORK_SIZE,
-                    }}
-                    contentFit="cover"
-                  />
-                  {/* Branded overlay */}
-                  <LinearGradient
-                    colors={['transparent', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
-                    style={{
-                      position: 'absolute',
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      height: ARTWORK_SIZE * 0.6,
-                      justifyContent: 'flex-end',
-                      alignItems: 'center',
-                      paddingBottom: 24,
-                      paddingHorizontal: 20,
-                    }}
-                  >
-                    <YouTubeMusicIcon size={40} />
-                    <Text className="text-white/80 text-sm mt-3 text-center">
-                      This track plays on YouTube Music
-                    </Text>
-
-                    {/* Primary CTA */}
-                    <Pressable
-                      onPress={handleOpenExternal}
-                      className="flex-row items-center bg-[#FF0000] rounded-full py-3.5 px-6 mt-4"
-                    >
-                      <ExternalLink size={18} color="#fff" />
-                      <Text className="text-white font-semibold ml-2">Open in YouTube Music</Text>
-                    </Pressable>
-
-                    {/* Secondary CTA */}
-                    <Pressable
-                      onPress={() => {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                        toggleLike(currentTrack.id);
-                      }}
-                      className="flex-row items-center bg-white/10 rounded-full py-3 px-5 mt-3"
-                    >
-                      <Plus size={16} color="#fff" />
-                      <Text className="text-white text-sm font-medium ml-2">Add to VYBE Library</Text>
-                    </Pressable>
-                  </LinearGradient>
-                </View>
               ) : (
                 <Animated.View
                   style={{
@@ -725,11 +664,10 @@ export default function NowPlayingScreen() {
                     toggleShuffle();
                   }}
                   className="p-3"
-                  disabled={isYouTubeMusic}
                 >
                   <Shuffle
                     size={24}
-                    color={isYouTubeMusic ? 'rgba(255,255,255,0.3)' : (isShuffled ? '#8B5CF6' : '#fff')}
+                    color={isShuffled ? '#8B5CF6' : '#fff'}
                   />
                 </Pressable>
 
@@ -737,10 +675,6 @@ export default function NowPlayingScreen() {
                   <Pressable onPress={handleSeekBackward} className="p-3">
                     <RotateCcw size={28} color="#fff" />
                   </Pressable>
-                ) : isYouTubeMusic ? (
-                  <View className="p-3">
-                    <SkipBack size={32} color="rgba(255,255,255,0.3)" />
-                  </View>
                 ) : (
                   <Pressable onPress={previous} className="p-3">
                     <SkipBack size={32} color="#fff" fill="#fff" />
@@ -759,10 +693,8 @@ export default function NowPlayingScreen() {
                   className="w-18 h-18 bg-white rounded-full items-center justify-center"
                   disabled={isWorking}
                 >
-                  <View className={`w-[72px] h-[72px] rounded-full items-center justify-center ${isYouTubeMusic ? 'bg-[#FF0000]' : isError ? 'bg-red-500' : 'bg-white'}`}>
-                    {isYouTubeMusic ? (
-                      <ExternalLink size={32} color="#fff" />
-                    ) : isWorking ? (
+                  <View className={`w-[72px] h-[72px] rounded-full items-center justify-center ${isError ? 'bg-red-500' : 'bg-white'}`}>
+                    {isWorking ? (
                       <ActivityIndicator size="large" color="#0A0A0A" />
                     ) : isPlaying ? (
                       <Pause size={36} color="#0A0A0A" fill="#0A0A0A" />
@@ -776,10 +708,6 @@ export default function NowPlayingScreen() {
                   <Pressable onPress={handleSeekForward} className="p-3">
                     <RotateCw size={28} color="#fff" />
                   </Pressable>
-                ) : isYouTubeMusic ? (
-                  <View className="p-3">
-                    <SkipForward size={32} color="rgba(255,255,255,0.3)" />
-                  </View>
                 ) : (
                   <Pressable onPress={next} className="p-3">
                     <SkipForward size={32} color="#fff" fill="#fff" />
@@ -792,14 +720,13 @@ export default function NowPlayingScreen() {
                     toggleRepeat();
                   }}
                   className="p-3"
-                  disabled={isYouTubeMusic}
                 >
                   {repeatMode === 'one' ? (
-                    <Repeat1 size={24} color={isYouTubeMusic ? 'rgba(255,255,255,0.3)' : '#8B5CF6'} />
+                    <Repeat1 size={24} color='#8B5CF6' />
                   ) : (
                     <Repeat
                       size={24}
-                      color={isYouTubeMusic ? 'rgba(255,255,255,0.3)' : (repeatMode === 'all' ? '#8B5CF6' : '#fff')}
+                      color={repeatMode === 'all' ? '#8B5CF6' : '#fff'}
                     />
                   )}
                 </Pressable>
