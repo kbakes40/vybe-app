@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
-import { Play, Pause, Cloud, Disc3, ExternalLink } from 'lucide-react-native';
+import { Play, Pause, Cloud, Disc3, ExternalLink, Download } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import Animated, {
   useAnimatedStyle,
@@ -16,13 +16,11 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { usePlaybackController } from '@/stores/playbackController';
+import { downloadYouTubeTrack, useDownloadsStore } from '@/stores/downloadsStore';
 import { usePlaybackDebugStore } from '@/stores/playbackDebugStore';
 import { PlaybackDebugIndicator } from '@/components/PlaybackDebugOverlay';
 import { openInSoundCloud } from '@/lib/soundcloudHandoff';
 import * as Haptics from 'expo-haptics';
-import * as Linking from 'expo-linking';
-
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 // YouTube icon component
 function YouTubeIcon({ size = 14 }: { size?: number }) {
@@ -130,10 +128,12 @@ export function MiniPlayer() {
   const pause = usePlaybackController(s => s.pause);
   const currentSource = usePlaybackController(s => s.currentSource);
 
+  const isTrackDownloaded = useDownloadsStore(s => s.isTrackDownloaded);
+  const isImporting = useDownloadsStore(s => s.isImporting);
+
   // Debug store
   const debugModeEnabled = usePlaybackDebugStore(s => s.debugModeEnabled);
   const toggleDebugOverlay = usePlaybackDebugStore(s => s.toggleDebugOverlay);
-  const logCurrentState = usePlaybackDebugStore(s => s.logCurrentState);
 
   // Triple tap tracking for debug toggle
   const tapCountRef = useRef(0);
@@ -141,6 +141,7 @@ export function MiniPlayer() {
 
   // Derive state from playbackState
   const isPlaying = playbackState === 'playing';
+  const shouldPause = playbackState === 'playing' || playbackState === 'buffering' || playbackState === 'loading';
   const isLoading = playbackState === 'loading' || playbackState === 'buffering';
 
   // Source type detection (needed before useEffects)
@@ -221,20 +222,18 @@ export function MiniPlayer() {
       return;
     }
 
-    if (isPlaying) {
+    if (shouldPause) {
       pause();
     } else {
       play();
     }
   };
 
-  // Long press handler for logging playback state
-  const handleLongPress = () => {
-    if (debugModeEnabled) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-      logCurrentState();
-      console.log('[MiniPlayer] Long press - logged current playback state');
-    }
+  const handleDownload = async () => {
+    if (!currentTrack || isImporting) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const BACKEND_URL = 'http://192.168.68.50:3000';
+    await downloadYouTubeTrack(currentTrack, BACKEND_URL);
   };
 
   // Swipe up gesture to expand to full player
@@ -251,8 +250,28 @@ export function MiniPlayer() {
       translateY.value = withSpring(0, { damping: 20, stiffness: 400 });
     });
 
-  // Tap gesture for navigation (with triple tap detection)
-  const tapGesture = Gesture.Tap()
+  const showDownload =
+    currentTrack &&
+    (isYouTube || isYouTubeMusic) &&
+    !isTrackDownloaded(currentTrack.id);
+
+  const playPauseTapGesture = Gesture.Tap()
+    .onStart(() => {
+      buttonScale.value = withSpring(0.85, { damping: 15 });
+    })
+    .onEnd(() => {
+      runOnJS(handlePlayPause)();
+    })
+    .onFinalize(() => {
+      buttonScale.value = withSpring(1, { damping: 15 });
+    });
+
+  const downloadTapGesture = Gesture.Tap().onEnd(() => {
+    runOnJS(handleDownload)();
+  });
+
+  // Tap gesture for navigation (with triple tap detection) — must fail if a child control consumed the touch
+  const tapGestureBase = Gesture.Tap()
     .onStart(() => {
       scale.value = withSpring(0.98, { damping: 15 });
     })
@@ -261,6 +280,12 @@ export function MiniPlayer() {
       runOnJS(handleTripleTap)();
       runOnJS(navigateToNowPlaying)();
     });
+
+  const tapGesture = showDownload
+    ? tapGestureBase
+        .requireExternalGestureToFail(playPauseTapGesture)
+        .requireExternalGestureToFail(downloadTapGesture)
+    : tapGestureBase.requireExternalGestureToFail(playPauseTapGesture);
 
   const containerAnimatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -302,7 +327,7 @@ export function MiniPlayer() {
   const sourceLabel = getSourceLabel();
 
   return (
-    <GestureDetector gesture={Gesture.Race(swipeGesture, tapGesture)}>
+    <GestureDetector gesture={Gesture.Exclusive(swipeGesture, tapGesture)}>
       <Animated.View style={[styles.container, containerAnimatedStyle]}>
         {/* Main content area */}
         <View style={styles.content}>
@@ -358,34 +383,34 @@ export function MiniPlayer() {
             </View>
           </View>
 
-          {/* Play/Pause Button - External link for YouTube Music and SoundCloud */}
-          <AnimatedPressable
-            onPress={handlePlayPause}
-            onLongPress={handleLongPress}
-            delayLongPress={500}
-            onPressIn={() => {
-              buttonScale.value = withSpring(0.85, { damping: 15 });
-            }}
-            onPressOut={() => {
-              buttonScale.value = withSpring(1, { damping: 15 });
-            }}
-            style={[
-              styles.playButton,
-              buttonAnimatedStyle,
-              isSoundCloud && { backgroundColor: '#FF5500', borderRadius: 20 },
-            ]}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            {isSoundCloud ? (
-              <ExternalLink size={20} color="#fff" />
-            ) : isPlaying ? (
-              <Pause size={22} color="#fff" fill="#fff" />
-            ) : (
-              <Play size={22} color="#fff" fill="#fff" style={{ marginLeft: 2 }} />
-            )}
-            {/* Debug indicator dot */}
-            <PlaybackDebugIndicator />
-          </AnimatedPressable>
+          {/* Download button for YouTube tracks */}
+          {showDownload && (
+            <GestureDetector gesture={downloadTapGesture}>
+              <Animated.View style={[styles.playButton, { opacity: isImporting ? 0.4 : 1 }]}>
+                <Download size={18} color="#8B5CF6" />
+              </Animated.View>
+            </GestureDetector>
+          )}
+
+          {/* Play/Pause — dedicated Tap gesture so parent mini-player tap doesn't double-fire */}
+          <GestureDetector gesture={playPauseTapGesture}>
+            <Animated.View
+              style={[
+                styles.playButton,
+                buttonAnimatedStyle,
+                isSoundCloud && { backgroundColor: '#FF5500', borderRadius: 20 },
+              ]}
+            >
+              {isSoundCloud ? (
+                <ExternalLink size={20} color="#fff" />
+              ) : isPlaying ? (
+                <Pause size={22} color="#fff" fill="#fff" />
+              ) : (
+                <Play size={22} color="#fff" fill="#fff" style={{ marginLeft: 2 }} />
+              )}
+              <PlaybackDebugIndicator />
+            </Animated.View>
+          </GestureDetector>
         </View>
 
         {/* Progress bar at bottom edge */}

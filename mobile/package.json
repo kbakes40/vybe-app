@@ -151,6 +151,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
+    "@expo/ngrok": "^4.1.0",
     "@tanstack/eslint-plugin-query": "^5.62.10",
     "@testing-library/react-native": "^13.3.3",
     "@types/jest": "^30.0.0",

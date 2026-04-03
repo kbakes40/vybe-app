@@ -149,3 +149,87 @@ export function isLosslessFormat(format: string): boolean {
   const lossless = ['wav', 'flac', 'alac', 'aiff'];
   return lossless.includes(format.toLowerCase());
 }
+
+/**
+ * Download a YouTube track for offline playback.
+ * Streams audio from the backend `GET /api/youtube/audio/:videoId` route
+ * and saves it under the app documents directory.
+ *
+ * Usage:
+ *   import { downloadYouTubeTrack } from '@/stores/downloadsStore';
+ *   await downloadYouTubeTrack(track, 'https://192.168.x.x:3000');
+ */
+export async function downloadYouTubeTrack(
+  track: Track & { youtubeId?: string; youtubeMusicId?: string },
+  backendBaseUrl: string,
+  onProgress?: (progress: number) => void
+): Promise<{ success: boolean; error?: string }> {
+  const videoId = track.youtubeId || track.youtubeMusicId;
+  if (!videoId) {
+    return { success: false, error: 'No YouTube video ID on this track' };
+  }
+
+  const store = useDownloadsStore.getState();
+
+  if (store.isTrackDownloaded(track.id)) {
+    return { success: true };
+  }
+
+  store.setImporting(true);
+  store.setImportProgress(0);
+
+  const base = backendBaseUrl.replace(/\/$/, '');
+  const audioUrl = `${base}/api/youtube/audio/${videoId}`;
+
+  try {
+    const fileName = `yt_${videoId}.mp4`;
+    const dir = `${FileSystem.documentDirectory}vybe_downloads/`;
+    const localFilePath = `${dir}${fileName}`;
+
+    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+
+    const downloadResumable = FileSystem.createDownloadResumable(
+      audioUrl,
+      localFilePath,
+      {},
+      (downloadProgress) => {
+        const total = downloadProgress.totalBytesExpectedToWrite;
+        const progress =
+          total > 0 ? downloadProgress.totalBytesWritten / total : 0;
+        store.setImportProgress(progress);
+        onProgress?.(progress);
+      }
+    );
+
+    const result = await downloadResumable.downloadAsync();
+    if (!result || result.status !== 200) {
+      throw new Error(`Download failed with status ${result?.status ?? 'unknown'}`);
+    }
+
+    const fileInfo = await FileSystem.getInfoAsync(localFilePath, { size: true });
+    const fileSize =
+      fileInfo.exists && 'size' in fileInfo ? (fileInfo.size ?? 0) : 0;
+
+    const downloadedTrack: DownloadedTrack = {
+      ...track,
+      source: 'vybe',
+      isDownloaded: true,
+      localFilePath,
+      audioUrl: localFilePath,
+      importedAt: Date.now(),
+      isUserImported: false,
+      fileSize,
+      fileFormat: 'MP4',
+    };
+
+    store.addDownload(downloadedTrack);
+    return { success: true };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Download failed';
+    console.error('[downloadYouTubeTrack]', msg);
+    return { success: false, error: msg };
+  } finally {
+    store.setImporting(false);
+    store.setImportProgress(0);
+  }
+}

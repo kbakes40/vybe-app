@@ -13,6 +13,10 @@ youtubeRouter.get("/audio/:videoId", async (c) => {
 
     const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
     const info = await ytdl.getInfo(videoUrl);
+    if (info.videoDetails.isLiveContent) {
+      return c.json({ error: "Live streams cannot be downloaded" }, 400);
+    }
+
     const format = ytdl.chooseFormat(info.formats, {
       quality: "highestaudio",
       filter: "audioonly",

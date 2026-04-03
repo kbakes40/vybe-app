@@ -19,7 +19,13 @@ import { AlbumCard } from '@/components/AlbumCard';
 import { VybeIcon } from '@/components/VybeIcon';
 import { ProfileMenuOverlay } from '@/components/ProfileMenuOverlay';
 import { FreePDSection } from '@/components/FreePDSection';
-import { playlists, albums, artists, tracks } from '@/data/mockData';
+import {
+  playlists,
+  albums,
+  artists,
+  tracks,
+  youtubeMusicPlaylistIds,
+} from '@/data/mockData';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useDiscoveryStore, DiscoveredTrack } from '@/stores/discoveryStore';
 import { useGreetingStore } from '@/stores/greetingStore';
@@ -344,8 +350,17 @@ export default function HomeScreen() {
   const aiArtists = artists.filter(a => a.genres.includes('AI Music') || a.genres.includes('Electronic')).slice(0, 6);
   const recentlyPlayed = albums.slice(0, 6);
   const discoverTracks = tracks.slice(10, 16);
-  const youtubeTracks = tracks.filter(t => t.source === 'youtube');
+  const youtubeTracks = tracks
+    .filter(t => t.source === 'youtube')
+    .sort((a, b) => {
+      const aNum = Number((a.id.match(/^yt(\d+)$/)?.[1]) ?? 0);
+      const bNum = Number((b.id.match(/^yt(\d+)$/)?.[1]) ?? 0);
+      return bNum - aNum;
+    });
   const youtubeMusicTracks = tracks.filter(t => t.source === 'youtube_music');
+  const youtubeMusicPlaylists = playlists.filter(p =>
+    youtubeMusicPlaylistIds.includes(p.id)
+  );
   const soundcloudTracks = tracks.filter(t => t.source === 'soundcloud');
 
   // SoundCloud tracks no longer need preloading - they open externally via search handoff
@@ -828,6 +843,23 @@ export default function HomeScreen() {
             <Text className="text-white/50 text-sm px-5 mb-4">
               Premium music streaming
             </Text>
+            {youtubeMusicPlaylists.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 16 }}
+                style={{ flexGrow: 0 }}
+              >
+                {youtubeMusicPlaylists.map(playlist => (
+                  <PlaylistCard
+                    key={playlist.id}
+                    playlist={playlist}
+                    onPress={() => router.push(`/(app)/playlist/${playlist.id}` as never)}
+                    size="medium"
+                  />
+                ))}
+              </ScrollView>
+            ) : null}
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
