@@ -1,0 +1,421 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Better Auth required models
+model User {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+
+  // VYBE specific fields
+  preferences   UserPreferences?
+  subscription  Subscription?
+  listeningHistory ListeningHistory[]
+  likedTracks   LikedTrack[]
+  playlists     Playlist[]
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// VYBE specific models
+model UserPreferences {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Onboarding preferences
+  genres          String   @default("[]") // JSON array of genre strings
+  mood            String?  // primary listening mood
+  eraPreference   String?  // preferred era (70s, 80s, 90s, 2000s, etc.)
+  onboardingDone  Boolean  @default(false)
+
+  // Discover feature preferences
+  favoriteArtists String   @default("[]") // JSON array of artist names for recommendations
+  preferredMoods  String   @default("[]") // JSON array of mood tags
+
+  // Audio preferences
+  audioQuality    String   @default("standard") // standard, high, lossless
+  crossfadeEnabled Boolean @default(false)
+  crossfadeDuration Int    @default(5) // seconds
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Subscription {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tier            String   @default("free") // free, plus
+  status          String   @default("active") // active, cancelled, expired
+
+  // Apple/Google subscription IDs
+  appleProductId  String?
+  appleTransactionId String?
+  googleProductId String?
+  googlePurchaseToken String?
+
+  startedAt       DateTime @default(now())
+  expiresAt       DateTime?
+  cancelledAt     DateTime?
+
+  // Usage tracking for free tier limits
+  skipsToday      Int      @default(0)
+  skipResetAt     DateTime @default(now())
+  adsListenedToday Int     @default(0)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model ListeningHistory {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  trackId   String
+  albumId   String?
+  artistId  String?
+
+  playedAt  DateTime @default(now())
+  duration  Int      @default(0) // seconds listened
+  completed Boolean  @default(false) // did they finish the track
+  skipped   Boolean  @default(false)
+
+  @@index([userId, playedAt])
+}
+
+model LikedTrack {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  trackId   String
+  likedAt   DateTime @default(now())
+
+  @@unique([userId, trackId])
+}
+
+model Playlist {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  artwork     String?
+  isPublic    Boolean  @default(false)
+  trackIds    String   @default("[]") // JSON array of track IDs
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Taste Profile for personalized discovery
+model TasteProfile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+
+  // Tempo preferences (weighted averages)
+  preferredTempoMin    Int      @default(80)
+  preferredTempoMax    Int      @default(130)
+
+  // Energy preference (0.0 - 1.0)
+  preferredEnergy      Float    @default(0.5)
+
+  // Mood preferences (JSON array of mood tags with weights)
+  moodWeights          String   @default("{}") // {"late_night": 0.8, "chill": 0.6}
+
+  // Rhythm preferences (JSON object)
+  rhythmWeights        String   @default("{}") // {"lo-fi": 0.9, "boom_bap": 0.7}
+
+  // Genre preferences with weights
+  genreWeights         String   @default("{}")
+
+  // Era preferences
+  eraWeights           String   @default("{}")
+
+  // Time of day patterns (JSON)
+  timePatterns         String   @default("{}") // {"morning": {"energy": 0.4}, "night": {"energy": 0.7}}
+
+  // Stats
+  totalListens         Int      @default(0)
+  totalCompletions     Int      @default(0)
+  totalSkips           Int      @default(0)
+
+  lastUpdated          DateTime @default(now())
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+// Track metadata for similarity matching
+model TrackMetadata {
+  id            String   @id @default(cuid())
+  trackId       String   @unique
+
+  // Audio features
+  tempo         Int?     // BPM
+  tempoRange    String?  // "slow" | "mid" | "fast"
+  energy        Float?   // 0.0 - 1.0
+  energyLevel   String?  // "low" | "medium" | "high"
+
+  // Rhythm and sound
+  rhythmType    String?  // "boom_bap" | "lo-fi" | "trap" | "house" | "jazz_swing" | "ambient"
+  instrumentProfile String? // "drums_forward" | "bass_heavy" | "melodic" | "atmospheric"
+
+  // Mood and feel
+  moodTags      String   @default("[]") // JSON array: ["late_night", "chill", "focus"]
+  eraFeel       String?  // "old_soul" | "modern" | "future" | "timeless"
+
+  // Source info
+  source        String   // "vybe" | "soundcloud" | "youtube_music"
+  sourceId      String?  // External ID
+
+  // Similarity cache
+  similarTrackIds String @default("[]") // Pre-computed similar tracks
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([source])
+  @@index([tempoRange, energyLevel])
+}
+
+// Listening signal for taste learning
+model ListeningSignal {
+  id          String   @id @default(cuid())
+  userId      String
+  trackId     String
+
+  // Signal type
+  signalType  String   // "play" | "complete" | "skip" | "save" | "replay" | "unlike"
+
+  // Context
+  listenDuration Int    @default(0) // seconds
+  trackDuration  Int    @default(0) // total track duration
+  skipPosition   Int?   // where they skipped (seconds)
+
+  // Time context
+  hourOfDay   Int      // 0-23
+  dayOfWeek   Int      // 0-6
+
+  // Computed weight (high: 1.0, medium: 0.5, low: 0.1)
+  weight      Float    @default(0.5)
+
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([trackId])
+}
+
+// Discovery cache for quick loading
+model DiscoveryCache {
+  id          String   @id @default(cuid())
+  userId      String
+
+  // Section type
+  section     String   // "made_for_you" | "more_like_played" | "new_but_familiar" | "late_night" | "beat_match" | "old_soul"
+
+  // Cached track IDs (JSON array)
+  trackIds    String   @default("[]")
+
+  // Rotation tracking
+  rotatedAt   DateTime @default(now())
+  expiresAt   DateTime
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, section])
+  @@index([userId])
+}
+
+// Hidden artists (user doesn't want to see)
+model HiddenArtist {
+  id        String   @id @default(cuid())
+  userId    String
+  artistId  String
+  artistName String
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, artistId])
+}
+
+// Disliked recommendations
+model DislikedTrack {
+  id        String   @id @default(cuid())
+  userId    String
+  trackId   String
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, trackId])
+}
+
+// ============================================
+// DISCOVER FEATURE MODELS
+// External music recommendations from YouTube/SoundCloud
+// ============================================
+
+// External recommendation items from YouTube/SoundCloud
+model DiscoverItem {
+  id              String    @id @default(cuid())
+
+  // Source information
+  sourcePlatform  String    // 'YOUTUBE' | 'SOUNDCLOUD'
+  externalId      String?   // YouTube video ID or SoundCloud track ID (if available)
+
+  // Display metadata
+  title           String
+  creatorName     String
+  thumbnailUrl    String
+
+  // Links - never in-app playback
+  externalUrl     String    // Direct URL to YouTube/SoundCloud
+  deepLinkUrl     String    // App deep link (youtube://..., soundcloud://...)
+  searchQuery     String    // The search query that found this item
+
+  // Timestamps
+  publishedAt     DateTime? // When the content was published on platform
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  events          DiscoverEvent[]
+  savedBy         SavedDiscoverItem[] @relation("SavedDiscoverItems")
+  hiddenBy        HiddenDiscoverItem[] @relation("HiddenDiscoverItems")
+
+  @@unique([sourcePlatform, externalId])
+  @@index([sourcePlatform])
+  @@index([searchQuery])
+}
+
+// Event tracking for discover items (impressions, clicks, saves, hides)
+model DiscoverEvent {
+  id              String    @id @default(cuid())
+  userId          String
+  discoverItemId  String
+  discoverItem    DiscoverItem @relation(fields: [discoverItemId], references: [id], onDelete: Cascade)
+
+  // Event type
+  eventType       String    // 'impression' | 'open' | 'save' | 'hide'
+
+  // Context
+  sectionId       String?   // Which section the item was shown in
+  position        Int?      // Position in the feed when event occurred
+
+  createdAt       DateTime  @default(now())
+
+  @@index([userId, eventType])
+  @@index([discoverItemId])
+  @@index([userId, createdAt])
+}
+
+// Cached discover feed per user
+model DiscoverFeedCache {
+  id              String    @id @default(cuid())
+  userId          String
+
+  // Section identifier
+  sectionId       String    // 'new_today' | 'trending' | 'similar_to_clicks' | 'hidden_gems'
+
+  // Cached item IDs (JSON array of DiscoverItem IDs)
+  itemIds         String    @default("[]")
+
+  // Cache metadata
+  generatedAt     DateTime  @default(now())
+  expiresAt       DateTime
+
+  // Generation context (for debugging/refresh logic)
+  generationContext String  @default("{}") // JSON: { searchQueries: [], preferences: {} }
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([userId, sectionId])
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// User's saved discover items (for later listening)
+model SavedDiscoverItem {
+  id              String    @id @default(cuid())
+  userId          String
+  discoverItemId  String
+  discoverItem    DiscoverItem @relation("SavedDiscoverItems", fields: [discoverItemId], references: [id], onDelete: Cascade)
+
+  // When saved
+  savedAt         DateTime  @default(now())
+
+  // Notes/tags
+  notes           String?
+
+  @@unique([userId, discoverItemId])
+  @@index([userId, savedAt])
+}
+
+// User's hidden discover items (don't show again)
+model HiddenDiscoverItem {
+  id              String    @id @default(cuid())
+  userId          String
+  discoverItemId  String
+  discoverItem    DiscoverItem @relation("HiddenDiscoverItems", fields: [discoverItemId], references: [id], onDelete: Cascade)
+
+  // Why hidden
+  reason          String?   // 'not_interested' | 'already_know' | 'dont_like_creator'
+
+  hiddenAt        DateTime  @default(now())
+
+  @@unique([userId, discoverItemId])
+  @@index([userId])
+}
