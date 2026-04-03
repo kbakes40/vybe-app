@@ -275,11 +275,14 @@ export default function NowPlayingScreen() {
         if (data.duration && data.duration > 0) {
           usePlaybackController.setState({ duration: data.duration });
         }
+      } else if (data.type === 'error') {
+        setYtLoadError(true);
+        setPlaybackState('error');
       }
     } catch {
       // Ignore parse errors
     }
-  }, [setPlaybackState, setProgress, next]);
+  }, [setPlaybackState, setProgress, next, setYtLoadError]);
 
   if (!currentTrack) {
     return (
@@ -339,7 +342,8 @@ export default function NowPlayingScreen() {
             },
             events: {
               'onReady': onPlayerReady,
-              'onStateChange': onPlayerStateChange
+              'onStateChange': onPlayerStateChange,
+              'onError': onPlayerError
             }
           });
         }
@@ -362,6 +366,10 @@ export default function NowPlayingScreen() {
             type: 'stateChange',
             state: event.data
           }));
+        }
+
+        function onPlayerError(event) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'error', code: event.data }));
         }
       </script>
     </body>
@@ -614,7 +622,7 @@ export default function NowPlayingScreen() {
                   >
                     <ExternalLink size={16} color="#fff" />
                     <Text className="text-white text-sm font-medium ml-2">
-                      {isYouTube ? 'Watch on YouTube' : 'Open in SoundCloud'}
+                      {isYouTubeMusic ? 'Watch on YouTube Music' : 'Watch on YouTube'}
                     </Text>
                   </Pressable>
                   {isSoundCloud && (
