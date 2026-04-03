@@ -5,7 +5,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
-import * as FileSystem from 'expo-file-system';
 import {
   Play,
   Pause,
@@ -22,10 +21,8 @@ import {
   RotateCcw,
   RotateCw,
   Cloud,
-  RefreshCw,
   Plus,
   Download,
-  Check,
 } from 'lucide-react-native';
 import Animated, {
   useSharedValue,
@@ -35,16 +32,12 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import YoutubePlayer from 'react-native-youtube-iframe';
 import { usePlaybackController } from '@/stores/playbackController';
-import { useDownloadsStore } from '@/stores/downloadsStore';
 import { openInSoundCloud } from '@/lib/soundcloudHandoff';
 import { formatDuration } from '@/data/mockData';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ARTWORK_SIZE = SCREEN_WIDTH - 80;
-const VIDEO_WIDTH = ARTWORK_SIZE;
-const VIDEO_HEIGHT = Math.round((ARTWORK_SIZE * 9) / 16);
 
 const normalizePlaybackSeconds = (value: number): number => {
   if (!Number.isFinite(value) || value <= 0) return 0;
@@ -135,13 +128,12 @@ function YouTubeMusicIcon({ size = 16 }: { size?: number }) {
 export default function NowPlayingScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const youtubePlayerRef = useRef<any>(null);
 
   const currentTrack = usePlaybackController(s => s.currentTrack);
   const playbackState = usePlaybackController(s => s.playbackState);
   const isPlaying = playbackState === 'playing';
+  const shouldPause = playbackState === 'playing' || playbackState === 'buffering' || playbackState === 'loading';
   const isLoading = playbackState === 'loading';
-  const isBuffering = playbackState === 'buffering';
   const isError = playbackState === 'error';
   const progress = usePlaybackController(s => s.progress);
   const duration = usePlaybackController(s => s.duration);
@@ -151,8 +143,8 @@ export default function NowPlayingScreen() {
   const likedTracks = usePlaybackController(s => s.likedTracks);
   const currentSource = usePlaybackController(s => s.currentSource);
 
-  // Determine if we're in a "working" state (loading or buffering)
-  const isWorking = isLoading || isBuffering;
+  // Only block the center button while awaiting first load — not during buffering (user must be able to pause).
+  const isPlayButtonBusy = isLoading;
 
   const pause = usePlaybackController(s => s.pause);
   const play = usePlaybackController(s => s.play);
@@ -160,12 +152,9 @@ export default function NowPlayingScreen() {
   const previous = usePlaybackController(s => s.previous);
   const seekTo = usePlaybackController(s => s.seekTo);
   const setProgress = usePlaybackController(s => s.setProgress);
-  const setPlaybackState = usePlaybackController(s => s.setPlaybackState);
   const toggleShuffle = usePlaybackController(s => s.toggleShuffle);
   const toggleRepeat = usePlaybackController(s => s.toggleRepeat);
   const toggleLike = usePlaybackController(s => s.toggleLike);
-  const addDownload = useDownloadsStore(s => s.addDownload);
-  const isTrackDownloaded = useDownloadsStore(s => s.isTrackDownloaded);
 
   const playScale = useSharedValue(1);
   const translateY = useSharedValue(0);
@@ -175,61 +164,22 @@ export default function NowPlayingScreen() {
   const isYouTubeMusic = currentSource === 'youtube_music';
   const isSoundCloud = currentSource === 'soundcloud';
   const isExternalPlayback = isYouTube || isYouTubeMusic;
-  const isExternalOnly = isSoundCloud;
   const ytVideoId = currentTrack?.youtubeId || currentTrack?.youtubeMusicId || null;
 
-  // YouTube playback state
-  const [ytLoadError, setYtLoadError] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false);
-
-  // Reset YouTube error state when track changes
-  useEffect(() => {
-    if (isYouTube || isYouTubeMusic) {
-      setYtLoadError(false);
-    }
-  }, [currentTrack?.id, isYouTube, isYouTubeMusic]);
+  const [isDownloadPending, setIsDownloadPending] = useState(false);
+  const downloadPendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const playButtonStyle = useAnimatedStyle(() => ({
     transform: [{ scale: playScale.value }],
   }));
-  const isDownloaded = currentTrack ? isTrackDownloaded(currentTrack.id) : false;
 
-  // Keep progress and duration synced to the actual embedded YouTube player.
-  // This fills gaps when onProgress events are sparse on some videos/devices.
   useEffect(() => {
-    if (!(isYouTube || isYouTubeMusic) || !ytVideoId || !youtubePlayerRef.current) {
-      return;
-    }
-
-    const intervalId = setInterval(async () => {
-      try {
-        const player = youtubePlayerRef.current;
-        if (!player) return;
-
-        const [currentTime, currentDuration] = await Promise.all([
-          player.getCurrentTime?.(),
-          player.getDuration?.(),
-        ]);
-
-        if (typeof currentTime === 'number' && Number.isFinite(currentTime)) {
-          setProgress(normalizePlaybackSeconds(currentTime));
-        }
-
-        if (
-          typeof currentDuration === 'number' &&
-          Number.isFinite(currentDuration) &&
-          currentDuration > 0 &&
-          normalizePlaybackSeconds(currentDuration) !== duration
-        ) {
-          usePlaybackController.setState({ duration: normalizePlaybackSeconds(currentDuration) });
-        }
-      } catch {
-        // Ignore transient bridge errors while the player initializes.
+    return () => {
+      if (downloadPendingTimeoutRef.current) {
+        clearTimeout(downloadPendingTimeoutRef.current);
       }
-    }, 500);
-
-    return () => clearInterval(intervalId);
-  }, [isYouTube, isYouTubeMusic, ytVideoId, duration, setProgress]);
+    };
+  }, []);
 
   const handleClose = () => {
     // Light haptic when collapsing full player back to mini player
@@ -263,20 +213,16 @@ export default function NowPlayingScreen() {
       return;
     }
 
-    // For embedded YouTube players, keep store state in lockstep so the
-    // `play` prop immediately controls the iframe player.
-    if (isYouTube || isYouTubeMusic) {
-      if (isPlaying) {
-        setPlaybackState('paused');
-        await pause();
-      } else {
-        setPlaybackState('playing');
-        await play();
-      }
-      return;
+    if (__DEV__) {
+      console.log('[NowPlaying] center button', {
+        willPause: shouldPause,
+        source: currentSource,
+        playbackState,
+      });
     }
 
-    if (isPlaying) {
+    // YouTube / YouTube Music: pool provides audio; `play={isPlaying}` syncs the muted inline embed.
+    if (shouldPause) {
       await pause();
     } else {
       await play();
@@ -284,12 +230,7 @@ export default function NowPlayingScreen() {
   };
 
   const handleSeek = (value: number) => {
-    // SoundCloud and YouTube Music are external-only - no seeking
     if (isSoundCloud) return;
-
-    if ((isYouTube || isYouTubeMusic) && youtubePlayerRef.current) {
-      youtubePlayerRef.current.seekTo(value);
-    }
     seekTo(value);
   };
 
@@ -317,66 +258,20 @@ export default function NowPlayingScreen() {
     }
   }, [isYouTube, isYouTubeMusic, isSoundCloud, currentTrack]);
 
-  const handleDownloadTrack = useCallback(async () => {
-    if (!currentTrack || !ytVideoId || isDownloading || isDownloaded) return;
+  const handleShareTrack = useCallback(() => {
+    handleOpenExternal();
+  }, [handleOpenExternal]);
 
-    const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
-    if (!baseUrl) {
-      usePlaybackController.setState({ error: 'Missing EXPO_PUBLIC_BACKEND_URL' });
-      setPlaybackState('error');
-      return;
+  const handleDownloadPlaceholder = useCallback(() => {
+    setIsDownloadPending(true);
+    handleShareTrack();
+    if (downloadPendingTimeoutRef.current) {
+      clearTimeout(downloadPendingTimeoutRef.current);
     }
-
-    try {
-      setIsDownloading(true);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-      const downloadDir = `${FileSystem.documentDirectory}downloads`;
-      const dirInfo = await FileSystem.getInfoAsync(downloadDir);
-      if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(downloadDir, { intermediates: true });
-      }
-
-      const targetUri = `${downloadDir}/${currentTrack.id}.mp4`;
-      const response = await FileSystem.downloadAsync(
-        `${baseUrl}/api/youtube/audio/${ytVideoId}`,
-        targetUri
-      );
-
-      if (response.status !== 200) {
-        throw new Error(`Download failed with status ${response.status}`);
-      }
-
-      const fileInfo = await FileSystem.getInfoAsync(response.uri, { size: true });
-      addDownload({
-        ...currentTrack,
-        source: 'vybe',
-        audioUrl: response.uri,
-        localFilePath: response.uri,
-        isDownloaded: true,
-        importedAt: Date.now(),
-        isUserImported: false,
-        fileSize: fileInfo.exists ? (fileInfo.size ?? 0) : 0,
-        fileFormat: 'MP4',
-      });
-
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (downloadError) {
-      console.error('[NowPlaying] Download failed:', downloadError);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      usePlaybackController.setState({ error: 'Failed to download track audio' });
-      setPlaybackState('error');
-    } finally {
-      setIsDownloading(false);
-    }
-  }, [
-    currentTrack,
-    ytVideoId,
-    isDownloading,
-    isDownloaded,
-    addDownload,
-    setPlaybackState,
-  ]);
+    downloadPendingTimeoutRef.current = setTimeout(() => {
+      setIsDownloadPending(false);
+    }, 1800);
+  }, [handleShareTrack]);
 
 
 
@@ -449,109 +344,46 @@ export default function NowPlayingScreen() {
               <View className="w-10" />
             </View>
 
-            {/* Artwork / Video / Embed */}
+            {/* Artwork */}
             <View className="items-center justify-center flex-1 px-10">
-              {isExternalPlayback && ytVideoId ? (
-                <View
+              {isExternalPlayback ? (
+                /* YouTube / YouTube Music — show artwork with source badge, pool owns audio */
+                <Animated.View
                   style={{
-                    width: ARTWORK_SIZE,
-                    height: VIDEO_HEIGHT,
-                    borderRadius: 12,
-                    overflow: 'hidden',
-                    backgroundColor: '#000',
+                    shadowColor: isYouTubeMusic ? '#FF0000' : '#FF0000',
+                    shadowOffset: { width: 0, height: 20 },
+                    shadowOpacity: 0.4,
+                    shadowRadius: 40,
+                    elevation: 20,
                   }}
                 >
-                  <View
-                    style={{
-                      width: VIDEO_WIDTH,
-                      height: VIDEO_HEIGHT,
-                      backgroundColor: '#000',
-                    }}
-                  >
-                    <YoutubePlayer
-                      ref={youtubePlayerRef}
-                      height={VIDEO_HEIGHT}
-                      width={VIDEO_WIDTH}
-                      videoId={ytVideoId}
-                      play={isPlaying}
-                      onChangeState={(state: string) => {
-                        if (state === 'ended') {
-                          setPlaybackState('paused');
-                        } else if (state === 'playing') {
-                          setPlaybackState('playing');
-                        } else if (state === 'paused') {
-                          setPlaybackState('paused');
-                        } else if (state === 'buffering') {
-                          setPlaybackState('buffering');
-                        }
-                      }}
-                      onProgress={(progress: { currentTime: number; duration: number }) => {
-                        setProgress(normalizePlaybackSeconds(progress.currentTime));
-                        if (progress.duration && progress.duration > 0) {
-                          usePlaybackController.setState({
-                            duration: normalizePlaybackSeconds(progress.duration),
-                          });
-                        }
-                      }}
-                      onError={(error: any) => {
-                        console.log('[YouTube] Player error:', error);
-                        setYtLoadError(true);
-                        setPlaybackState('error');
-                      }}
-                      onReady={() => {
-                        setYtLoadError(false);
-                      }}
+                  <View style={{ width: ARTWORK_SIZE, height: ARTWORK_SIZE, borderRadius: 12, overflow: 'hidden' }}>
+                    <Image
+                      source={{ uri: currentTrack.artwork }}
+                      style={{ width: ARTWORK_SIZE, height: ARTWORK_SIZE }}
+                      contentFit="cover"
                     />
-                  </View>
-                  {/* YouTube / YouTube Music error overlay */}
-                  {ytLoadError && (
+                    {/* Source badge — bottom-right corner */}
                     <View
                       style={{
                         position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        backgroundColor: 'rgba(0, 0, 0, 0.95)',
+                        bottom: 12,
+                        right: 12,
+                        flexDirection: 'row',
                         alignItems: 'center',
-                        justifyContent: 'center',
-                        padding: 24,
+                        backgroundColor: 'rgba(0,0,0,0.7)',
+                        borderRadius: 20,
+                        paddingHorizontal: 10,
+                        paddingVertical: 5,
                       }}
                     >
-                      {isYouTubeMusic ? <YouTubeMusicIcon size={48} /> : <YouTubeIcon size={48} />}
-                      <Text className="text-white font-semibold mt-3 text-base">
-                        Playback unavailable in VYBE
+                      {isYouTubeMusic ? <YouTubeMusicIcon size={14} /> : <YouTubeIcon size={14} />}
+                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 5 }}>
+                        {isYouTubeMusic ? 'YouTube Music' : 'YouTube'}
                       </Text>
-                      <Text className="text-white/60 mt-1 text-sm text-center">
-                        This video cannot be played within the app
-                      </Text>
-                      <View className="flex-row mt-6">
-                        <Pressable
-                          onPress={() => {
-                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                            setYtLoadError(false);
-                          }}
-                          className="flex-row items-center bg-white/10 rounded-full py-3 px-5 mr-3"
-                        >
-                          <RefreshCw size={16} color="#fff" />
-                          <Text className="text-white text-sm font-medium ml-2">Retry</Text>
-                        </Pressable>
-                        <Pressable
-                          onPress={() => {
-                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                            handleOpenExternal();
-                          }}
-                          className="flex-row items-center bg-[#FF0000] rounded-full py-3 px-5"
-                        >
-                          <ExternalLink size={16} color="#fff" />
-                          <Text className="text-white text-sm font-medium ml-2">
-                            {isYouTubeMusic ? 'Open in YouTube Music' : 'Open in YouTube'}
-                          </Text>
-                        </Pressable>
-                      </View>
                     </View>
-                  )}
-                </View>
+                  </View>
+                </Animated.View>
               ) : isSoundCloud ? (
                 /* SoundCloud - Search handoff only, no inline playback */
                 <View
@@ -677,19 +509,16 @@ export default function NowPlayingScreen() {
                       </Text>
                     </Pressable>
                     <Pressable
-                      onPress={handleDownloadTrack}
-                      disabled={isDownloading || isDownloaded}
+                      onPress={handleDownloadPlaceholder}
                       className="flex-row items-center justify-center bg-white/10 rounded-full py-2.5 px-4"
                     >
-                      {isDownloading ? (
+                      {isDownloadPending ? (
                         <ActivityIndicator size="small" color="#fff" />
-                      ) : isDownloaded ? (
-                        <Check size={16} color="#22C55E" />
                       ) : (
                         <Download size={16} color="#fff" />
                       )}
                       <Text className="text-white text-sm font-medium ml-2">
-                        {isDownloading ? 'Downloading...' : isDownloaded ? 'Downloaded' : 'Download'}
+                        {isDownloadPending ? 'Downloading...' : 'Download'}
                       </Text>
                     </Pressable>
                   </View>
@@ -773,10 +602,10 @@ export default function NowPlayingScreen() {
                   }}
                   style={playButtonStyle}
                   className="w-18 h-18 bg-white rounded-full items-center justify-center"
-                  disabled={isWorking}
+                  disabled={isPlayButtonBusy}
                 >
                   <View className={`w-[72px] h-[72px] rounded-full items-center justify-center ${isError ? 'bg-red-500' : 'bg-white'}`}>
-                    {isWorking ? (
+                    {isPlayButtonBusy ? (
                       <ActivityIndicator size="large" color="#0A0A0A" />
                     ) : isPlaying ? (
                       <Pause size={36} color="#0A0A0A" fill="#0A0A0A" />
@@ -822,7 +651,7 @@ export default function NowPlayingScreen() {
                 <Pressable className="p-3">
                   <ListMusic size={24} color="#fff" />
                 </Pressable>
-                <Pressable className="p-3">
+                <Pressable className="p-3" onPress={handleShareTrack}>
                   <Share2 size={24} color="#fff" />
                 </Pressable>
               </View>
