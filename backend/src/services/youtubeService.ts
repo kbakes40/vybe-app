@@ -14,6 +14,102 @@ import type {
 
 const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3';
 
+// ─── Quota Tracking ──────────────────────────────────────────────────────────
+// YouTube Data API v3 costs: search.list (part=snippet) = 100 units per call
+const QUOTA_COST_SEARCH = 100;
+
+interface QuotaStats {
+  totalUnits: number;
+  callCount: number;
+  cacheHits: number;
+  resetAt: number; // epoch ms when daily quota resets (midnight PT)
+}
+
+const quotaStats: QuotaStats = {
+  totalUnits: 0,
+  callCount: 0,
+  cacheHits: 0,
+  resetAt: getNextMidnightPT(),
+};
+
+function getNextMidnightPT(): number {
+  // YouTube quota resets midnight Pacific Time
+  const now = new Date();
+  const pt = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+  pt.setHours(24, 0, 0, 0);
+  return pt.getTime();
+}
+
+function trackQuotaUsage(units: number, caller: string): void {
+  const now = Date.now();
+  if (now > quotaStats.resetAt) {
+    quotaStats.totalUnits = 0;
+    quotaStats.callCount = 0;
+    quotaStats.cacheHits = 0;
+    quotaStats.resetAt = getNextMidnightPT();
+    console.log('[YouTube Quota] Daily quota reset');
+  }
+  quotaStats.totalUnits += units;
+  quotaStats.callCount++;
+  console.log(
+    `[YouTube Quota] +${units} units (${caller}) | today: ${quotaStats.totalUnits} units / ${quotaStats.callCount} calls | ${quotaStats.cacheHits} cache hits saved`
+  );
+}
+
+export function getQuotaStats(): QuotaStats {
+  return { ...quotaStats };
+}
+
+// ─── Search Result Cache ──────────────────────────────────────────────────────
+// Caches per-query results for 24 hours to avoid burning quota on repeated queries
+
+const SEARCH_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+interface CacheEntry {
+  results: YouTubeDiscoverResult[];
+  expiresAt: number;
+}
+
+const searchCache = new Map<string, CacheEntry>();
+
+function getCachedSearch(query: string, maxResults: number): YouTubeDiscoverResult[] | null {
+  const key = `${query}::${maxResults}`;
+  const entry = searchCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    searchCache.delete(key);
+    return null;
+  }
+  return entry.results;
+}
+
+function setCachedSearch(query: string, maxResults: number, results: YouTubeDiscoverResult[]): void {
+  const key = `${query}::${maxResults}`;
+  searchCache.set(key, { results, expiresAt: Date.now() + SEARCH_CACHE_TTL_MS });
+}
+
+/**
+ * Returns current cache size (for diagnostics)
+ */
+export function getSearchCacheSize(): number {
+  return searchCache.size;
+}
+
+/**
+ * Clear expired entries from the cache (call periodically if needed)
+ */
+export function purgeExpiredSearchCache(): number {
+  const now = Date.now();
+  let purged = 0;
+  for (const [key, entry] of searchCache.entries()) {
+    if (now > entry.expiresAt) {
+      searchCache.delete(key);
+      purged++;
+    }
+  }
+  return purged;
+}
+
 /**
  * Check if YouTube API is available
  */
@@ -73,6 +169,14 @@ export async function searchYouTube(
     return [];
   }
 
+  // Check cache first
+  const cached = getCachedSearch(query, maxResults);
+  if (cached) {
+    quotaStats.cacheHits++;
+    console.log(`[YouTube Cache] HIT for "${query}" (saved ${QUOTA_COST_SEARCH} units)`);
+    return cached;
+  }
+
   const params = new URLSearchParams({
     part: 'snippet',
     type: 'video',
@@ -92,9 +196,11 @@ export async function searchYouTube(
       return [];
     }
 
+    trackQuotaUsage(QUOTA_COST_SEARCH, `search("${query}")`);
+
     const data = await response.json() as YouTubeSearchResponse;
 
-    return data.items
+    const results = data.items
       .filter((item): item is YouTubeSearchItem & { id: { videoId: string } } =>
         Boolean(item.id.videoId)
       )
@@ -108,6 +214,9 @@ export async function searchYouTube(
         publishedAt: item.snippet.publishedAt,
         searchQuery: query,
       }));
+
+    setCachedSearch(query, maxResults, results);
+    return results;
   } catch (error) {
     console.error('[YouTube] Search error:', error);
     return [];

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import YTDlpWrap from "yt-dlp-wrap";
 import { Readable } from "stream";
+import { getQuotaStats, getSearchCacheSize, purgeExpiredSearchCache } from "../services/youtubeService";
 
 const youtubeRouter = new Hono();
 const ytDlp = new YTDlpWrap("/opt/homebrew/bin/yt-dlp");
@@ -39,6 +40,30 @@ youtubeRouter.get("/audio/:videoId", async (c) => {
     console.error("YouTube audio proxy failed:", error);
     return c.json({ error: "Failed to stream YouTube audio" }, 500);
   }
+});
+
+youtubeRouter.get("/quota", (c) => {
+  const stats = getQuotaStats();
+  const cacheSize = getSearchCacheSize();
+  const purged = purgeExpiredSearchCache();
+  return c.json({
+    data: {
+      quota: {
+        unitsUsedToday: stats.totalUnits,
+        dailyLimit: 10000,
+        percentUsed: ((stats.totalUnits / 10000) * 100).toFixed(1) + '%',
+        apiCallsToday: stats.callCount,
+        cacheHitsToday: stats.cacheHits,
+        unitsSavedByCache: stats.cacheHits * 100,
+        resetsAt: new Date(stats.resetAt).toISOString(),
+      },
+      cache: {
+        entriesActive: cacheSize - purged,
+        entriesPurged: purged,
+        ttlHours: 24,
+      },
+    },
+  });
 });
 
 export { youtubeRouter };
