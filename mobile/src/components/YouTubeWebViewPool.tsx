@@ -124,7 +124,7 @@ const WARM_WEBVIEW_HTML = `
     function createHiddenPlayer() {
       if (player) return;
       player = new YT.Player('yt-hidden-root', {
-        width: '1', height: '1',
+        width: '320', height: '180',
         playerVars: {
           playsinline: 1, controls: 0, modestbranding: 1,
           rel: 0, fs: 0, iv_load_policy: 3, origin: 'https://vybe.app'

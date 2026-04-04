@@ -232,7 +232,7 @@ export function MiniPlayer() {
   const handleDownload = async () => {
     if (!currentTrack || isImporting) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const BACKEND_URL = 'http://192.168.68.50:3000';
+    const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
     await downloadYouTubeTrack(currentTrack, BACKEND_URL);
   };
 
