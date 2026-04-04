@@ -1,5 +1,6 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useRef, useEffect } from 'react';
 import { View, Text, Pressable, Dimensions, Linking, ActivityIndicator } from 'react-native';
+import { WebView } from 'react-native-webview';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -39,6 +40,7 @@ import { formatDuration } from '@/data/mockData';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const ARTWORK_SIZE = SCREEN_WIDTH - 80;
+const VIDEO_HEIGHT = Math.round(ARTWORK_SIZE * (9 / 16));
 
 const normalizePlaybackSeconds = (value: number): number => {
   if (!Number.isFinite(value) || value <= 0) return 0;
@@ -48,7 +50,115 @@ const normalizePlaybackSeconds = (value: number): number => {
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
-// YouTube icon component
+// ─── YouTube Inline Video Player ─────────────────────────────────────────────
+
+function buildYouTubeHTML(videoId: string): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    html,body{width:100%;height:100%;background:#000;overflow:hidden}
+    #player,iframe{width:100%!important;height:100%!important;border:none}
+  </style>
+</head>
+<body>
+  <div id="player"></div>
+  <script>
+  (function(){
+    var player=null,ready=false;
+    var QUALITY=['hd1080','hd720','large','medium'];
+    function applyQuality(){
+      try{
+        var avail=player.getAvailableQualityLevels();
+        for(var i=0;i<QUALITY.length;i++){
+          if(avail.indexOf(QUALITY[i])!==-1){player.setPlaybackQuality(QUALITY[i]);return;}
+        }
+      }catch(e){}
+    }
+    function onReady(){
+      ready=true;
+      applyQuality();
+      try{window.ReactNativeWebView.postMessage(JSON.stringify({type:'ready'}))}catch(e){}
+    }
+    function onStateChange(e){
+      var map={'-1':'idle','0':'ended','1':'playing','2':'paused','3':'buffering','5':'idle'};
+      try{window.ReactNativeWebView.postMessage(JSON.stringify({
+        type:'stateChange',state:e.data,playbackState:map[e.data.toString()]||'idle'
+      }))}catch(e){}
+    }
+    function init(){
+      player=new YT.Player('player',{
+        videoId:'${videoId}',
+        playerVars:{autoplay:0,controls:0,mute:0,playsinline:1,
+          vq:'hd1080',rel:0,modestbranding:1,iv_load_policy:3,origin:'https://vybe.app'},
+        events:{onReady:onReady,onStateChange:onStateChange}
+      });
+    }
+    if(window.YT&&window.YT.Player){init();}
+    else{
+      window.onYouTubeIframeAPIReady=init;
+      var s=document.createElement('script');
+      s.src='https://www.youtube.com/iframe_api';
+      document.head.appendChild(s);
+    }
+    window.playVideo=function(){if(player&&ready)try{applyQuality();player.playVideo()}catch(e){}};
+    window.pauseVideo=function(){if(player&&ready)try{player.pauseVideo()}catch(e){}};
+    window.seekTo=function(s){if(player&&ready)try{player.seekTo(s,true)}catch(e){}};
+  })();
+  </script>
+</body>
+</html>`;
+}
+
+interface YouTubeInlinePlayerProps {
+  videoId: string;
+  isPlaying: boolean;
+}
+
+function YouTubeInlinePlayer({ videoId, isPlaying }: YouTubeInlinePlayerProps) {
+  const webViewRef = useRef<WebView>(null);
+  const isReadyRef = useRef(false);
+
+  useEffect(() => {
+    if (!isReadyRef.current) return;
+    const js = isPlaying
+      ? 'window.playVideo&&window.playVideo();true;'
+      : 'window.pauseVideo&&window.pauseVideo();true;';
+    webViewRef.current?.injectJavaScript(js);
+  }, [isPlaying]);
+
+  const handleMessage = useCallback((event: { nativeEvent: { data: string } }) => {
+    try {
+      const msg = JSON.parse(event.nativeEvent.data);
+      if (msg.type === 'ready') {
+        isReadyRef.current = true;
+        if (isPlaying) {
+          webViewRef.current?.injectJavaScript('window.playVideo&&window.playVideo();true;');
+        }
+      }
+    } catch (_) {}
+  }, [isPlaying]);
+
+  return (
+    <WebView
+      key={videoId}
+      ref={webViewRef}
+      source={{ html: buildYouTubeHTML(videoId) }}
+      style={{ width: ARTWORK_SIZE, height: VIDEO_HEIGHT }}
+      allowsInlineMediaPlayback
+      allowsFullscreenVideo
+      mediaPlaybackRequiresUserAction={false}
+      scrollEnabled={false}
+      onMessage={handleMessage}
+      originWhitelist={['*']}
+    />
+  );
+}
+
+// ─── Source icon components ───────────────────────────────────────────────────
+
 function YouTubeIcon({ size = 16 }: { size?: number }) {
   return (
     <View
@@ -78,7 +188,6 @@ function YouTubeIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-// SoundCloud icon component
 function SoundCloudIcon({ size = 16 }: { size?: number }) {
   return (
     <View
@@ -96,7 +205,6 @@ function SoundCloudIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-// YouTube Music icon component (circular with play icon)
 function YouTubeMusicIcon({ size = 16 }: { size?: number }) {
   return (
     <View
@@ -126,6 +234,8 @@ function YouTubeMusicIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+// ─── Main screen ─────────────────────────────────────────────────────────────
+
 export default function NowPlayingScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -144,7 +254,6 @@ export default function NowPlayingScreen() {
   const likedTracks = usePlaybackController(s => s.likedTracks);
   const currentSource = usePlaybackController(s => s.currentSource);
 
-  // Only block the center button while awaiting first load — not during buffering (user must be able to pause).
   const isPlayButtonBusy = isLoading;
 
   const pause = usePlaybackController(s => s.pause);
@@ -164,7 +273,6 @@ export default function NowPlayingScreen() {
   const isYouTube = currentSource === 'youtube';
   const isYouTubeMusic = currentSource === 'youtube_music';
   const isSoundCloud = currentSource === 'soundcloud';
-  // All three sources play via WebView pool — not external handoff
   const isExternalPlayback = isYouTube || isYouTubeMusic || isSoundCloud;
   const ytVideoId = currentTrack?.youtubeId || currentTrack?.youtubeMusicId || null;
   const scTrackUrl = currentTrack?.soundcloudUrl || null;
@@ -178,7 +286,6 @@ export default function NowPlayingScreen() {
   }));
 
   const handleClose = () => {
-    // Light haptic when collapsing full player back to mini player
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.back();
   };
@@ -204,14 +311,8 @@ export default function NowPlayingScreen() {
 
   const handlePlayPause = async () => {
     if (__DEV__) {
-      console.log('[NowPlaying] center button', {
-        willPause: shouldPause,
-        source: currentSource,
-        playbackState,
-      });
+      console.log('[NowPlaying] center button', { willPause: shouldPause, source: currentSource, playbackState });
     }
-
-    // YouTube / YouTube Music: pool provides audio; `play={isPlaying}` syncs the muted inline embed.
     if (shouldPause) {
       await pause();
     } else {
@@ -224,13 +325,11 @@ export default function NowPlayingScreen() {
   };
 
   const handleSeekForward = () => {
-    const newProgress = Math.min(progress + 15, duration);
-    handleSeek(newProgress);
+    handleSeek(Math.min(progress + 15, duration));
   };
 
   const handleSeekBackward = () => {
-    const newProgress = Math.max(progress - 15, 0);
-    handleSeek(newProgress);
+    handleSeek(Math.max(progress - 15, 0));
   };
 
   const handleOpenExternal = useCallback(() => {
@@ -240,7 +339,6 @@ export default function NowPlayingScreen() {
     } else if (isYouTubeMusic && currentTrack?.youtubeMusicUrl) {
       Linking.openURL(currentTrack.youtubeMusicUrl);
     } else if (isSoundCloud && currentTrack) {
-      // Use search handoff for SoundCloud - opens search with artist + title
       openInSoundCloud(currentTrack);
     }
   }, [isYouTube, isYouTubeMusic, isSoundCloud, currentTrack]);
@@ -271,8 +369,6 @@ export default function NowPlayingScreen() {
     }
   }, [currentTrack, ytVideoId, scTrackUrl, isSoundCloud, isDownloadPending, isDownloaded]);
 
-
-
   if (!currentTrack) {
     return (
       <View className="flex-1 bg-[#0A0A0A] items-center justify-center">
@@ -284,9 +380,6 @@ export default function NowPlayingScreen() {
   const displayProgress = normalizePlaybackSeconds(progress);
   const displayDuration = normalizePlaybackSeconds(duration);
   const progressPercent = displayDuration > 0 ? (displayProgress / displayDuration) * 100 : 0;
-
-
-
 
   return (
     <GestureDetector gesture={panGesture}>
@@ -309,41 +402,48 @@ export default function NowPlayingScreen() {
                   {isYouTube ? (
                     <>
                       <YouTubeIcon size={14} />
-                      <Text className="text-white font-semibold text-sm ml-1.5">
-                        YouTube
-                      </Text>
+                      <Text className="text-white font-semibold text-sm ml-1.5">YouTube</Text>
                     </>
                   ) : isYouTubeMusic ? (
                     <>
                       <YouTubeMusicIcon size={14} />
-                      <Text className="text-white font-semibold text-sm ml-1.5">
-                        YouTube Music
-                      </Text>
+                      <Text className="text-white font-semibold text-sm ml-1.5">YouTube Music</Text>
                     </>
                   ) : isSoundCloud ? (
                     <>
                       <SoundCloudIcon size={14} />
-                      <Text className="text-white font-semibold text-sm ml-1.5">
-                        SoundCloud
-                      </Text>
+                      <Text className="text-white font-semibold text-sm ml-1.5">SoundCloud</Text>
                     </>
                   ) : (
-                    <Text className="text-white font-semibold text-sm">
-                      {currentTrack.album}
-                    </Text>
+                    <Text className="text-white font-semibold text-sm">{currentTrack.album}</Text>
                   )}
                 </View>
               </View>
               <View className="w-10" />
             </View>
 
-            {/* Artwork */}
+            {/* Artwork / Video */}
             <View className="items-center justify-center flex-1 px-10">
-              {isExternalPlayback ? (
-                /* YouTube / YouTube Music / SoundCloud — artwork with source badge, pool owns audio */
+              {(isYouTube || isYouTubeMusic) && ytVideoId ? (
+                /* YouTube / YouTube Music — show live video at highest quality */
                 <Animated.View
                   style={{
-                    shadowColor: isSoundCloud ? '#FF5500' : '#FF0000',
+                    shadowColor: '#FF0000',
+                    shadowOffset: { width: 0, height: 20 },
+                    shadowOpacity: 0.4,
+                    shadowRadius: 40,
+                    elevation: 20,
+                    borderRadius: 12,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <YouTubeInlinePlayer videoId={ytVideoId} isPlaying={isPlaying} />
+                </Animated.View>
+              ) : isSoundCloud ? (
+                /* SoundCloud — artwork with source badge */
+                <Animated.View
+                  style={{
+                    shadowColor: '#FF5500',
                     shadowOffset: { width: 0, height: 20 },
                     shadowOpacity: 0.4,
                     shadowRadius: 40,
@@ -356,7 +456,6 @@ export default function NowPlayingScreen() {
                       style={{ width: ARTWORK_SIZE, height: ARTWORK_SIZE }}
                       contentFit="cover"
                     />
-                    {/* Source badge — bottom-right corner */}
                     <View
                       style={{
                         position: 'absolute',
@@ -370,14 +469,13 @@ export default function NowPlayingScreen() {
                         paddingVertical: 5,
                       }}
                     >
-                      {isSoundCloud ? <SoundCloudIcon size={14} /> : isYouTubeMusic ? <YouTubeMusicIcon size={14} /> : <YouTubeIcon size={14} />}
-                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 5 }}>
-                        {isSoundCloud ? 'SoundCloud' : isYouTubeMusic ? 'YouTube Music' : 'YouTube'}
-                      </Text>
+                      <SoundCloudIcon size={14} />
+                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 5 }}>SoundCloud</Text>
                     </View>
                   </View>
                 </Animated.View>
               ) : (
+                /* VYBE / local — square artwork */
                 <Animated.View
                   style={{
                     shadowColor: '#8B5CF6',
@@ -389,11 +487,7 @@ export default function NowPlayingScreen() {
                 >
                   <Image
                     source={{ uri: currentTrack.artwork }}
-                    style={{
-                      width: ARTWORK_SIZE,
-                      height: ARTWORK_SIZE,
-                      borderRadius: 12,
-                    }}
+                    style={{ width: ARTWORK_SIZE, height: ARTWORK_SIZE, borderRadius: 12 }}
                     contentFit="cover"
                   />
                 </Animated.View>
@@ -426,40 +520,37 @@ export default function NowPlayingScreen() {
                 </Pressable>
               </View>
 
-              {/* Open in external app button - not shown for YouTube Music (CTA is on artwork) */}
               {isExternalPlayback ? (
-                <View>
-                  <View className="flex-row items-center mt-4">
-                    <Pressable
-                      onPress={handleOpenExternal}
-                      className="flex-row items-center justify-center bg-white/10 rounded-full py-2.5 px-4 mr-3"
+                <View className="flex-row items-center mt-4">
+                  <Pressable
+                    onPress={handleOpenExternal}
+                    className="flex-row items-center justify-center bg-white/10 rounded-full py-2.5 px-4 mr-3"
+                  >
+                    <ExternalLink size={16} color="#fff" />
+                    <Text className="text-white text-sm font-medium ml-2">
+                      {isSoundCloud ? 'Open in SoundCloud' : isYouTubeMusic ? 'Watch on YouTube Music' : 'Watch on YouTube'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleDownload}
+                    disabled={isDownloadPending || isDownloaded}
+                    className="flex-row items-center justify-center rounded-full py-2.5 px-4"
+                    style={{ backgroundColor: isDownloaded ? 'rgba(34,197,94,0.2)' : 'rgba(255,255,255,0.1)' }}
+                  >
+                    {isDownloadPending ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : isDownloaded ? (
+                      <Check size={16} color="#22c55e" />
+                    ) : (
+                      <Download size={16} color="#fff" />
+                    )}
+                    <Text
+                      className="text-sm font-medium ml-2"
+                      style={{ color: isDownloaded ? '#22c55e' : '#fff' }}
                     >
-                      <ExternalLink size={16} color="#fff" />
-                      <Text className="text-white text-sm font-medium ml-2">
-                        {isSoundCloud ? 'Open in SoundCloud' : isYouTubeMusic ? 'Watch on YouTube Music' : 'Watch on YouTube'}
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={handleDownload}
-                      disabled={isDownloadPending || isDownloaded}
-                      className="flex-row items-center justify-center rounded-full py-2.5 px-4"
-                      style={{ backgroundColor: isDownloaded ? 'rgba(34,197,94,0.2)' : 'rgba(255,255,255,0.1)' }}
-                    >
-                      {isDownloadPending ? (
-                        <ActivityIndicator size="small" color="#fff" />
-                      ) : isDownloaded ? (
-                        <Check size={16} color="#22c55e" />
-                      ) : (
-                        <Download size={16} color="#fff" />
-                      )}
-                      <Text
-                        className="text-sm font-medium ml-2"
-                        style={{ color: isDownloaded ? '#22c55e' : '#fff' }}
-                      >
-                        {isDownloadPending ? 'Downloading...' : isDownloaded ? 'Downloaded' : 'Download'}
-                      </Text>
-                    </Pressable>
-                  </View>
+                      {isDownloadPending ? 'Downloading...' : isDownloaded ? 'Downloaded' : 'Download'}
+                    </Text>
+                  </Pressable>
                 </View>
               ) : null}
 
@@ -499,10 +590,7 @@ export default function NowPlayingScreen() {
                   }}
                   className="p-3"
                 >
-                  <Shuffle
-                    size={24}
-                    color={isShuffled ? '#8B5CF6' : '#fff'}
-                  />
+                  <Shuffle size={24} color={isShuffled ? '#8B5CF6' : '#fff'} />
                 </Pressable>
 
                 {isExternalPlayback ? (
@@ -517,12 +605,8 @@ export default function NowPlayingScreen() {
 
                 <AnimatedPressable
                   onPress={handlePlayPause}
-                  onPressIn={() => {
-                    playScale.value = withSpring(0.9);
-                  }}
-                  onPressOut={() => {
-                    playScale.value = withSpring(1);
-                  }}
+                  onPressIn={() => { playScale.value = withSpring(0.9); }}
+                  onPressOut={() => { playScale.value = withSpring(1); }}
                   style={playButtonStyle}
                   className="w-18 h-18 bg-white rounded-full items-center justify-center"
                   disabled={isPlayButtonBusy}
@@ -533,7 +617,7 @@ export default function NowPlayingScreen() {
                     ) : isPlaying ? (
                       <Pause size={36} color="#0A0A0A" fill="#0A0A0A" />
                     ) : (
-                      <Play size={36} color={isError ? "#fff" : "#0A0A0A"} fill={isError ? "#fff" : "#0A0A0A"} style={{ marginLeft: 4 }} />
+                      <Play size={36} color={isError ? '#fff' : '#0A0A0A'} fill={isError ? '#fff' : '#0A0A0A'} style={{ marginLeft: 4 }} />
                     )}
                   </View>
                 </AnimatedPressable>
@@ -558,10 +642,7 @@ export default function NowPlayingScreen() {
                   {repeatMode === 'one' ? (
                     <Repeat1 size={24} color='#8B5CF6' />
                   ) : (
-                    <Repeat
-                      size={24}
-                      color={repeatMode === 'all' ? '#8B5CF6' : '#fff'}
-                    />
+                    <Repeat size={24} color={repeatMode === 'all' ? '#8B5CF6' : '#fff'} />
                   )}
                 </Pressable>
               </View>
