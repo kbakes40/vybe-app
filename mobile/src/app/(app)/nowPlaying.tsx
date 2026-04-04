@@ -21,7 +21,6 @@ import {
   RotateCcw,
   RotateCw,
   Cloud,
-  Plus,
   Download,
   Check,
 } from 'lucide-react-native';
@@ -34,7 +33,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { usePlaybackController } from '@/stores/playbackController';
-import { useDownloadsStore, downloadYouTubeTrack } from '@/stores/downloadsStore';
+import { useDownloadsStore, downloadYouTubeTrack, downloadSoundCloudTrack } from '@/stores/downloadsStore';
 import { openInSoundCloud } from '@/lib/soundcloudHandoff';
 import { formatDuration } from '@/data/mockData';
 
@@ -165,8 +164,10 @@ export default function NowPlayingScreen() {
   const isYouTube = currentSource === 'youtube';
   const isYouTubeMusic = currentSource === 'youtube_music';
   const isSoundCloud = currentSource === 'soundcloud';
-  const isExternalPlayback = isYouTube || isYouTubeMusic;
+  // All three sources play via WebView pool — not external handoff
+  const isExternalPlayback = isYouTube || isYouTubeMusic || isSoundCloud;
   const ytVideoId = currentTrack?.youtubeId || currentTrack?.youtubeMusicId || null;
+  const scTrackUrl = currentTrack?.soundcloudUrl || null;
 
   const isTrackDownloaded = useDownloadsStore(s => s.isTrackDownloaded);
   const isDownloaded = currentTrack ? isTrackDownloaded(currentTrack.id) : false;
@@ -202,12 +203,6 @@ export default function NowPlayingScreen() {
   }));
 
   const handlePlayPause = async () => {
-    // SoundCloud is external-only - open externally instead of playing
-    if (isSoundCloud) {
-      handleOpenExternal();
-      return;
-    }
-
     if (__DEV__) {
       console.log('[NowPlaying] center button', {
         willPause: shouldPause,
@@ -225,18 +220,15 @@ export default function NowPlayingScreen() {
   };
 
   const handleSeek = (value: number) => {
-    if (isSoundCloud) return;
     seekTo(value);
   };
 
   const handleSeekForward = () => {
-    if (isSoundCloud) return;
     const newProgress = Math.min(progress + 15, duration);
     handleSeek(newProgress);
   };
 
   const handleSeekBackward = () => {
-    if (isSoundCloud) return;
     const newProgress = Math.max(progress - 15, 0);
     handleSeek(newProgress);
   };
@@ -258,13 +250,17 @@ export default function NowPlayingScreen() {
   }, [handleOpenExternal]);
 
   const handleDownload = useCallback(async () => {
-    if (!currentTrack || !ytVideoId || isDownloadPending || isDownloaded) return;
+    if (!currentTrack || isDownloadPending || isDownloaded) return;
+    if (!ytVideoId && !scTrackUrl) return;
     setIsDownloadPending(true);
     try {
-      const result = await downloadYouTubeTrack(
-        currentTrack,
-        process.env.EXPO_PUBLIC_BACKEND_URL!
-      );
+      const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
+      let result: { success: boolean; error?: string };
+      if (isSoundCloud && scTrackUrl) {
+        result = await downloadSoundCloudTrack(currentTrack, BACKEND_URL);
+      } else {
+        result = await downloadYouTubeTrack(currentTrack, BACKEND_URL);
+      }
       if (result.success) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
@@ -273,7 +269,7 @@ export default function NowPlayingScreen() {
     } finally {
       setIsDownloadPending(false);
     }
-  }, [currentTrack, ytVideoId, isDownloadPending, isDownloaded]);
+  }, [currentTrack, ytVideoId, scTrackUrl, isSoundCloud, isDownloadPending, isDownloaded]);
 
 
 
@@ -285,14 +281,9 @@ export default function NowPlayingScreen() {
     );
   }
 
-  // SoundCloud: show static progress (external only)
   const displayProgress = normalizePlaybackSeconds(progress);
   const displayDuration = normalizePlaybackSeconds(duration);
-  const progressPercent = isSoundCloud
-    ? 0
-    : displayDuration > 0
-      ? (displayProgress / displayDuration) * 100
-      : 0;
+  const progressPercent = displayDuration > 0 ? (displayProgress / displayDuration) * 100 : 0;
 
 
 
@@ -312,7 +303,7 @@ export default function NowPlayingScreen() {
               </Pressable>
               <View className="items-center">
                 <Text className="text-white/60 text-xs uppercase tracking-wider">
-                  {isSoundCloud ? 'Discovered on' : 'Playing from'}
+                  Playing from
                 </Text>
                 <View className="flex-row items-center mt-1">
                   {isYouTube ? (
@@ -349,10 +340,10 @@ export default function NowPlayingScreen() {
             {/* Artwork */}
             <View className="items-center justify-center flex-1 px-10">
               {isExternalPlayback ? (
-                /* YouTube / YouTube Music — show artwork with source badge, pool owns audio */
+                /* YouTube / YouTube Music / SoundCloud — artwork with source badge, pool owns audio */
                 <Animated.View
                   style={{
-                    shadowColor: isYouTubeMusic ? '#FF0000' : '#FF0000',
+                    shadowColor: isSoundCloud ? '#FF5500' : '#FF0000',
                     shadowOffset: { width: 0, height: 20 },
                     shadowOpacity: 0.4,
                     shadowRadius: 40,
@@ -379,75 +370,13 @@ export default function NowPlayingScreen() {
                         paddingVertical: 5,
                       }}
                     >
-                      {isYouTubeMusic ? <YouTubeMusicIcon size={14} /> : <YouTubeIcon size={14} />}
+                      {isSoundCloud ? <SoundCloudIcon size={14} /> : isYouTubeMusic ? <YouTubeMusicIcon size={14} /> : <YouTubeIcon size={14} />}
                       <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 5 }}>
-                        {isYouTubeMusic ? 'YouTube Music' : 'YouTube'}
+                        {isSoundCloud ? 'SoundCloud' : isYouTubeMusic ? 'YouTube Music' : 'YouTube'}
                       </Text>
                     </View>
                   </View>
                 </Animated.View>
-              ) : isSoundCloud ? (
-                /* SoundCloud - Search handoff only, no inline playback */
-                <View
-                  style={{
-                    width: ARTWORK_SIZE,
-                    height: ARTWORK_SIZE,
-                    borderRadius: 12,
-                    overflow: 'hidden',
-                    backgroundColor: '#0A0A0A',
-                  }}
-                >
-                  {/* Album artwork with overlay */}
-                  <Image
-                    source={{ uri: currentTrack.artwork }}
-                    style={{
-                      width: ARTWORK_SIZE,
-                      height: ARTWORK_SIZE,
-                    }}
-                    contentFit="cover"
-                  />
-                  {/* Branded overlay */}
-                  <LinearGradient
-                    colors={['transparent', 'rgba(0,0,0,0.7)', 'rgba(0,0,0,0.95)']}
-                    style={{
-                      position: 'absolute',
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      height: ARTWORK_SIZE * 0.6,
-                      justifyContent: 'flex-end',
-                      alignItems: 'center',
-                      paddingBottom: 24,
-                      paddingHorizontal: 20,
-                    }}
-                  >
-                    <Cloud size={40} color="#FF5500" />
-                    <Text className="text-white/80 text-sm mt-3 text-center">
-                      SoundCloud playback happens in the SoundCloud app
-                    </Text>
-
-                    {/* Primary CTA */}
-                    <Pressable
-                      onPress={handleOpenExternal}
-                      className="flex-row items-center bg-[#FF5500] rounded-full py-3.5 px-6 mt-4"
-                    >
-                      <ExternalLink size={18} color="#fff" />
-                      <Text className="text-white font-semibold ml-2">Open in SoundCloud</Text>
-                    </Pressable>
-
-                    {/* Secondary CTA */}
-                    <Pressable
-                      onPress={() => {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                        toggleLike(currentTrack.id);
-                      }}
-                      className="flex-row items-center bg-white/10 rounded-full py-3 px-5 mt-3"
-                    >
-                      <Plus size={16} color="#fff" />
-                      <Text className="text-white text-sm font-medium ml-2">Add to VYBE Library</Text>
-                    </Pressable>
-                  </LinearGradient>
-                </View>
               ) : (
                 <Animated.View
                   style={{
@@ -507,7 +436,7 @@ export default function NowPlayingScreen() {
                     >
                       <ExternalLink size={16} color="#fff" />
                       <Text className="text-white text-sm font-medium ml-2">
-                        {isYouTubeMusic ? 'Watch on YouTube Music' : 'Watch on YouTube'}
+                        {isSoundCloud ? 'Open in SoundCloud' : isYouTubeMusic ? 'Watch on YouTube Music' : 'Watch on YouTube'}
                       </Text>
                     </Pressable>
                     <Pressable
@@ -531,47 +460,32 @@ export default function NowPlayingScreen() {
                       </Text>
                     </Pressable>
                   </View>
-                  {isSoundCloud && (
-                    <Text className="text-white/40 text-xs mt-2">
-                      Opens SoundCloud search. Availability depends on the creator.
-                    </Text>
-                  )}
                 </View>
               ) : null}
 
-{/* SoundCloud Download removed - not supported in VYBE currently */}
-
-              {/* Progress Bar - static for SoundCloud */}
+              {/* Progress Bar */}
               <View className="mt-6">
                 <Pressable
                   onPress={(e) => {
-                    if (isSoundCloud) return; // No seeking for SoundCloud
                     const x = e.nativeEvent.locationX;
                     const width = SCREEN_WIDTH - 64;
                     const percent = x / width;
                     handleSeek(Math.floor(percent * displayDuration));
                   }}
-                  disabled={isSoundCloud}
                 >
                   <View className="h-1 bg-white/20 rounded-full overflow-hidden">
                     <View
-                      className={`h-full rounded-full ${isSoundCloud ? 'bg-white/30' : 'bg-white'}`}
+                      className="h-full rounded-full bg-white"
                       style={{ width: `${progressPercent}%` }}
                     />
                   </View>
                 </Pressable>
                 <View className="flex-row justify-between mt-2">
                   <Text className="text-white/40 text-xs">
-                    {isSoundCloud ? '--:--' : formatDuration(Math.floor(displayProgress))}
+                    {formatDuration(Math.floor(displayProgress))}
                   </Text>
                   <Text className="text-white/40 text-xs">
-                    {isSoundCloud
-                      ? currentTrack.duration
-                        ? formatDuration(currentTrack.duration)
-                        : '--:--'
-                      : displayDuration > 0
-                        ? formatDuration(Math.floor(displayDuration))
-                        : '--:--'}
+                    {displayDuration > 0 ? formatDuration(Math.floor(displayDuration)) : '--:--'}
                   </Text>
                 </View>
               </View>

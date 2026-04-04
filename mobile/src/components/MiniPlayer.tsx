@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
-import { Play, Pause, Cloud, Disc3, ExternalLink, Download } from 'lucide-react-native';
+import { Play, Pause, Cloud, Disc3, Download } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import Animated, {
   useAnimatedStyle,
@@ -19,7 +19,7 @@ import { usePlaybackController } from '@/stores/playbackController';
 import { downloadYouTubeTrack, useDownloadsStore } from '@/stores/downloadsStore';
 import { usePlaybackDebugStore } from '@/stores/playbackDebugStore';
 import { PlaybackDebugIndicator } from '@/components/PlaybackDebugOverlay';
-import { openInSoundCloud } from '@/lib/soundcloudHandoff';
+
 import * as Haptics from 'expo-haptics';
 
 // YouTube icon component
@@ -157,15 +157,11 @@ export function MiniPlayer() {
   const appearAnimation = useSharedValue(0);
   const loadingRotation = useSharedValue(0);
 
-  // Animate progress bar smoothly (static for SoundCloud - external only)
+  // Animate progress bar smoothly
   useEffect(() => {
-    if (isSoundCloud) {
-      progressWidth.value = 0;
-      return;
-    }
     const percent = duration > 0 ? (progress / duration) * 100 : 0;
     progressWidth.value = withTiming(percent, { duration: 200 });
-  }, [progress, duration, isSoundCloud]);
+  }, [progress, duration]);
 
   // Appear animation when track changes
   useEffect(() => {
@@ -215,13 +211,6 @@ export function MiniPlayer() {
 
   const handlePlayPause = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-    // SoundCloud is external-only - open search in SoundCloud
-    if (isSoundCloud && currentTrack) {
-      openInSoundCloud(currentTrack);
-      return;
-    }
-
     if (shouldPause) {
       pause();
     } else {
@@ -394,16 +383,8 @@ export function MiniPlayer() {
 
           {/* Play/Pause — dedicated Tap gesture so parent mini-player tap doesn't double-fire */}
           <GestureDetector gesture={playPauseTapGesture}>
-            <Animated.View
-              style={[
-                styles.playButton,
-                buttonAnimatedStyle,
-                isSoundCloud && { backgroundColor: '#FF5500', borderRadius: 20 },
-              ]}
-            >
-              {isSoundCloud ? (
-                <ExternalLink size={20} color="#fff" />
-              ) : isPlaying ? (
+            <Animated.View style={[styles.playButton, buttonAnimatedStyle]}>
+              {isPlaying ? (
                 <Pause size={22} color="#fff" fill="#fff" />
               ) : (
                 <Play size={22} color="#fff" fill="#fff" style={{ marginLeft: 2 }} />

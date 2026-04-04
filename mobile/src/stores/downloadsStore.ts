@@ -233,3 +233,81 @@ export async function downloadYouTubeTrack(
     store.setImportProgress(0);
   }
 }
+
+/**
+ * Download a SoundCloud track for offline playback.
+ * Streams audio from the backend `GET /api/soundcloud/audio?url=...&dl=1` route
+ * and saves it under the app documents directory.
+ */
+export async function downloadSoundCloudTrack(
+  track: Track & { soundcloudUrl?: string },
+  backendBaseUrl: string,
+  onProgress?: (progress: number) => void
+): Promise<{ success: boolean; error?: string }> {
+  if (!track.soundcloudUrl) {
+    return { success: false, error: 'No SoundCloud URL on this track' };
+  }
+
+  const store = useDownloadsStore.getState();
+
+  if (store.isTrackDownloaded(track.id)) {
+    return { success: true };
+  }
+
+  store.setImporting(true);
+  store.setImportProgress(0);
+
+  const base = backendBaseUrl.replace(/\/$/, '');
+  const audioUrl = `${base}/api/soundcloud/audio?url=${encodeURIComponent(track.soundcloudUrl)}&dl=1`;
+
+  try {
+    const safeId = track.id.replace(/[^\w-]/g, '_');
+    const fileName = `sc_${safeId}.m4a`;
+    const dir = `${FileSystem.documentDirectory}vybe_downloads/`;
+    const localFilePath = `${dir}${fileName}`;
+
+    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+
+    const downloadResumable = FileSystem.createDownloadResumable(
+      audioUrl,
+      localFilePath,
+      {},
+      (downloadProgress) => {
+        const total = downloadProgress.totalBytesExpectedToWrite;
+        const progress = total > 0 ? downloadProgress.totalBytesWritten / total : 0;
+        store.setImportProgress(progress);
+        onProgress?.(progress);
+      }
+    );
+
+    const result = await downloadResumable.downloadAsync();
+    if (!result || result.status !== 200) {
+      throw new Error(`Download failed with status ${result?.status ?? 'unknown'}`);
+    }
+
+    const fileInfo = await FileSystem.getInfoAsync(localFilePath, { size: true });
+    const fileSize = fileInfo.exists && 'size' in fileInfo ? (fileInfo.size ?? 0) : 0;
+
+    const downloadedTrack: DownloadedTrack = {
+      ...track,
+      source: 'vybe',
+      isDownloaded: true,
+      localFilePath,
+      audioUrl: localFilePath,
+      importedAt: Date.now(),
+      isUserImported: false,
+      fileSize,
+      fileFormat: 'M4A',
+    };
+
+    store.addDownload(downloadedTrack);
+    return { success: true };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Download failed';
+    console.error('[downloadSoundCloudTrack]', msg);
+    return { success: false, error: msg };
+  } finally {
+    store.setImporting(false);
+    store.setImportProgress(0);
+  }
+}

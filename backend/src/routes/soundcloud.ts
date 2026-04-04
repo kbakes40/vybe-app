@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import YTDlpWrap from "yt-dlp-wrap";
+import { Readable } from "stream";
+
+const ytDlp = new YTDlpWrap("/opt/homebrew/bin/yt-dlp");
+const SC_URL_RE = /^https:\/\/(soundcloud\.com|on\.soundcloud\.com)\/.+/;
 
 // SoundCloud oEmbed response type
 interface SoundCloudOEmbedResponse {
@@ -1099,6 +1104,60 @@ soundcloudRouter.post("/auto-tag", zValidator("json", autoTagRequestSchema), (c)
       extractedTags: extractedTags,
     },
   });
+});
+
+/**
+ * GET /api/soundcloud/audio
+ * Proxy-stream SoundCloud audio via yt-dlp for in-app playback and download.
+ * Query params:
+ *   url  — full SoundCloud track URL (required)
+ *   dl   — set to "1" to return as attachment download
+ */
+soundcloudRouter.get("/audio", async (c) => {
+  const url = c.req.query("url");
+  const isDownload = c.req.query("dl") === "1";
+
+  if (!url) {
+    return c.json({ error: { message: "Missing url parameter", code: "MISSING_URL" } }, 400);
+  }
+
+  if (!SC_URL_RE.test(url)) {
+    return c.json({ error: { message: "Invalid SoundCloud URL", code: "INVALID_URL" } }, 400);
+  }
+
+  try {
+    // Get track title for filename
+    let title = "soundcloud-track";
+    try {
+      const meta = await ytDlp.getVideoInfo(url);
+      if (meta.title) {
+        title = (meta.title as string).replace(/[^\w\s-]/g, "").trim().slice(0, 80) || title;
+      }
+    } catch {
+      // Non-fatal — proceed with default title
+    }
+
+    const stream = ytDlp.execStream([
+      url,
+      "-f", "bestaudio[ext=m4a]/bestaudio/best",
+      "--no-playlist",
+      "-o", "-",
+    ]);
+
+    c.header("Content-Type", "audio/mp4");
+    c.header("Cache-Control", "no-store");
+    if (isDownload) {
+      c.header("Content-Disposition", `attachment; filename="${title}.m4a"`);
+    } else {
+      c.header("Content-Disposition", `inline; filename="${title}.m4a"`);
+    }
+
+    const webStream = Readable.toWeb(stream as unknown as Readable) as ReadableStream;
+    return new Response(webStream, { status: 200 });
+  } catch (error) {
+    console.error("[SoundCloud] Audio proxy failed:", error);
+    return c.json({ error: { message: "Failed to stream SoundCloud audio", code: "STREAM_FAILED" } }, 500);
+  }
 });
 
 export { soundcloudRouter };

@@ -66,6 +66,16 @@ const waitForYouTubeAdapter = async (maxMs: number): Promise<PlayerAdapter | nul
   return youtubeAdapterRef;
 };
 
+/** SoundCloud pool registers on mount; taps can race the widget warm-up. */
+const waitForSoundCloudAdapter = async (maxMs: number): Promise<PlayerAdapter | null> => {
+  const started = Date.now();
+  while (Date.now() - started < maxMs) {
+    if (soundcloudAdapterRef) return soundcloudAdapterRef;
+    await new Promise<void>(resolve => setTimeout(resolve, 100));
+  }
+  return soundcloudAdapterRef;
+};
+
 // Initialize audio session with proper settings
 const initializeAudioSession = async (): Promise<void> => {
   if (audioSessionInitialized) return;
@@ -243,30 +253,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     // Add to recents
     useRecentsStore.getState().addToRecents(track);
 
-    // SOUNDCLOUD SEARCH HANDOFF: Do NOT attempt in-app playback for SoundCloud tracks
-    // SoundCloud tracks use search handoff only - no embedded player
-    if (source === 'soundcloud' || track.externalSource === 'SOUNDCLOUD') {
-      console.log('[PlaybackController] SoundCloud track - search handoff only, no in-app playback');
-
-      // Stop any current playback
-      await stopAllSources();
-
-      // Update state to show track info but NOT attempt playback
-      set({
-        currentTrack: track,
-        currentSource: source,
-        playbackState: 'paused', // Show as paused, not loading/playing
-        progress: 0,
-        duration: track.duration || 0,
-        error: null,
-        queue: newQueue,
-        queueIndex: index >= 0 ? index : 0,
-      });
-
-      // Do NOT call any adapter or attempt playback
-      return;
-    }
-
     // Ensure audio session is active
     await initializeAudioSession();
 
@@ -287,19 +273,19 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       silentRetryCount: 0,
     });
 
-    // Get adapter for this source (YouTube pool may not be registered on first tap)
+    // Get adapter for this source (pools may not be registered yet on first tap)
     let adapter = getAdapterForSource(source);
     if ((source === 'youtube' || source === 'youtube_music') && !adapter) {
       adapter = await waitForYouTubeAdapter(12_000);
+    }
+    if (source === 'soundcloud' && !adapter) {
+      adapter = await waitForSoundCloudAdapter(8_000);
     }
 
     if (adapter) {
       try {
         await adapter.prepare(track);
-        // For all sources including YouTube: call play() after prepare().
-        // loadVideoById auto-plays in most cases, but calling playVideo() explicitly
-        // ensures playback starts even if the player was in a cued/stopped state.
-        // The pool HTML's playVideo() is defensive (no-ops if already playing).
+        // For all sources: call play() after prepare().
         await adapter.play();
         set({ playbackState: 'playing' });
       } catch (e) {
@@ -311,6 +297,12 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       set({
         playbackState: 'error',
         error: 'YouTube player is still loading. Tap again in a moment.',
+      });
+    } else if (source === 'soundcloud') {
+      console.error('[PlaybackController] SoundCloud adapter not ready after wait');
+      set({
+        playbackState: 'error',
+        error: 'SoundCloud player is still loading. Tap again in a moment.',
       });
     } else {
       // VYBE native audio

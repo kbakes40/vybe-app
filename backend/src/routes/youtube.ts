@@ -25,7 +25,7 @@ youtubeRouter.get("/audio/:videoId", async (c) => {
     // Stream best audio-only format via yt-dlp stdout
     const stream = ytDlp.execStream([
       url,
-      "-f", "bestaudio[ext=m4a]/bestaudio/best",
+      "-f", "bestaudio/best",
       "--no-playlist",
       "-o", "-",
     ]);
