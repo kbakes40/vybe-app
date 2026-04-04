@@ -4,7 +4,6 @@
  * Returns properly formatted DiscoverItems that open in YouTube app/web
  */
 
-import { env } from '../env';
 import type {
   YouTubeSearchResponse,
   YouTubeSearchItem,
@@ -14,50 +13,108 @@ import type {
 
 const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3';
 
-// ─── Quota Tracking ──────────────────────────────────────────────────────────
-// YouTube Data API v3 costs: search.list (part=snippet) = 100 units per call
+// ─── Key Rotation ─────────────────────────────────────────────────────────────
+// Load up to 5 API keys at startup; rotate when quota is exhausted or a key 403s.
 const QUOTA_COST_SEARCH = 100;
+const PROACTIVE_ROTATION_THRESHOLD = 9500; // switch key before hard limit
+
+const API_KEYS: string[] = (
+  [
+    process.env.YOUTUBE_API_KEY_1,
+    process.env.YOUTUBE_API_KEY_2,
+    process.env.YOUTUBE_API_KEY_3,
+    process.env.YOUTUBE_API_KEY_4,
+    process.env.YOUTUBE_API_KEY_5,
+    // Fallback: legacy single key
+    process.env.YOUTUBE_API_KEY,
+  ] as (string | undefined)[]
+).filter((k): k is string => typeof k === 'string' && k.length > 0);
+
+// De-duplicate in case the same key is set under multiple vars
+const UNIQUE_API_KEYS = [...new Set(API_KEYS)];
+
+let activeKeyIndex = 0;
+
+function getActiveKey(): string | null {
+  return UNIQUE_API_KEYS[activeKeyIndex] ?? null;
+}
+
+function rotateKey(reason: string): boolean {
+  if (activeKeyIndex + 1 >= UNIQUE_API_KEYS.length) {
+    console.warn(`[YouTube] All ${UNIQUE_API_KEYS.length} key(s) exhausted. ${reason}`);
+    return false;
+  }
+  activeKeyIndex++;
+  console.log(`[YouTube] Using key ${activeKeyIndex + 1}/${UNIQUE_API_KEYS.length} — ${reason}`);
+  return true;
+}
+
+// ─── Per-key Quota Tracking ───────────────────────────────────────────────────
 
 interface QuotaStats {
   totalUnits: number;
   callCount: number;
   cacheHits: number;
-  resetAt: number; // epoch ms when daily quota resets (midnight PT)
+  resetAt: number;
+  keyIndex: number;
+  totalKeys: number;
 }
 
-const quotaStats: QuotaStats = {
-  totalUnits: 0,
-  callCount: 0,
-  cacheHits: 0,
-  resetAt: getNextMidnightPT(),
-};
+interface KeyStats {
+  totalUnits: number;
+  callCount: number;
+  resetAt: number;
+}
 
 function getNextMidnightPT(): number {
-  // YouTube quota resets midnight Pacific Time
   const now = new Date();
   const pt = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
   pt.setHours(24, 0, 0, 0);
   return pt.getTime();
 }
 
+const keyStats: KeyStats[] = UNIQUE_API_KEYS.map(() => ({
+  totalUnits: 0,
+  callCount: 0,
+  resetAt: getNextMidnightPT(),
+}));
+
+let globalCacheHits = 0;
+
 function trackQuotaUsage(units: number, caller: string): void {
+  const stats = keyStats[activeKeyIndex];
+  if (!stats) return;
+
   const now = Date.now();
-  if (now > quotaStats.resetAt) {
-    quotaStats.totalUnits = 0;
-    quotaStats.callCount = 0;
-    quotaStats.cacheHits = 0;
-    quotaStats.resetAt = getNextMidnightPT();
-    console.log('[YouTube Quota] Daily quota reset');
+  if (now > stats.resetAt) {
+    stats.totalUnits = 0;
+    stats.callCount = 0;
+    stats.resetAt = getNextMidnightPT();
+    console.log(`[YouTube Quota] Key ${activeKeyIndex + 1} daily quota reset`);
   }
-  quotaStats.totalUnits += units;
-  quotaStats.callCount++;
+
+  stats.totalUnits += units;
+  stats.callCount++;
   console.log(
-    `[YouTube Quota] +${units} units (${caller}) | today: ${quotaStats.totalUnits} units / ${quotaStats.callCount} calls | ${quotaStats.cacheHits} cache hits saved`
+    `[YouTube Quota] Key ${activeKeyIndex + 1}/${UNIQUE_API_KEYS.length} +${units} units (${caller}) | today: ${stats.totalUnits} units / ${stats.callCount} calls`
   );
+
+  // Proactively rotate before hitting the hard limit
+  if (stats.totalUnits >= PROACTIVE_ROTATION_THRESHOLD) {
+    rotateKey(`key ${activeKeyIndex} reached ${stats.totalUnits} units`);
+  }
 }
 
 export function getQuotaStats(): QuotaStats {
-  return { ...quotaStats };
+  const stats = keyStats[activeKeyIndex] ?? { totalUnits: 0, callCount: 0, resetAt: getNextMidnightPT() };
+  return {
+    totalUnits: stats.totalUnits,
+    callCount: stats.callCount,
+    cacheHits: globalCacheHits,
+    resetAt: stats.resetAt,
+    keyIndex: activeKeyIndex + 1,
+    totalKeys: UNIQUE_API_KEYS.length,
+  };
 }
 
 // ─── Search Result Cache ──────────────────────────────────────────────────────
@@ -114,7 +171,7 @@ export function purgeExpiredSearchCache(): number {
  * Check if YouTube API is available
  */
 export function isYouTubeApiAvailable(): boolean {
-  return Boolean(env.YOUTUBE_API_KEY);
+  return UNIQUE_API_KEYS.length > 0;
 }
 
 /**
@@ -164,63 +221,80 @@ export async function searchYouTube(
   query: string,
   maxResults: number = 10
 ): Promise<YouTubeDiscoverResult[]> {
-  if (!env.YOUTUBE_API_KEY) {
-    console.warn('[YouTube] API key not configured, skipping search');
+  if (UNIQUE_API_KEYS.length === 0) {
+    console.warn('[YouTube] No API keys configured, skipping search');
     return [];
   }
 
   // Check cache first
   const cached = getCachedSearch(query, maxResults);
   if (cached) {
-    quotaStats.cacheHits++;
+    globalCacheHits++;
     console.log(`[YouTube Cache] HIT for "${query}" (saved ${QUOTA_COST_SEARCH} units)`);
     return cached;
   }
 
-  const params = new URLSearchParams({
-    part: 'snippet',
-    type: 'video',
-    videoCategoryId: '10', // Music category
-    q: query,
-    maxResults: maxResults.toString(),
-    key: env.YOUTUBE_API_KEY,
-    safeSearch: 'moderate',
-  });
+  // Try with current key, rotate on 403 quotaExceeded and retry once per key
+  while (activeKeyIndex < UNIQUE_API_KEYS.length) {
+    const apiKey = getActiveKey();
+    if (!apiKey) break;
 
-  try {
-    const response = await fetch(`${YOUTUBE_API_BASE}/search?${params}`);
+    const params = new URLSearchParams({
+      part: 'snippet',
+      type: 'video',
+      videoCategoryId: '10',
+      q: query,
+      maxResults: maxResults.toString(),
+      key: apiKey,
+      safeSearch: 'moderate',
+    });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[YouTube] Search failed: ${response.status} ${errorText}`);
+    try {
+      const response = await fetch(`${YOUTUBE_API_BASE}/search?${params}`);
+
+      if (response.status === 403) {
+        const body = await response.text();
+        if (body.includes('quotaExceeded') || body.includes('dailyLimitExceeded')) {
+          const rotated = rotateKey(`403 quotaExceeded on key ${activeKeyIndex + 1}`);
+          if (!rotated) return getCachedSearch(query, maxResults) ?? [];
+          continue; // retry with new key
+        }
+        console.error(`[YouTube] 403 not quota-related: ${body}`);
+        return [];
+      }
+
+      if (!response.ok) {
+        console.error(`[YouTube] Search failed: ${response.status}`);
+        return [];
+      }
+
+      trackQuotaUsage(QUOTA_COST_SEARCH, `search("${query}")`);
+
+      const data = await response.json() as YouTubeSearchResponse;
+      const results = data.items
+        .filter((item): item is YouTubeSearchItem & { id: { videoId: string } } =>
+          Boolean(item.id.videoId)
+        )
+        .map(item => ({
+          videoId: item.id.videoId,
+          title: decodeHtmlEntities(item.snippet.title),
+          channelName: decodeHtmlEntities(item.snippet.channelTitle),
+          thumbnailUrl: item.snippet.thumbnails.high?.url ||
+                        item.snippet.thumbnails.medium?.url ||
+                        item.snippet.thumbnails.default.url,
+          publishedAt: item.snippet.publishedAt,
+          searchQuery: query,
+        }));
+
+      setCachedSearch(query, maxResults, results);
+      return results;
+    } catch (error) {
+      console.error('[YouTube] Search error:', error);
       return [];
     }
-
-    trackQuotaUsage(QUOTA_COST_SEARCH, `search("${query}")`);
-
-    const data = await response.json() as YouTubeSearchResponse;
-
-    const results = data.items
-      .filter((item): item is YouTubeSearchItem & { id: { videoId: string } } =>
-        Boolean(item.id.videoId)
-      )
-      .map(item => ({
-        videoId: item.id.videoId,
-        title: decodeHtmlEntities(item.snippet.title),
-        channelName: decodeHtmlEntities(item.snippet.channelTitle),
-        thumbnailUrl: item.snippet.thumbnails.high?.url ||
-                      item.snippet.thumbnails.medium?.url ||
-                      item.snippet.thumbnails.default.url,
-        publishedAt: item.snippet.publishedAt,
-        searchQuery: query,
-      }));
-
-    setCachedSearch(query, maxResults, results);
-    return results;
-  } catch (error) {
-    console.error('[YouTube] Search error:', error);
-    return [];
   }
+
+  return getCachedSearch(query, maxResults) ?? [];
 }
 
 /**
@@ -333,6 +407,231 @@ export async function getHiddenGems(
   return searchYouTubeMultiple(queries, Math.ceil(maxResults / queries.length));
 }
 
+// ─── Curated Playlists ───────────────────────────────────────────────────────
+
+const CURATED_PLAYLIST_IDS = [
+  'RDCLAK5uy_kP2172rQNb3KFXz880xp6M98R_ME5CIKA',
+  'RDCLAK5uy_k4QxtdDiyPtN17wezA186nbXuqO36QOiU',
+  'RDCLAK5uy_kw2wIlEv9llILhO0qoMTLsBBhmjzuibAc',
+  'OLAK5uy_nE_yXCZeQMMpkcszZD3v9oiY8DnuKmaAw',
+  'RDCLAK5uy_k6PkYWus1Mt-aKrbb0Ne8SkA2BgAk1Yy4',
+];
+
+export interface PlaylistTrack {
+  videoId: string;
+  title: string;
+  channelName: string;
+  thumbnailUrl: string;
+  publishedAt: string;
+}
+
+export interface CuratedPlaylistResult {
+  playlistId: string;
+  name: string;
+  thumbnailUrl: string;
+  tracks: PlaylistTrack[];
+}
+
+interface YouTubePlaylistItemsResponse {
+  items: Array<{
+    snippet: {
+      title: string;
+      channelTitle: string;
+      thumbnails: {
+        default: { url: string };
+        medium?: { url: string };
+        high?: { url: string };
+        maxres?: { url: string };
+      };
+      publishedAt: string;
+      resourceId: { videoId: string };
+    };
+  }>;
+}
+
+interface YouTubePlaylistsMetaResponse {
+  items: Array<{
+    id: string;
+    snippet: {
+      title: string;
+      thumbnails: {
+        default: { url: string };
+        medium?: { url: string };
+        high?: { url: string };
+        maxres?: { url: string };
+      };
+    };
+  }>;
+}
+
+let curatedPlaylistsCache: { results: CuratedPlaylistResult[]; expiresAt: number } | null = null;
+
+/**
+ * Fetch tracks from a single YouTube playlist
+ */
+export async function fetchPlaylistTracks(playlistId: string): Promise<PlaylistTrack[]> {
+  const apiKey = getActiveKey();
+  if (!apiKey) return [];
+
+  const params = new URLSearchParams({
+    part: 'snippet',
+    playlistId,
+    maxResults: '20',
+    key: apiKey,
+  });
+
+  try {
+    const response = await fetch(`${YOUTUBE_API_BASE}/playlistItems?${params}`);
+    if (!response.ok) return [];
+
+    const data = await response.json() as YouTubePlaylistItemsResponse;
+    return data.items
+      .filter(item => item.snippet?.resourceId?.videoId)
+      .map(item => {
+        const thumb = item.snippet.thumbnails;
+        return {
+          videoId: item.snippet.resourceId.videoId,
+          title: decodeHtmlEntities(item.snippet.title),
+          channelName: decodeHtmlEntities(item.snippet.channelTitle),
+          thumbnailUrl: thumb.maxres?.url ?? thumb.high?.url ?? thumb.medium?.url ?? thumb.default.url,
+          publishedAt: item.snippet.publishedAt,
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetch all 5 curated playlists with their tracks (cached 24 hours)
+ */
+export async function fetchCuratedPlaylists(): Promise<CuratedPlaylistResult[]> {
+  const apiKey = getActiveKey();
+  if (!apiKey) return [];
+
+  if (curatedPlaylistsCache && Date.now() < curatedPlaylistsCache.expiresAt) {
+    return curatedPlaylistsCache.results;
+  }
+
+  // Fetch playlist metadata (names + thumbnails) in one call
+  const metaParams = new URLSearchParams({
+    part: 'snippet',
+    id: CURATED_PLAYLIST_IDS.join(','),
+    key: apiKey,
+  });
+
+  const playlistMeta = new Map<string, { name: string; thumbnailUrl: string }>();
+  try {
+    const metaRes = await fetch(`${YOUTUBE_API_BASE}/playlists?${metaParams}`);
+    if (metaRes.ok) {
+      const metaData = await metaRes.json() as YouTubePlaylistsMetaResponse;
+      for (const item of metaData.items) {
+        const t = item.snippet.thumbnails;
+        playlistMeta.set(item.id, {
+          name: decodeHtmlEntities(item.snippet.title),
+          thumbnailUrl: t.maxres?.url ?? t.high?.url ?? t.medium?.url ?? t.default.url,
+        });
+      }
+    }
+  } catch {}
+
+  // Fetch tracks for all playlists in parallel
+  const results = await Promise.all(
+    CURATED_PLAYLIST_IDS.map(async (playlistId) => {
+      const tracks = await fetchPlaylistTracks(playlistId);
+      const meta = playlistMeta.get(playlistId);
+      return {
+        playlistId,
+        name: meta?.name ?? 'Curated Playlist',
+        thumbnailUrl: meta?.thumbnailUrl ?? tracks[0]?.thumbnailUrl ?? '',
+        tracks,
+      };
+    })
+  );
+
+  curatedPlaylistsCache = { results, expiresAt: Date.now() + SEARCH_CACHE_TTL_MS };
+  return results;
+}
+
+// ─── New Releases (Trending Music) ───────────────────────────────────────────
+
+interface YouTubeVideoItem {
+  id: string;
+  snippet: {
+    title: string;
+    channelTitle: string;
+    thumbnails: {
+      default: { url: string };
+      medium?: { url: string };
+      high?: { url: string };
+      maxres?: { url: string };
+    };
+    publishedAt: string;
+  };
+  statistics?: { viewCount?: string };
+}
+
+interface YouTubeVideosResponse {
+  items: YouTubeVideoItem[];
+}
+
+export interface NewReleaseResult {
+  videoId: string;
+  title: string;
+  channelName: string;
+  thumbnailUrl: string;
+  publishedAt: string;
+  viewCount: string;
+}
+
+let newReleasesCache: { results: NewReleaseResult[]; expiresAt: number } | null = null;
+
+/**
+ * Fetch trending music via videos.list?chart=mostPopular — costs 0 quota units.
+ */
+export async function fetchNewReleases(maxResults = 20): Promise<NewReleaseResult[]> {
+  const apiKey = getActiveKey();
+  if (!apiKey) return [];
+
+  if (newReleasesCache && Date.now() < newReleasesCache.expiresAt) {
+    globalCacheHits++;
+    return newReleasesCache.results;
+  }
+
+  const params = new URLSearchParams({
+    part: "snippet,statistics",
+    chart: "mostPopular",
+    videoCategoryId: "10",
+    maxResults: String(maxResults),
+    regionCode: "US",
+    key: apiKey,
+  });
+
+  try {
+    const response = await fetch(`${YOUTUBE_API_BASE}/videos?${params}`);
+    if (!response.ok) return [];
+
+    const data = await response.json() as YouTubeVideosResponse;
+    const results: NewReleaseResult[] = data.items.map(item => ({
+      videoId: item.id,
+      title: decodeHtmlEntities(item.snippet.title),
+      channelName: decodeHtmlEntities(item.snippet.channelTitle),
+      thumbnailUrl:
+        item.snippet.thumbnails.maxres?.url ??
+        item.snippet.thumbnails.high?.url ??
+        item.snippet.thumbnails.medium?.url ??
+        item.snippet.thumbnails.default.url,
+      publishedAt: item.snippet.publishedAt,
+      viewCount: item.statistics?.viewCount ?? "0",
+    }));
+
+    newReleasesCache = { results, expiresAt: Date.now() + SEARCH_CACHE_TTL_MS };
+    return results;
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Decode HTML entities in text (YouTube returns encoded titles)
  */
@@ -360,8 +659,8 @@ export async function searchYouTubePersonalized(
   hiddenCreators: Set<string>,
   maxResults: number = 15
 ): Promise<YouTubeDiscoverResult[]> {
-  if (!env.YOUTUBE_API_KEY) {
-    console.warn('[YouTube] API key not configured, skipping personalized search');
+  if (!getActiveKey()) {
+    console.warn('[YouTube] No API keys available, skipping personalized search');
     return [];
   }
 

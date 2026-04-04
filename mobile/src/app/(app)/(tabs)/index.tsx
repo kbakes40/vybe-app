@@ -3,7 +3,7 @@ import { View, Text, ScrollView, Pressable, Dimensions, ActivityIndicator, Refre
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { Play, ChevronRight, Moon, Brain, Cloud, Sparkles } from 'lucide-react-native';
+import { Play, ChevronRight, Moon, Brain, Cloud, Sparkles, MoreHorizontal } from 'lucide-react-native';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import Animated, {
@@ -11,6 +11,9 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
   withTiming,
+  withRepeat,
+  withSequence,
+  Easing,
   interpolate,
   Extrapolation,
 } from 'react-native-reanimated';
@@ -39,7 +42,181 @@ import { MixDefinition, RelatedTrack, Track } from '@/types/music';
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const AnimatedText = Animated.createAnimatedComponent(Text);
 
-// Era-based radio stations
+// ─── Mood tabs ────────────────────────────────────────────────────────────────
+const MOOD_TABS = ['Relax', 'Focus', 'Party', 'Workout', 'Commute', 'Late Night', 'Study'] as const;
+type MoodTab = typeof MOOD_TABS[number];
+
+function formatPlayCount(id: string): string {
+  const n = id.split('').reduce((acc, c, i) => acc + c.charCodeAt(0) * (i + 1), 0);
+  const mag = n % 3;
+  if (mag === 0) return `${((n * 1337) % 18) + 1}.${(n * 7) % 10}M plays`;
+  if (mag === 1) return `${((n * 73) % 900) + 100}K plays`;
+  return `${((n * 31) % 49) + 1}.${(n * 3) % 10}K plays`;
+}
+
+function getSourceBadge(source: string | undefined) {
+  switch (source) {
+    case 'youtube':       return { letter: 'Y', bg: '#FF0000', circle: false };
+    case 'youtube_music': return { letter: 'M', bg: '#FF0000', circle: true };
+    case 'soundcloud':    return { letter: 'S', bg: '#FF5500', circle: false };
+    default:              return { letter: 'V', bg: '#8B5CF6', circle: false };
+  }
+}
+
+// ─── Daily Mix Hero Card ──────────────────────────────────────────────────────
+
+// Fibonacci sphere distribution — computed once at module level for performance
+const SPHERE_N = 26;
+const SPHERE_R = 68;
+const BASE_ART_SIZE = 25;
+
+const SPHERE_POINTS: { x: number; y: number; z: number }[] = (() => {
+  const phi = Math.PI * (3 - Math.sqrt(5)); // golden angle
+  const pts: { x: number; y: number; z: number }[] = [];
+  for (let i = 0; i < SPHERE_N; i++) {
+    const yN = 1 - (i / (SPHERE_N - 1)) * 2;
+    const r = Math.sqrt(Math.max(0, 1 - yN * yN));
+    const theta = phi * i;
+    pts.push({ x: Math.cos(theta) * r * SPHERE_R, y: yN * SPHERE_R * 0.82, z: Math.sin(theta) * r * SPHERE_R });
+  }
+  return pts.sort((a, b) => a.z - b.z); // back-to-front for painter's algorithm
+})();
+
+interface DailyMixHeroCardProps {
+  title: string;
+  artistNames: string;
+  artworks: string[];
+  onPress: () => void;
+}
+
+function DailyMixHeroCard({ title, artistNames, artworks, onPress }: DailyMixHeroCardProps) {
+  const cardScale = useSharedValue(1);
+  const float = useSharedValue(0);
+
+  useEffect(() => {
+    float.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 3800, easing: Easing.inOut(Easing.sin) }),
+        withTiming(0, { duration: 3800, easing: Easing.inOut(Easing.sin) })
+      ),
+      -1, false
+    );
+  }, []);
+
+  const cardAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: cardScale.value }] }));
+  const sphereFloatStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: interpolate(float.value, [0, 1], [0, -5]) }],
+  }));
+
+  const sphereW = 172;
+  const sphereH = 162;
+  const cx = sphereW / 2;
+  const cy = sphereH / 2;
+
+  return (
+    <Animated.View style={[{ marginHorizontal: 20 }, cardAnimStyle]}>
+      <Pressable
+        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); onPress(); }}
+        onPressIn={() => { cardScale.value = withSpring(0.97); }}
+        onPressOut={() => { cardScale.value = withSpring(1); }}
+      >
+        <LinearGradient
+          colors={['#1A0836', '#0F0428', '#0D0722']}
+          start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+          style={{ borderRadius: 18, overflow: 'hidden', minHeight: 168 }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 16, paddingVertical: 14, paddingRight: 0 }}>
+            {/* Left: badge + title + play */}
+            <View style={{ flex: 1, paddingRight: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 7 }}>
+                <View style={{ backgroundColor: '#7C3AED', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
+                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 1.2 }}>NEW</Text>
+                </View>
+              </View>
+              <Text style={{ color: '#fff', fontSize: 20, fontWeight: '800', lineHeight: 24 }} numberOfLines={2}>{title}</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.42)', fontSize: 12, marginTop: 4 }} numberOfLines={1}>{artistNames}</Text>
+              <View style={{ marginTop: 14 }}>
+                <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
+                  <Play size={20} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 2 }} />
+                </View>
+              </View>
+            </View>
+
+            {/* Right: iTunes-style sphere collage */}
+            <Animated.View style={[{ width: sphereW, height: sphereH }, sphereFloatStyle]}>
+              {artworks.length > 0 && SPHERE_POINTS.map((pt, i) => {
+                const depth = (pt.z + SPHERE_R) / (2 * SPHERE_R); // 0=back, 1=front
+                const size = BASE_ART_SIZE * (0.36 + 0.64 * depth);
+                const opacity = 0.18 + 0.82 * depth;
+                const artwork = artworks[i % artworks.length];
+                if (!artwork) return null;
+                return (
+                  <Image
+                    key={i}
+                    source={{ uri: artwork }}
+                    style={{
+                      position: 'absolute',
+                      left: cx + pt.x - size / 2,
+                      top: cy + pt.y - size / 2,
+                      width: size,
+                      height: size,
+                      borderRadius: 3,
+                      opacity,
+                    }}
+                    contentFit="cover"
+                  />
+                );
+              })}
+            </Animated.View>
+          </View>
+        </LinearGradient>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+// ─── Quick Pick Row ───────────────────────────────────────────────────────────
+interface QuickPickRowProps {
+  track: Track;
+  onPress: () => void;
+  onMore?: () => void;
+}
+
+function QuickPickRow({ track, onPress, onMore }: QuickPickRowProps) {
+  const badge = getSourceBadge(track.source);
+  const scale = useSharedValue(1);
+  const animatedStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  return (
+    <Animated.View style={animatedStyle}>
+      <Pressable
+        onPress={onPress}
+        onPressIn={() => { scale.value = withSpring(0.98); }}
+        onPressOut={() => { scale.value = withSpring(1); }}
+        style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 10 }}
+      >
+        <View style={{ width: 52, height: 52, borderRadius: 6, overflow: 'hidden', backgroundColor: '#1C1C1C' }}>
+          <Image source={{ uri: track.artwork }} style={{ width: 52, height: 52 }} contentFit="cover" />
+        </View>
+        <View style={{ flex: 1, marginLeft: 13 }}>
+          <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }} numberOfLines={1}>{track.title}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3 }}>
+            <View style={{ width: 16, height: 16, backgroundColor: badge.bg, borderRadius: badge.circle ? 8 : 3, alignItems: 'center', justifyContent: 'center', marginRight: 6 }}>
+              <Text style={{ color: '#fff', fontSize: 8, fontWeight: '800' }}>{badge.letter}</Text>
+            </View>
+            <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }} numberOfLines={1}>
+              {track.artist} • {formatPlayCount(track.id)}
+            </Text>
+          </View>
+        </View>
+        <Pressable onPress={onMore} hitSlop={12} style={{ padding: 6 }}>
+          <MoreHorizontal size={18} color="rgba(255,255,255,0.35)" />
+        </Pressable>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+// ─── Era-based radio stations
 const ERA_STATIONS = [
   { id: 'era-70s', name: "70s Classics", decade: '70s', colors: ['#B45309', '#78350F'] as [string, string], image: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=400&h=400&fit=crop' },
   { id: 'era-80s', name: "80s Hits", decade: '80s', colors: ['#EC4899', '#9333EA'] as [string, string], image: 'https://images.unsplash.com/photo-1571974599782-87624638275e?w=400&h=400&fit=crop' },
@@ -67,56 +244,6 @@ function SectionHeader({ title, onSeeAll }: SectionHeaderProps) {
   );
 }
 
-interface FeaturedCardProps {
-  title: string;
-  subtitle: string;
-  image: string;
-  gradientColors: [string, string];
-  onPress: () => void;
-}
-
-function FeaturedCard({ title, subtitle, image, gradientColors, onPress }: FeaturedCardProps) {
-  const scale = useSharedValue(1);
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
-  }));
-
-  return (
-    <AnimatedPressable
-      onPress={() => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        onPress();
-      }}
-      onPressIn={() => { scale.value = withSpring(0.98); }}
-      onPressOut={() => { scale.value = withSpring(1); }}
-      style={animatedStyle}
-      className="mx-5 overflow-hidden rounded-2xl"
-    >
-      <LinearGradient
-        colors={gradientColors}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={{ flexDirection: 'row', alignItems: 'center', padding: 16 }}
-      >
-        <Image
-          source={{ uri: image }}
-          style={{ width: 100, height: 100, borderRadius: 12 }}
-          contentFit="cover"
-        />
-        <View className="flex-1 ml-4">
-          <Text className="text-white/80 text-xs uppercase tracking-wider mb-1">
-            {subtitle}
-          </Text>
-          <Text className="text-white text-2xl font-bold">{title}</Text>
-        </View>
-        <View className="w-12 h-12 bg-white/20 rounded-full items-center justify-center">
-          <Play size={24} color="#fff" fill="#fff" />
-        </View>
-      </LinearGradient>
-    </AnimatedPressable>
-  );
-}
 
 interface EraStationCardProps {
   station: typeof ERA_STATIONS[0];
@@ -204,6 +331,21 @@ function ArtistGlowCard({ artist, onPress }: ArtistGlowCardProps) {
   );
 }
 
+interface PlaylistTrack {
+  videoId: string;
+  title: string;
+  channelName: string;
+  thumbnailUrl: string;
+  publishedAt: string;
+}
+
+interface CuratedPlaylist {
+  playlistId: string;
+  name: string;
+  thumbnailUrl: string;
+  tracks: PlaylistTrack[];
+}
+
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -212,6 +354,7 @@ export default function HomeScreen() {
   const [mixes, setMixes] = useState<MixDefinition[]>([]);
   const [lateNightTracks, setLateNightTracks] = useState<RelatedTrack[]>([]);
   const [focusTracks, setFocusTracks] = useState<RelatedTrack[]>([]);
+  const [curatedPlaylists, setCuratedPlaylists] = useState<CuratedPlaylist[]>([]);
   const [isLoadingMixes, setIsLoadingMixes] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -316,6 +459,12 @@ export default function HomeScreen() {
         setMixes(mixesResponse);
       }
 
+      // Fetch curated YouTube Music playlists
+      const playlistsResponse = await api.get<CuratedPlaylist[]>('/api/youtube/playlists');
+      if (playlistsResponse) {
+        setCuratedPlaylists(playlistsResponse.filter(p => p.tracks.length > 0));
+      }
+
       // SoundCloud tracks no longer use embedded playback - they open externally via search handoff
     } catch (error) {
       console.log('Could not fetch mixes:', error);
@@ -349,7 +498,7 @@ export default function HomeScreen() {
   const oldSoulPlaylists = playlists.slice(0, 4);
   const aiArtists = artists.filter(a => a.genres.includes('AI Music') || a.genres.includes('Electronic')).slice(0, 6);
   const recentlyPlayed = albums.slice(0, 6);
-  const discoverTracks = tracks.slice(10, 16);
+  const discoverTracks = tracks.filter(t => t.source === 'youtube' || t.source === 'youtube_music' || t.source === 'soundcloud').slice(0, 6);
   const youtubeTracks = tracks
     .filter(t => t.source === 'youtube')
     .sort((a, b) => {
@@ -363,7 +512,29 @@ export default function HomeScreen() {
   );
   const soundcloudTracks = tracks.filter(t => t.source === 'soundcloud');
 
-  // SoundCloud tracks no longer need preloading - they open externally via search handoff
+  // Mood tabs + quick picks
+  const [activeMood, setActiveMood] = useState<MoodTab>('Relax');
+
+  const quickPicks = useMemo(() => {
+    // 5 tracks mixing YouTube, YouTube Music, SoundCloud based on mood
+    const byMood: Record<MoodTab, Track[]> = {
+      'Relax':      [...soundcloudTracks.slice(0, 3), ...youtubeMusicTracks.slice(0, 2)] as Track[],
+      'Focus':      [...focusTracks.slice(0, 2), ...soundcloudTracks.slice(0, 2), ...youtubeTracks.slice(0, 1)] as Track[],
+      'Party':      [...youtubeTracks.slice(0, 3), ...youtubeMusicTracks.slice(0, 2)] as Track[],
+      'Workout':    [...youtubeMusicTracks.slice(0, 2), ...youtubeTracks.slice(0, 2), ...soundcloudTracks.slice(0, 1)] as Track[],
+      'Commute':    [...soundcloudTracks.slice(0, 2), ...youtubeTracks.slice(0, 2), ...youtubeMusicTracks.slice(0, 1)] as Track[],
+      'Late Night': [...lateNightTracks.slice(0, 2), ...soundcloudTracks.slice(0, 2), ...youtubeTracks.slice(0, 1)] as Track[],
+      'Study':      [...focusTracks.slice(0, 2), ...soundcloudTracks.slice(1, 3), ...youtubeMusicTracks.slice(0, 1)] as Track[],
+    };
+    const pool = byMood[activeMood] ?? ([...soundcloudTracks, ...youtubeTracks] as Track[]);
+    const seen = new Set<string>();
+    return pool.filter(t => { if (seen.has(t.id)) return false; seen.add(t.id); return true; }).slice(0, 5);
+  }, [activeMood, soundcloudTracks, youtubeTracks, youtubeMusicTracks, lateNightTracks, focusTracks]);
+
+  const heroArtists = useMemo(() =>
+    [...new Set(quickPicks.slice(0, 3).map(t => t.artist))].join(', '),
+    [quickPicks]
+  );
 
   return (
     <View className="flex-1 bg-[#0A0A0A]">
@@ -420,18 +591,124 @@ export default function HomeScreen() {
           </Animated.View>
         </View>
 
-        {/* Your VYBE - Featured Card */}
-        {madeForYou ? (
-          <View className="mt-4">
-            <FeaturedCard
-              title="Your VYBE"
-              subtitle="Made for you"
-              image={madeForYou.artwork}
-              gradientColors={madeForYou.gradientColors ?? ['#8B5CF6', '#3B82F6']}
-              onPress={() => router.push(`/(app)/playlist/${madeForYou.id}` as never)}
+        {/* ── Mood Tabs ── */}
+        <View className="mt-2">
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 20, gap: 8 }}
+            style={{ flexGrow: 0 }}
+          >
+            {MOOD_TABS.map(mood => {
+              const active = mood === activeMood;
+              return (
+                <Pressable
+                  key={mood}
+                  onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setActiveMood(mood); }}
+                  style={{
+                    paddingHorizontal: 18, paddingVertical: 8, borderRadius: 20,
+                    backgroundColor: active ? '#fff' : 'rgba(255,255,255,0.1)',
+                  }}
+                >
+                  <Text style={{ color: active ? '#0A0A0A' : 'rgba(255,255,255,0.7)', fontWeight: active ? '700' : '500', fontSize: 14 }}>
+                    {mood}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+
+        {/* ── Daily Mix Hero Card ── */}
+        <View className="mt-5">
+          <DailyMixHeroCard
+            title={madeForYou?.title ?? 'Daily Mix 1'}
+            artistNames={heroArtists || 'Flume, ODESZA, Tycho'}
+            artworks={quickPicks.map(t => t.artwork).filter(Boolean) as string[]}
+            onPress={() => { if (quickPicks.length > 0) playTrack(quickPicks[0], quickPicks); }}
+          />
+        </View>
+
+        {/* ── Quick Picks ── */}
+        <View className="mt-6">
+          <SectionHeader title="Quick picks" />
+          {quickPicks.map(track => (
+            <QuickPickRow
+              key={track.id}
+              track={track}
+              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, quickPicks); }}
+              onMore={() => {}}
             />
+          ))}
+          {quickPicks.length === 0 && (
+            <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, paddingHorizontal: 20, paddingVertical: 16 }}>
+              No tracks yet — pull down to refresh
+            </Text>
+          )}
+        </View>
+
+        {/* Curated for You — YouTube Music playlists */}
+        {curatedPlaylists.length > 0 && (
+          <View className="mt-8">
+            <SectionHeader title="Curated for You" />
+            <Text className="text-white/50 text-sm px-5 mb-4">
+              Handpicked YouTube Music playlists
+            </Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingHorizontal: 20 }}
+              style={{ flexGrow: 0 }}
+            >
+              {curatedPlaylists.map(playlist => {
+                const playlistTracks: Track[] = playlist.tracks.map(t => ({
+                  id: `ytm-${t.videoId}`,
+                  title: t.title,
+                  artist: t.channelName,
+                  artistId: `ytm-artist-${t.videoId}`,
+                  album: playlist.name,
+                  albumId: `ytm-pl-${playlist.playlistId}`,
+                  artwork: t.thumbnailUrl,
+                  duration: 0,
+                  isLiked: false,
+                  source: 'youtube_music' as const,
+                  youtubeMusicId: t.videoId,
+                  youtubeMusicUrl: `https://music.youtube.com/watch?v=${t.videoId}`,
+                }));
+                const cover = playlist.thumbnailUrl || playlistTracks[0]?.artwork || '';
+                return (
+                  <Pressable
+                    key={playlist.playlistId}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      if (playlistTracks.length > 0) playTrack(playlistTracks[0], playlistTracks);
+                    }}
+                    className="mr-4"
+                  >
+                    <View style={{ width: 150 }}>
+                      <View style={{ width: 150, height: 150, borderRadius: 10, overflow: 'hidden', backgroundColor: '#1C1C1C' }}>
+                        <Image source={{ uri: cover }} style={{ width: 150, height: 150 }} contentFit="cover" />
+                        {/* YT Music badge */}
+                        <View style={{ position: 'absolute', top: 8, left: 8, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
+                          <View style={{ width: 13, height: 13, backgroundColor: '#FF0000', borderRadius: 6.5, alignItems: 'center', justifyContent: 'center' }}>
+                            <View style={{ width: 0, height: 0, borderLeftWidth: 4, borderTopWidth: 2.5, borderBottomWidth: 2.5, borderLeftColor: '#fff', borderTopColor: 'transparent', borderBottomColor: 'transparent', marginLeft: 1 }} />
+                          </View>
+                          <Text style={{ color: '#fff', fontSize: 9, fontWeight: '600', marginLeft: 4 }}>YT Music</Text>
+                        </View>
+                        {/* Play button overlay */}
+                        <View style={{ position: 'absolute', bottom: 8, right: 8, width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center' }}>
+                          <Play size={16} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 2 }} />
+                        </View>
+                      </View>
+                      <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13, marginTop: 8 }} numberOfLines={2}>{playlist.name}</Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 2 }}>{playlist.tracks.length} songs</Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
           </View>
-        ) : null}
+        )}
 
         {/* Fresh Finds - New discoveries based on listening */}
         {freshFinds.length > 0 && (
@@ -569,10 +846,10 @@ export default function HomeScreen() {
                 key={station.id}
                 station={station}
                 onPress={() => {
-                  // Play era-specific tracks
-                  const eraTracks = tracks.slice(0, 5);
-                  if (eraTracks.length > 0) {
-                    playTrack(eraTracks[0], eraTracks);
+                  // Play real YouTube/SoundCloud tracks only
+                  const realTracks = tracks.filter(t => t.source === 'youtube' || t.source === 'youtube_music' || t.source === 'soundcloud');
+                  if (realTracks.length > 0) {
+                    playTrack(realTracks[0], realTracks);
                   }
                 }}
               />

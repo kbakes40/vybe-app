@@ -29,6 +29,8 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  withTiming,
+  withSequence,
   interpolate,
   runOnJS,
 } from 'react-native-reanimated';
@@ -38,7 +40,7 @@ import { useDownloadsStore, downloadYouTubeTrack, downloadSoundCloudTrack } from
 import { openInSoundCloud } from '@/lib/soundcloudHandoff';
 import { formatDuration } from '@/data/mockData';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const ARTWORK_SIZE = SCREEN_WIDTH - 80;
 const VIDEO_HEIGHT = Math.round(ARTWORK_SIZE * (9 / 16));
 
@@ -88,12 +90,15 @@ function buildYouTubeHTML(videoId: string): string {
         type:'stateChange',state:e.data,playbackState:map[e.data.toString()]||'idle'
       }))}catch(e){}
     }
+    function onError(e){
+      try{window.ReactNativeWebView.postMessage(JSON.stringify({type:'ytError',code:e.data}))}catch(err){}
+    }
     function init(){
       player=new YT.Player('player',{
         videoId:'${videoId}',
         playerVars:{autoplay:0,controls:0,mute:0,playsinline:1,
-          vq:'hd1080',rel:0,modestbranding:1,iv_load_policy:3,origin:'https://vybe.app'},
-        events:{onReady:onReady,onStateChange:onStateChange}
+          vq:'hd1080',rel:0,modestbranding:1,iv_load_policy:3},
+        events:{onReady:onReady,onStateChange:onStateChange,onError:onError}
       });
     }
     if(window.YT&&window.YT.Player){init();}
@@ -114,12 +119,14 @@ function buildYouTubeHTML(videoId: string): string {
 
 interface YouTubeInlinePlayerProps {
   videoId: string;
+  artworkUri: string;
   isPlaying: boolean;
 }
 
-function YouTubeInlinePlayer({ videoId, isPlaying }: YouTubeInlinePlayerProps) {
+function YouTubeInlinePlayer({ videoId, artworkUri, isPlaying }: YouTubeInlinePlayerProps) {
   const webViewRef = useRef<WebView>(null);
   const isReadyRef = useRef(false);
+  const [showFallback, setShowFallback] = useState(true);
 
   useEffect(() => {
     if (!isReadyRef.current) return;
@@ -134,26 +141,56 @@ function YouTubeInlinePlayer({ videoId, isPlaying }: YouTubeInlinePlayerProps) {
       const msg = JSON.parse(event.nativeEvent.data);
       if (msg.type === 'ready') {
         isReadyRef.current = true;
+        setShowFallback(false);
         if (isPlaying) {
           webViewRef.current?.injectJavaScript('window.playVideo&&window.playVideo();true;');
         }
+      } else if (msg.type === 'ytError' && (msg.code === 150 || msg.code === 153)) {
+        setShowFallback(true);
       }
     } catch (_) {}
   }, [isPlaying]);
 
   return (
-    <WebView
-      key={videoId}
-      ref={webViewRef}
-      source={{ html: buildYouTubeHTML(videoId) }}
-      style={{ width: ARTWORK_SIZE, height: VIDEO_HEIGHT }}
-      allowsInlineMediaPlayback
-      allowsFullscreenVideo
-      mediaPlaybackRequiresUserAction={false}
-      scrollEnabled={false}
-      onMessage={handleMessage}
-      originWhitelist={['*']}
-    />
+    <View style={{ width: ARTWORK_SIZE, height: VIDEO_HEIGHT, borderRadius: 12, overflow: 'hidden' }}>
+      <WebView
+        key={videoId}
+        ref={webViewRef}
+        source={{ html: buildYouTubeHTML(videoId) }}
+        style={{ width: ARTWORK_SIZE, height: VIDEO_HEIGHT }}
+        allowsInlineMediaPlayback
+        allowsFullscreenVideo
+        mediaPlaybackRequiresUserAction={false}
+        scrollEnabled={false}
+        onMessage={handleMessage}
+        originWhitelist={['*']}
+      />
+      {showFallback && (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+          <Image
+            source={{ uri: artworkUri }}
+            style={{ width: ARTWORK_SIZE, height: VIDEO_HEIGHT }}
+            contentFit="cover"
+          />
+          <View
+            style={{
+              position: 'absolute',
+              bottom: 10,
+              right: 10,
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: 'rgba(0,0,0,0.7)',
+              borderRadius: 16,
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+            }}
+          >
+            <YouTubeIcon size={13} />
+            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 4 }}>YouTube</Text>
+          </View>
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -269,6 +306,13 @@ export default function NowPlayingScreen() {
   const playScale = useSharedValue(1);
   const translateY = useSharedValue(0);
 
+  // Download fly animation
+  const flyX = useSharedValue(0);
+  const flyY = useSharedValue(0);
+  const flyScale = useSharedValue(1);
+  const flyOpacity = useSharedValue(0);
+  const [flyVisible, setFlyVisible] = useState(false);
+
   const isLiked = currentTrack ? likedTracks.has(currentTrack.id) : false;
   const isYouTube = currentSource === 'youtube';
   const isYouTubeMusic = currentSource === 'youtube_music';
@@ -283,6 +327,15 @@ export default function NowPlayingScreen() {
 
   const playButtonStyle = useAnimatedStyle(() => ({
     transform: [{ scale: playScale.value }],
+  }));
+
+  const flyStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: flyX.value },
+      { translateY: flyY.value },
+      { scale: flyScale.value },
+    ],
+    opacity: flyOpacity.value,
   }));
 
   const handleClose = () => {
@@ -347,6 +400,29 @@ export default function NowPlayingScreen() {
     handleOpenExternal();
   }, [handleOpenExternal]);
 
+  const triggerDownloadAnimation = useCallback(() => {
+    // Start near album artwork center (roughly top-center of screen content)
+    flyX.value = SCREEN_WIDTH / 2 - 24;
+    flyY.value = insets.top + 80;
+    flyScale.value = 1;
+    flyOpacity.value = 1;
+    setFlyVisible(true);
+
+    // Fly to library tab (4th tab, bottom-right)
+    const targetX = SCREEN_WIDTH * 0.875 - 24;
+    const targetY = SCREEN_HEIGHT - 70;
+
+    flyX.value = withTiming(targetX, { duration: 650 });
+    flyY.value = withTiming(targetY, { duration: 650 });
+    flyScale.value = withTiming(0.12, { duration: 650 });
+    flyOpacity.value = withSequence(
+      withTiming(1, { duration: 450 }),
+      withTiming(0, { duration: 200 })
+    );
+
+    setTimeout(() => runOnJS(setFlyVisible)(false), 700);
+  }, [flyX, flyY, flyScale, flyOpacity, insets.top]);
+
   const handleDownload = useCallback(async () => {
     if (!currentTrack || isDownloadPending || isDownloaded) return;
     if (!ytVideoId && !scTrackUrl) return;
@@ -361,6 +437,7 @@ export default function NowPlayingScreen() {
       }
       if (result.success) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        triggerDownloadAnimation();
       }
     } catch (e) {
       console.error('[NowPlaying] Download failed', e);
@@ -424,8 +501,43 @@ export default function NowPlayingScreen() {
 
             {/* Artwork / Video */}
             <View className="items-center justify-center flex-1 px-10">
-              {(isYouTube || isYouTubeMusic) && ytVideoId ? (
-                /* YouTube / YouTube Music — show live video at highest quality */
+              {isYouTubeMusic && ytVideoId ? (
+                /* YouTube Music — always show artwork (embedding blocked) */
+                <Animated.View
+                  style={{
+                    shadowColor: '#FF0000',
+                    shadowOffset: { width: 0, height: 20 },
+                    shadowOpacity: 0.4,
+                    shadowRadius: 40,
+                    elevation: 20,
+                  }}
+                >
+                  <View style={{ width: ARTWORK_SIZE, height: ARTWORK_SIZE, borderRadius: 12, overflow: 'hidden' }}>
+                    <Image
+                      source={{ uri: currentTrack.artwork }}
+                      style={{ width: ARTWORK_SIZE, height: ARTWORK_SIZE }}
+                      contentFit="cover"
+                    />
+                    <View
+                      style={{
+                        position: 'absolute',
+                        bottom: 12,
+                        right: 12,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        backgroundColor: 'rgba(0,0,0,0.7)',
+                        borderRadius: 20,
+                        paddingHorizontal: 10,
+                        paddingVertical: 5,
+                      }}
+                    >
+                      <YouTubeMusicIcon size={14} />
+                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 5 }}>YouTube Music</Text>
+                    </View>
+                  </View>
+                </Animated.View>
+              ) : isYouTube && ytVideoId ? (
+                /* YouTube — show inline video player with artwork fallback */
                 <Animated.View
                   style={{
                     shadowColor: '#FF0000',
@@ -437,7 +549,7 @@ export default function NowPlayingScreen() {
                     overflow: 'hidden',
                   }}
                 >
-                  <YouTubeInlinePlayer videoId={ytVideoId} isPlaying={isPlaying} />
+                  <YouTubeInlinePlayer videoId={ytVideoId} artworkUri={currentTrack.artwork} isPlaying={isPlaying} />
                 </Animated.View>
               ) : isSoundCloud ? (
                 /* SoundCloud — artwork with source badge */
@@ -662,6 +774,18 @@ export default function NowPlayingScreen() {
             </View>
           </View>
         </LinearGradient>
+        {/* Download fly animation thumbnail */}
+        {flyVisible && currentTrack && (
+          <Animated.View
+            style={[
+              { position: 'absolute', top: 0, left: 0, width: 48, height: 48, borderRadius: 8, overflow: 'hidden', zIndex: 999 },
+              flyStyle,
+            ]}
+            pointerEvents="none"
+          >
+            <Image source={{ uri: currentTrack.artwork }} style={{ width: 48, height: 48 }} contentFit="cover" />
+          </Animated.View>
+        )}
       </Animated.View>
     </GestureDetector>
   );

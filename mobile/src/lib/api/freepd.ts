@@ -83,7 +83,7 @@ export async function fetchFreePDTrack(id: string): Promise<FreePDTrack | null> 
   try {
     return api.get<FreePDTrack>(`/api/freepd/tracks/${encodeURIComponent(id)}`);
   } catch (error) {
-    console.error('Error fetching FreePD track:', error);
+    console.warn('[FreePD] Error fetching track:', error instanceof Error ? error.message : error);
     return null;
   }
 }

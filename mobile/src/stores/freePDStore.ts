@@ -70,6 +70,31 @@ const CACHE_DURATION_MS = 60 * 60 * 1000;
 let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 const SEARCH_DEBOUNCE_MS = 300;
 
+/**
+ * Retry a non-critical async operation with exponential backoff.
+ * Swallows all errors silently — callers check the return value.
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  retries = 3,
+  baseDelayMs = 1000
+): Promise<T | null> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt === retries) {
+        console.warn('[FreePD] All fetch attempts failed:', err instanceof Error ? err.message : err);
+        return null;
+      }
+      const delay = baseDelayMs * Math.pow(2, attempt);
+      console.warn(`[FreePD] Fetch attempt ${attempt + 1} failed, retrying in ${delay}ms…`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  return null;
+}
+
 export const useFreePDStore = create<FreePDState>()(
   persist(
     (set, get) => ({
@@ -112,35 +137,28 @@ export const useFreePDStore = create<FreePDState>()(
           set({ isLoading: true });
         }
 
-        try {
-          // Fetch catalog
-          const catalog = await fetchFreePDCatalog();
+        const [catalog, genresResponse] = await Promise.all([
+          withRetry(() => fetchFreePDCatalog()),
+          withRetry(() => fetchFreePDGenres()),
+        ]);
 
-          if (catalog?.success && catalog.tracks) {
-            set({
-              tracks: catalog.tracks,
-              cachedCatalog: catalog,
-              lastRefresh: Date.now(),
-              error: null,
-            });
-          }
-
-          // Fetch genres and moods
-          const genresResponse = await fetchFreePDGenres();
-          if (genresResponse) {
-            set({
-              genres: genresResponse.genres || [],
-              moods: genresResponse.moods || [],
-            });
-          }
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : 'Failed to load catalog';
-          set({ error: errorMessage });
-          console.error('FreePD catalog load error:', error);
-        } finally {
-          set({ isLoading: false });
+        if (catalog?.success && catalog.tracks) {
+          set({
+            tracks: catalog.tracks,
+            cachedCatalog: catalog,
+            lastRefresh: Date.now(),
+            error: null,
+          });
         }
+
+        if (genresResponse) {
+          set({
+            genres: genresResponse.genres || [],
+            moods: genresResponse.moods || [],
+          });
+        }
+
+        set({ isLoading: false });
       },
 
       /**
@@ -149,37 +167,29 @@ export const useFreePDStore = create<FreePDState>()(
       refreshCatalog: async () => {
         set({ isLoading: true, error: null });
 
-        try {
-          // Request server to refresh its cache
-          await apiRefreshCatalog();
+        await withRetry(() => apiRefreshCatalog());
 
-          // Then fetch the updated catalog
-          const catalog = await fetchFreePDCatalog();
+        const [catalog, genresResponse] = await Promise.all([
+          withRetry(() => fetchFreePDCatalog()),
+          withRetry(() => fetchFreePDGenres()),
+        ]);
 
-          if (catalog?.success && catalog.tracks) {
-            set({
-              tracks: catalog.tracks,
-              cachedCatalog: catalog,
-              lastRefresh: Date.now(),
-            });
-          }
-
-          // Refresh genres too
-          const genresResponse = await fetchFreePDGenres();
-          if (genresResponse) {
-            set({
-              genres: genresResponse.genres || [],
-              moods: genresResponse.moods || [],
-            });
-          }
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : 'Failed to refresh catalog';
-          set({ error: errorMessage });
-          console.error('FreePD catalog refresh error:', error);
-        } finally {
-          set({ isLoading: false });
+        if (catalog?.success && catalog.tracks) {
+          set({
+            tracks: catalog.tracks,
+            cachedCatalog: catalog,
+            lastRefresh: Date.now(),
+          });
         }
+
+        if (genresResponse) {
+          set({
+            genres: genresResponse.genres || [],
+            moods: genresResponse.moods || [],
+          });
+        }
+
+        set({ isLoading: false });
       },
 
       /**
@@ -234,7 +244,7 @@ export const useFreePDStore = create<FreePDState>()(
               isSearching: false,
             });
           } catch (error) {
-            console.error('FreePD search error:', error);
+            console.warn('[FreePD] Search error:', error instanceof Error ? error.message : error);
             set({ searchResults: [], isSearching: false });
           }
         }, SEARCH_DEBOUNCE_MS);

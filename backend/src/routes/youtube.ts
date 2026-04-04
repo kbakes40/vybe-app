@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import YTDlpWrap from "yt-dlp-wrap";
 import { Readable } from "stream";
-import { getQuotaStats, getSearchCacheSize, purgeExpiredSearchCache } from "../services/youtubeService";
+import { getQuotaStats, getSearchCacheSize, purgeExpiredSearchCache, fetchNewReleases, fetchCuratedPlaylists } from "../services/youtubeService";
 
 const youtubeRouter = new Hono();
 const ytDlp = new YTDlpWrap("/opt/homebrew/bin/yt-dlp");
@@ -42,6 +42,17 @@ youtubeRouter.get("/audio/:videoId", async (c) => {
   }
 });
 
+youtubeRouter.get("/new-releases", async (c) => {
+  const maxResults = Math.min(parseInt(c.req.query("maxResults") ?? "20", 10), 50);
+  const results = await fetchNewReleases(maxResults);
+  return c.json({ data: results });
+});
+
+youtubeRouter.get("/playlists", async (c) => {
+  const results = await fetchCuratedPlaylists();
+  return c.json({ data: results });
+});
+
 youtubeRouter.get("/quota", (c) => {
   const stats = getQuotaStats();
   const cacheSize = getSearchCacheSize();
@@ -49,6 +60,7 @@ youtubeRouter.get("/quota", (c) => {
   return c.json({
     data: {
       quota: {
+        activeKey: `${stats.keyIndex}/${stats.totalKeys}`,
         unitsUsedToday: stats.totalUnits,
         dailyLimit: 10000,
         percentUsed: ((stats.totalUnits / 10000) * 100).toFixed(1) + '%',
