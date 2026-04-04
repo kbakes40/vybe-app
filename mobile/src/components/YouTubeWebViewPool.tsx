@@ -442,11 +442,13 @@ YouTubeWebViewPool.displayName = 'YouTubeWebViewPool';
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0A0A0A' },
   hidden: {
+    // iOS blocks media from 1x1/opacity-0 WebViews.
+    // Position off-screen with real dimensions so the IFrame player can play audio.
     position: 'absolute',
-    width: 1,
-    height: 1,
-    opacity: 0,
-    overflow: 'hidden',
+    left: -500,
+    top: -500,
+    width: 320,
+    height: 180,
   },
   webView: { flex: 1, backgroundColor: '#0A0A0A' },
 });
