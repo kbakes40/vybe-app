@@ -4,7 +4,25 @@
       "Bash(git stash:*)",
       "Bash(git fetch:*)",
       "Bash(git rebase:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(printf \"protocol=https\\\\nhost=github.com\\\\n\")",
+      "Bash(git credential:*)",
+      "Bash(node -e \"try { const c = require\\('@urql/core'\\); console.log\\('keys:', Object.keys\\(c\\).length, 'createClient:', typeof c.createClient\\); } catch\\(e\\) { console.error\\('ERROR:', e.message, e.stack?.split\\('\\\\n'\\)[1]\\); }\")",
+      "Bash(node node_modules/@expo/cli/build/bin/cli run:ios --device 00008130-001444D814A2001C)",
+      "Bash(grep -v \"^$\")",
+      "Bash(xcodebuild -workspace vibecode.xcworkspace -scheme vibecode -configuration Debug -destination \"id=00008130-001444D814A2001C\" -derivedDataPath build/DerivedData build install)",
+      "Bash(node -e \"const g = require\\('/Users/kevinbaker/Desktop/Applications/vybe-app/mobile/node_modules/gensync/index.js'\\); console.log\\('type:', typeof g, Object.keys\\(g\\)\\)\")",
+      "Bash(node -e ':*)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('version:', d.get\\('version'\\)\\); print\\('main:', d.get\\('main'\\)\\); print\\('exports:', d.get\\('exports'\\)\\)\")",
+      "Bash(node -e \"const pkg = require\\('/Users/kevinbaker/.npm/_npx/249ca9fcd30c476a/node_modules/@babel/core/package.json'\\); console.log\\(pkg.version\\)\")",
+      "Bash(npm pack:*)",
+      "Bash(tar -xzf babel-core-7.29.0.tgz package/lib/config/full.js)",
+      "Bash(node --check node_modules/@babel/core/lib/gensync-utils/fs.js)",
+      "Bash(node --check node_modules/@babel/core/lib/config/full.js)",
+      "Bash(node --check node_modules/@babel/core/lib/config/index.js)",
+      "Bash(node --check node_modules/@babel/core/lib/transform.js)",
+      "Bash(node --check node_modules/@babel/core/lib/transform-ast.js)",
+      "Bash(node -e \"const s = require\\('/Users/kevinbaker/Desktop/Applications/vybe-app/mobile/node_modules/semver'\\); console.log\\(typeof s, typeof s.satisfies, Object.keys\\(s\\).slice\\(0,5\\)\\)\")"
     ]
   }
 }
