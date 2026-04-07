@@ -1,10 +1,11 @@
 import { Hono } from "hono";
+import { stream } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import YTDlpWrap from "yt-dlp-wrap";
-import { Readable } from "stream";
+import { spawn } from "child_process";
 
-const ytDlp = new YTDlpWrap("/opt/homebrew/bin/yt-dlp");
+const YTDLP = "/opt/homebrew/bin/yt-dlp";
+const FFMPEG = "/opt/homebrew/bin/ffmpeg";
 const SC_URL_RE = /^https:\/\/(soundcloud\.com|on\.soundcloud\.com)\/.+/;
 
 // SoundCloud oEmbed response type
@@ -1107,6 +1108,90 @@ soundcloudRouter.post("/auto-tag", zValidator("json", autoTagRequestSchema), (c)
 });
 
 /**
+ * GET /api/soundcloud/search?q=...&maxResults=5
+ * Search SoundCloud for tracks using yt-dlp's scsearch prefix.
+ * Returns an array of { trackId, title, artist, artwork, duration, soundcloudUrl }.
+ */
+soundcloudRouter.get("/search", async (c) => {
+  const q = c.req.query("q")?.trim();
+  const maxResults = Math.min(parseInt(c.req.query("maxResults") ?? "5", 10), 20);
+
+  if (!q) return c.json({ error: { message: "Missing q parameter", code: "MISSING_Q" } }, 400);
+
+  try {
+    const tracks = await searchSoundCloud(q, maxResults);
+    return c.json({ data: tracks });
+  } catch (e) {
+    console.error("[SoundCloud] search error:", e);
+    return c.json({ error: { message: "Search failed", code: "SEARCH_FAILED" } }, 502);
+  }
+});
+
+function searchSoundCloud(query: string, maxResults: number): Promise<Array<{
+  trackId: string;
+  title: string;
+  artist: string;
+  artwork: string;
+  duration: number;
+  soundcloudUrl: string;
+}>> {
+  return new Promise((resolve, reject) => {
+    const ytdlp = spawn(YTDLP, [
+      `scsearch${maxResults}:${query}`,
+      "--dump-json",
+      "--flat-playlist",
+      "--quiet",
+      "--no-warnings",
+    ]);
+
+    const timeout = setTimeout(() => {
+      ytdlp.kill("SIGKILL");
+      reject(new Error("yt-dlp search timed out"));
+    }, 45_000);
+
+    let output = "";
+    ytdlp.stdout.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+    ytdlp.on("close", (code: number | null) => {
+      clearTimeout(timeout);
+      // yt-dlp may exit non-zero even when some results were returned
+      const tracks = output
+        .trim()
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => {
+          try {
+            const j = JSON.parse(line);
+            const id: string = j.id ?? "";
+            if (!id) return null;
+            const thumbs: Array<{ url: string }> = j.thumbnails ?? [];
+            const artwork = thumbs.length > 0
+              ? thumbs[thumbs.length - 1].url
+              : "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop";
+            return {
+              trackId: id,
+              title: (j.title as string) ?? "Unknown",
+              artist: (j.uploader ?? j.channel ?? "Unknown") as string,
+              artwork,
+              duration: (j.duration as number) ?? 0,
+              soundcloudUrl: (j.webpage_url ?? j.url ?? `https://soundcloud.com/${id}`) as string,
+            };
+          } catch {
+            return null;
+          }
+        })
+        .filter((t): t is NonNullable<typeof t> => t !== null);
+
+      if (tracks.length > 0) {
+        resolve(tracks);
+      } else {
+        reject(new Error(`yt-dlp returned no results (code ${code})`));
+      }
+    });
+    ytdlp.on("error", (e: Error) => { clearTimeout(timeout); reject(e); });
+  });
+}
+
+/**
  * GET /api/soundcloud/audio
  * Proxy-stream SoundCloud audio via yt-dlp for in-app playback and download.
  * Query params:
@@ -1116,6 +1201,8 @@ soundcloudRouter.post("/auto-tag", zValidator("json", autoTagRequestSchema), (c)
 soundcloudRouter.get("/audio", async (c) => {
   const url = c.req.query("url");
   const isDownload = c.req.query("dl") === "1";
+  // quality=low: fastest start (lowest bitrate); quality=high (default): best available
+  const quality = c.req.query("quality") ?? "high";
 
   if (!url) {
     return c.json({ error: { message: "Missing url parameter", code: "MISSING_URL" } }, 400);
@@ -1125,38 +1212,180 @@ soundcloudRouter.get("/audio", async (c) => {
     return c.json({ error: { message: "Invalid SoundCloud URL", code: "INVALID_URL" } }, 400);
   }
 
+  // Format selection based on quality param
+  // low  → worstaudio (lowest bitrate, fastest server-side download ~48kbps)
+  // high → best available mp3/m4a (highest bitrate, best listening quality)
+  const formatArg = quality === "low"
+    ? "worstaudio[ext=mp3]/worstaudio[ext=m4a]/worstaudio"
+    : "bestaudio[protocol=https][ext=mp3]/bestaudio[protocol=http][ext=mp3]/bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio";
+
+  // Use a unique base path; let yt-dlp append the real extension via %(ext)s
+  const tmpBase = `/tmp/sc_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const tmpTemplate = `${tmpBase}.%(ext)s`;
+  let actualPath = "";
+
   try {
-    // Get track title for filename
-    let title = "soundcloud-track";
-    try {
-      const meta = await ytDlp.getVideoInfo(url);
-      if (meta.title) {
-        title = (meta.title as string).replace(/[^\w\s-]/g, "").trim().slice(0, 80) || title;
-      }
-    } catch {
-      // Non-fatal — proceed with default title
+    actualPath = await new Promise<string>((resolve, reject) => {
+      const ytdlp = spawn(YTDLP, [
+        url,
+        "-f", formatArg,
+        "--no-playlist",
+        "-o", tmpTemplate,
+        "--no-warnings",
+        "--no-part",
+        // Print the final filename so we know which file was written
+        "--print", "after_move:filepath",
+      ]);
+
+      // Kill if yt-dlp hangs for more than 120 seconds
+      const timeout = setTimeout(() => {
+        ytdlp.kill("SIGKILL");
+        reject(new Error("yt-dlp timed out after 120s"));
+      }, 120_000);
+
+      let stdoutBuf = "";
+      let errOutput = "";
+      ytdlp.stdout.on("data", (d: Buffer) => { stdoutBuf += d.toString(); });
+      ytdlp.stderr.on("data", (d: Buffer) => { errOutput += d.toString(); });
+
+      ytdlp.on("close", (code: number | null) => {
+        clearTimeout(timeout);
+        const finalPath = stdoutBuf.trim().split("\n").pop()?.trim() ?? "";
+        if (code === 0 && finalPath) {
+          resolve(finalPath);
+        } else if (code === 0) {
+          // yt-dlp exited 0 but didn't print a filepath — check if any file was created
+          // (some yt-dlp versions don't support --print after_move:filepath)
+          const { execSync } = require("child_process") as typeof import("child_process");
+          try {
+            const listed = execSync(`ls ${tmpBase}.* 2>/dev/null | head -1`).toString().trim();
+            if (listed) resolve(listed);
+            else reject(new Error("yt-dlp exited 0 but produced no file"));
+          } catch {
+            reject(new Error("yt-dlp exited 0 but produced no file"));
+          }
+        } else {
+          reject(new Error(`yt-dlp failed (${code}): ${errOutput.slice(0, 300)}`));
+        }
+      });
+      ytdlp.on("error", (e: Error) => { clearTimeout(timeout); reject(e); });
+    });
+
+    const file = Bun.file(actualPath);
+    const size = file.size;
+
+    if (size === 0) {
+      throw new Error("yt-dlp produced an empty file");
     }
 
-    const stream = ytDlp.execStream([
-      url,
-      "-f", "bestaudio[ext=m4a]/bestaudio/best",
-      "--no-playlist",
-      "-o", "-",
-    ]);
+    // Detect audio type from extension
+    const ext = actualPath.split(".").pop()?.toLowerCase() ?? "mp3";
+    const contentType = ext === "mp3" ? "audio/mpeg" : "audio/mp4";
+    const dlFilename = ext === "mp3" ? "soundcloud-track.mp3" : "soundcloud-track.m4a";
 
-    c.header("Content-Type", "audio/mp4");
-    c.header("Cache-Control", "no-store");
-    if (isDownload) {
-      c.header("Content-Disposition", `attachment; filename="${title}.m4a"`);
-    } else {
-      c.header("Content-Disposition", `inline; filename="${title}.m4a"`);
-    }
+    const buffer = await file.arrayBuffer();
+    Bun.spawn(["rm", "-f", actualPath]);
 
-    const webStream = Readable.toWeb(stream as unknown as Readable) as ReadableStream;
-    return new Response(webStream, { status: 200 });
-  } catch (error) {
-    console.error("[SoundCloud] Audio proxy failed:", error);
-    return c.json({ error: { message: "Failed to stream SoundCloud audio", code: "STREAM_FAILED" } }, 500);
+    console.log(`[SoundCloud] serving ${actualPath} (${buffer.byteLength} bytes, ${contentType})`);
+
+    return new Response(buffer, {
+      status: 200,
+      headers: {
+        "Content-Type": contentType,
+        "Content-Length": buffer.byteLength.toString(),
+        "Content-Disposition": isDownload
+          ? `attachment; filename="${dlFilename}"`
+          : `inline; filename="${dlFilename}"`,
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  } catch (e) {
+    // Cleanup any partial files
+    if (actualPath) Bun.spawn(["rm", "-f", actualPath]);
+    Bun.spawn(["sh", "-c", `rm -f ${tmpBase}.* 2>/dev/null`]);
+    const msg = e instanceof Error ? e.message : "Download failed";
+    console.error("[SoundCloud] audio download error:", msg);
+    return c.json({ error: { message: msg, code: "DOWNLOAD_FAILED" } }, 502);
+  }
+});
+
+/**
+ * GET /api/soundcloud/download?url=...
+ * Downloads a SoundCloud track to a temp file via yt-dlp then serves it with
+ * Content-Length — identical pattern to /api/youtube/download/:videoId.
+ * Preferred over /audio?dl=1 for offline saves because it pre-downloads
+ * server-side first so the mobile gets a known-size file in one shot.
+ */
+soundcloudRouter.get("/download", async (c) => {
+  const url = c.req.query("url");
+  if (!url || !SC_URL_RE.test(url)) {
+    return c.json({ error: "Missing or invalid SoundCloud URL" }, 400);
+  }
+
+  const safeBase = `/tmp/sc_dl_${Date.now()}`;
+
+  type DlResult = { ok: true; path: string; ext: string } | { ok: false; reason: string };
+
+  async function runYtdlp(extraArgs: string[] = []): Promise<DlResult> {
+    return new Promise((resolve) => {
+      const args = [
+        url,
+        "-f", "bestaudio[protocol=https][ext=mp3]/bestaudio[protocol=http][ext=mp3]/bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio",
+        "-o", `${safeBase}.%(ext)s`,
+        "--no-playlist",
+        "--quiet",
+        ...extraArgs,
+      ];
+      const proc = spawn(YTDLP, args);
+      const timeout = setTimeout(() => { proc.kill("SIGKILL"); resolve({ ok: false, reason: "Download timed out" }); }, 300_000);
+      let errOut = "";
+      proc.stderr.on("data", (d: Buffer) => { errOut += d.toString(); });
+      proc.on("close", async (code) => {
+        clearTimeout(timeout);
+        if (code !== 0) { resolve({ ok: false, reason: errOut.slice(0, 200) }); return; }
+        // Find the output file
+        for (const ext of ["mp3", "m4a", "opus", "ogg", "webm"]) {
+          const candidate = `${safeBase}.${ext}`;
+          const info = Bun.file(candidate);
+          if (await info.exists()) { resolve({ ok: true, path: candidate, ext }); return; }
+        }
+        resolve({ ok: false, reason: "Output file not found after download" });
+      });
+      proc.on("error", (e: Error) => { clearTimeout(timeout); resolve({ ok: false, reason: e.message }); });
+    });
+  }
+
+  let result = await runYtdlp();
+  if (!result.ok) {
+    console.error("[SoundCloud /download]", result.reason);
+    return c.json({ error: result.reason }, 502);
+  }
+
+  try {
+    const file = Bun.file(result.path);
+    const buffer = await file.arrayBuffer();
+    Bun.spawn(["rm", "-f", result.path]);
+
+    const contentType = result.ext === "mp3" ? "audio/mpeg" : "audio/mp4";
+    console.log(`[SoundCloud /download] serving ${result.path} (${buffer.byteLength} bytes)`);
+
+    return new Response(buffer, {
+      status: 200,
+      headers: {
+        "Content-Type": contentType,
+        "Content-Length": buffer.byteLength.toString(),
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  } catch (e) {
+    Bun.spawn(["rm", "-f", result.path]);
+    const msg = e instanceof Error ? e.message : "Serve failed";
+    console.error("[SoundCloud /download] serve error:", msg);
+    return c.json({ error: msg }, 502);
   }
 });
 

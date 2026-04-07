@@ -1,0 +1,318 @@
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  View, Text, Pressable, Animated,
+  ActivityIndicator, Dimensions, StyleSheet,
+} from 'react-native';
+import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ArrowLeft, Music2, Trash2 } from 'lucide-react-native';
+import { usePlaybackController } from '@/stores/playbackController';
+import { useDownloadsStore } from '@/stores/downloadsStore';
+import { DownloadButton } from '@/components/DownloadButton';
+import { Track } from '@/types/music';
+
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const HEADER_HEIGHT = 300;
+
+// ── Module-level caches ───────────────────────────────────────────────────────
+interface ArtistData {
+  bio: string;
+  photo: string;
+  genres: string[];
+  topTracks: { trackName: string; artworkUrl: string }[];
+}
+const artistCache = new Map<string, ArtistData>();
+const ytmTrackCache = new Map<string, Track>();
+
+// ── Equalizer animation ───────────────────────────────────────────────────────
+function EqualizerBars() {
+  const bar0 = useRef(new Animated.Value(4)).current;
+  const bar1 = useRef(new Animated.Value(9)).current;
+  const bar2 = useRef(new Animated.Value(6)).current;
+
+  useEffect(() => {
+    const animateBar = (bar: Animated.Value, delay: number) => {
+      const loop = () => {
+        Animated.sequence([
+          Animated.timing(bar, { toValue: 4 + Math.random() * 10, duration: 200 + delay, useNativeDriver: false }),
+          Animated.timing(bar, { toValue: 2 + Math.random() * 6, duration: 200 + delay, useNativeDriver: false }),
+        ]).start(loop);
+      };
+      loop();
+    };
+    animateBar(bar0, 0);
+    animateBar(bar1, 80);
+    animateBar(bar2, 40);
+  }, []);
+
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 14, gap: 2 }}>
+      {[bar0, bar1, bar2].map((bar, i) => (
+        <Animated.View key={i} style={{ width: 3, height: bar, backgroundColor: '#1DB954', borderRadius: 2 }} />
+      ))}
+    </View>
+  );
+}
+
+// ── TopTrackDownload: pre-fetch on mount for one-tap download ─────────────────
+function TopTrackDownload({ trackName, artistName, artwork }: { trackName: string; artistName: string; artwork: string }) {
+  const cacheKey = `${artistName}|||${trackName}`.toLowerCase();
+  const [foundTrack, setFoundTrack] = useState<Track | null>(ytmTrackCache.get(cacheKey) ?? null);
+  const isTrackDownloaded = useDownloadsStore(s => s.isTrackDownloaded);
+
+  useEffect(() => {
+    if (ytmTrackCache.has(cacheKey) || foundTrack) return;
+    fetch(`${BACKEND_URL}/api/youtube/search?q=${encodeURIComponent(`${artistName} ${trackName}`)}&maxResults=1`)
+      .then(r => r.json())
+      .then(json => {
+        const first = (json.data ?? json ?? [])[0];
+        if (first?.videoId) {
+          const t: Track = {
+            id: `ytm-${first.videoId}`,
+            title: trackName,
+            artist: artistName,
+            artistId: '',
+            album: '',
+            albumId: '',
+            artwork,
+            duration: 0,
+            isLiked: false,
+            source: 'youtube_music',
+            youtubeId: first.videoId,
+            youtubeMusicId: first.videoId,
+          };
+          ytmTrackCache.set(cacheKey, t);
+          setFoundTrack(t);
+        }
+      }).catch(() => {});
+  }, [cacheKey]);
+
+  if (!foundTrack) {
+    return <ActivityIndicator size="small" color="rgba(255,255,255,0.2)" style={{ width: 28 }} />;
+  }
+  return <DownloadButton track={foundTrack} size={26} />;
+}
+
+// ── Library track row ─────────────────────────────────────────────────────────
+function LibraryTrackRow({ track, isPlaying, onPress }: { track: Track; isPlaying: boolean; onPress: () => void }) {
+  const removeDownload = useDownloadsStore(s => s.removeDownload);
+
+  return (
+    <Pressable onPress={onPress} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }}>
+      {track.artwork ? (
+        <Image source={{ uri: track.artwork }} style={{ width: 48, height: 48, borderRadius: 6 }} contentFit="cover" />
+      ) : (
+        <View style={{ width: 48, height: 48, borderRadius: 6, backgroundColor: 'rgba(139,92,246,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+          <Music2 size={20} color="#8B5CF6" />
+        </View>
+      )}
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text style={{ color: isPlaying ? '#1DB954' : '#fff', fontWeight: '600', fontSize: 15 }} numberOfLines={1}>{track.title}</Text>
+        <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 2 }} numberOfLines={1}>{track.artist}</Text>
+      </View>
+      {isPlaying ? <EqualizerBars /> : (
+        <Pressable onPress={() => removeDownload(track.id)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+          <Trash2 size={18} color="rgba(255,255,255,0.3)" />
+        </Pressable>
+      )}
+    </Pressable>
+  );
+}
+
+// ── Main screen ───────────────────────────────────────────────────────────────
+export default function ArtistProfileScreen() {
+  const { name, artworks } = useLocalSearchParams<{ name: string; artworks: string }>();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const scrollY = useRef(new Animated.Value(0)).current;
+
+  const artistName = name ?? '';
+  const artworkList = (artworks ?? '').split('|||').filter(Boolean);
+  const primaryArtwork = artworkList[0] ?? '';
+
+  const [data, setData] = useState<ArtistData | null>(artistCache.get(artistName.toLowerCase()) ?? null);
+  const [loading, setLoading] = useState(!data);
+
+  const downloads = useDownloadsStore(s => s.downloads);
+  const playTrack = usePlaybackController(s => s.playTrack);
+  const currentTrack = usePlaybackController(s => s.currentTrack);
+
+  // Tracks in library that belong to this artist
+  const libraryTracks = downloads.filter(t => {
+    const da = (t.artist ?? '').toLowerCase();
+    const an = artistName.toLowerCase();
+    return da === an || da.includes(an) || an.includes(da);
+  });
+
+  useEffect(() => {
+    const key = artistName.toLowerCase();
+    if (artistCache.has(key)) { setData(artistCache.get(key)!); setLoading(false); return; }
+    (async () => {
+      try {
+        // Wikipedia bio + photo
+        const wikiRes = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(artistName)}`);
+        const wikiData = await wikiRes.json();
+        const bio: string = wikiData.extract ?? '';
+        const photo: string = wikiData.originalimage?.source ?? wikiData.thumbnail?.source ?? primaryArtwork;
+
+        // iTunes top tracks
+        const searchRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(artistName)}&entity=musicArtist&limit=1`);
+        const searchData = await searchRes.json();
+        const artistId = searchData.results?.[0]?.artistId;
+        let topTracks: { trackName: string; artworkUrl: string }[] = [];
+        let genres: string[] = [];
+        if (artistId) {
+          const lookupRes = await fetch(`https://itunes.apple.com/lookup?id=${artistId}&entity=song&limit=10`);
+          const lookupData = await lookupRes.json();
+          const songs = (lookupData.results ?? []).filter((r: any) => r.wrapperType === 'track');
+          topTracks = songs.map((s: any) => ({
+            trackName: s.trackName ?? '',
+            artworkUrl: (s.artworkUrl100 ?? '').replace(/\d+x\d+bb\.jpg/, '300x300bb.jpg'),
+          }));
+          const genre = songs[0]?.primaryGenreName;
+          if (genre) genres = [genre];
+        }
+
+        const result: ArtistData = { bio, photo, genres, topTracks };
+        artistCache.set(key, result);
+        setData(result);
+      } catch (e) {
+        console.warn('[ArtistProfile] fetch failed', e);
+        setData({ bio: '', photo: primaryArtwork, genres: [], topTracks: [] });
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [artistName]);
+
+  const headerTranslateY = scrollY.interpolate({ inputRange: [0, HEADER_HEIGHT], outputRange: [0, -HEADER_HEIGHT * 0.4], extrapolate: 'clamp' });
+  const headerOpacity = scrollY.interpolate({ inputRange: [0, HEADER_HEIGHT * 0.6], outputRange: [1, 0], extrapolate: 'clamp' });
+  const nameOpacity = scrollY.interpolate({ inputRange: [HEADER_HEIGHT * 0.5, HEADER_HEIGHT * 0.8], outputRange: [0, 1], extrapolate: 'clamp' });
+
+  const mosaicArtworks = artworkList.length >= 4 ? artworkList : Array.from({ length: 4 }, (_, i) => artworkList[i % artworkList.length] ?? primaryArtwork);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
+      {/* Sticky nav bar */}
+      <View style={[styles.navBar, { paddingTop: insets.top + 8 }]}>
+        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+          <ArrowLeft size={22} color="#fff" />
+        </Pressable>
+        <Animated.Text style={[styles.navTitle, { opacity: nameOpacity }]} numberOfLines={1}>{artistName}</Animated.Text>
+        <View style={{ width: 40 }} />
+      </View>
+
+      <Animated.ScrollView
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
+        scrollEventThrottle={16}
+        contentContainerStyle={{ paddingBottom: 120 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Parallax header */}
+        <Animated.View style={[styles.header, { transform: [{ translateY: headerTranslateY }] }]}>
+          {artworkList.length >= 4 ? (
+            <View style={styles.mosaic}>
+              {mosaicArtworks.slice(0, 4).map((uri, i) => (
+                <Image key={i} source={{ uri }} style={styles.mosaicTile} contentFit="cover" />
+              ))}
+            </View>
+          ) : (
+            <Image source={{ uri: data?.photo || primaryArtwork }} style={StyleSheet.absoluteFillObject} contentFit="cover" />
+          )}
+          <LinearGradient
+            colors={['transparent', 'rgba(10,10,10,0.6)', '#0A0A0A']}
+            style={StyleSheet.absoluteFillObject}
+          />
+          <Animated.View style={[styles.headerContent, { opacity: headerOpacity }]}>
+            <Text style={styles.artistName}>{artistName}</Text>
+            {(data?.genres ?? []).length > 0 && (
+              <View style={styles.genreRow}>
+                {data!.genres.map(g => (
+                  <View key={g} style={styles.genreTag}>
+                    <Text style={styles.genreText}>{g}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </Animated.View>
+        </Animated.View>
+
+        <View style={{ paddingHorizontal: 20 }}>
+          {/* Bio */}
+          {!!data?.bio && (
+            <View style={{ marginBottom: 28 }}>
+              <Text style={styles.sectionTitle}>About</Text>
+              <Text style={styles.bioText} numberOfLines={5}>{data.bio}</Text>
+            </View>
+          )}
+
+          {/* In Your Library */}
+          {libraryTracks.length > 0 && (
+            <View style={{ marginBottom: 28 }}>
+              <Text style={styles.sectionTitle}>In Your Library</Text>
+              {libraryTracks.map(track => (
+                <LibraryTrackRow
+                  key={track.id}
+                  track={track}
+                  isPlaying={currentTrack?.id === track.id}
+                  onPress={() => playTrack(track, libraryTracks)}
+                />
+              ))}
+            </View>
+          )}
+
+          {/* Popular via Apple Music */}
+          {loading ? (
+            <ActivityIndicator color="rgba(255,255,255,0.3)" style={{ marginTop: 20 }} />
+          ) : (data?.topTracks ?? []).length > 0 ? (
+            <View style={{ marginBottom: 28 }}>
+              <Text style={styles.sectionTitle}>Popular via Apple Music</Text>
+              {data!.topTracks.map((t, i) => (
+                <View key={i} style={styles.topTrackRow}>
+                  <Text style={styles.trackNum}>{i + 1}</Text>
+                  {t.artworkUrl ? (
+                    <Image source={{ uri: t.artworkUrl }} style={styles.trackArt} contentFit="cover" />
+                  ) : (
+                    <View style={[styles.trackArt, { backgroundColor: 'rgba(139,92,246,0.2)', alignItems: 'center', justifyContent: 'center' }]}>
+                      <Music2 size={16} color="#8B5CF6" />
+                    </View>
+                  )}
+                  <Text style={styles.trackName} numberOfLines={1}>{t.trackName}</Text>
+                  <TopTrackDownload trackName={t.trackName} artistName={artistName} artwork={t.artworkUrl || primaryArtwork} />
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </View>
+      </Animated.ScrollView>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  navBar: {
+    position: 'absolute', top: 0, left: 0, right: 0, zIndex: 100,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 16, paddingBottom: 10,
+    backgroundColor: 'transparent',
+  },
+  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
+  navTitle: { flex: 1, color: '#fff', fontSize: 17, fontWeight: '700', textAlign: 'center', marginHorizontal: 8 },
+  header: { height: HEADER_HEIGHT, width: SCREEN_WIDTH, overflow: 'hidden' },
+  mosaic: { flex: 1, flexDirection: 'row', flexWrap: 'wrap' },
+  mosaicTile: { width: SCREEN_WIDTH / 2, height: HEADER_HEIGHT / 2 },
+  headerContent: { position: 'absolute', bottom: 20, left: 20, right: 20 },
+  artistName: { color: '#fff', fontSize: 32, fontWeight: '800', marginBottom: 8 },
+  genreRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  genreTag: { backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
+  genreText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  sectionTitle: { color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 12 },
+  bioText: { color: 'rgba(255,255,255,0.65)', fontSize: 14, lineHeight: 21 },
+  topTrackRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 12 },
+  trackNum: { color: 'rgba(255,255,255,0.4)', fontSize: 14, width: 20, textAlign: 'center' },
+  trackArt: { width: 44, height: 44, borderRadius: 6 },
+  trackName: { flex: 1, color: '#fff', fontSize: 15, fontWeight: '500' },
+});

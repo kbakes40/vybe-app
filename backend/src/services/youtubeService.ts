@@ -28,7 +28,8 @@ const API_KEYS: string[] = (
     // Fallback: legacy single key
     process.env.YOUTUBE_API_KEY,
   ] as (string | undefined)[]
-).filter((k): k is string => typeof k === 'string' && k.length > 0);
+).map(k => k?.trim())
+.filter((k): k is string => typeof k === 'string' && k.length > 0);
 
 // De-duplicate in case the same key is set under multiple vars
 const UNIQUE_API_KEYS = [...new Set(API_KEYS)];
@@ -410,6 +411,10 @@ export async function getHiddenGems(
 // ─── Curated Playlists ───────────────────────────────────────────────────────
 
 const CURATED_PLAYLIST_IDS = [
+  'RDCLAK5uy_m7EF_vYZXBhXNuduyXmhT00DYapc8cobs',
+  'RDCLAK5uy_nZiG9ehz_MQoWQxY5yElsLHCcG0tv9PRg',
+  'RDCLAK5uy_kZFOUXnpa_oJMql3vYc-jq6yVxwqhdkrM',
+  'RDCLAK5uy_mv1P2oVguxLCIDXavV-jcDG1lQyukfSpo',
   'RDCLAK5uy_kP2172rQNb3KFXz880xp6M98R_ME5CIKA',
   'RDCLAK5uy_k4QxtdDiyPtN17wezA186nbXuqO36QOiU',
   'RDCLAK5uy_kw2wIlEv9llILhO0qoMTLsBBhmjzuibAc',

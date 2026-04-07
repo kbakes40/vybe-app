@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, Pressable, Modal } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, Text, ScrollView, Pressable, Modal, Dimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -25,6 +25,51 @@ import { playlists, albums, artists, getLikedTracks, tracks } from '@/data/mockD
 import { usePlaybackController } from '@/stores/playbackController';
 import { useDownloadsStore, formatFileSize } from '@/stores/downloadsStore';
 import { useSoundCloudPreloadStore } from '@/stores/soundcloudPreloadStore';
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const ITEM_WIDTH = (SCREEN_WIDTH - 32 - 36) / 4;
+
+// Module-level cache so photos survive re-renders
+const artistImgCache = new Map<string, string>();
+
+function useArtistImage(artistName: string, fallback: string): string {
+  const key = artistName.toLowerCase();
+  const [img, setImg] = useState<string>(artistImgCache.get(key) ?? fallback);
+  useEffect(() => {
+    if (artistImgCache.has(key)) return;
+    fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(artistName)}`)
+      .then(r => r.json())
+      .then(data => {
+        const found = data.originalimage?.source ?? data.thumbnail?.source ?? '';
+        if (found) { artistImgCache.set(key, found); setImg(found); return; }
+        return fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(artistName)}&entity=song&limit=1`)
+          .then(r => r.json())
+          .then(d => {
+            const art = d.results?.[0]?.artworkUrl100 ?? '';
+            if (art) {
+              const scaled = art.replace(/\d+x\d+bb\.jpg/, '600x600bb.jpg');
+              artistImgCache.set(key, scaled); setImg(scaled);
+            } else { artistImgCache.set(key, fallback); }
+          });
+      }).catch(() => {});
+  }, [key]);
+  return img;
+}
+
+function ArtistCard({ artist, onPress }: { artist: { id: string; name: string; image: string }; onPress: () => void }) {
+  const photo = useArtistImage(artist.name, artist.image);
+  return (
+    <Pressable onPress={onPress} style={{ width: ITEM_WIDTH, alignItems: 'center', marginBottom: 20 }}>
+      <Image
+        source={{ uri: photo }}
+        style={{ width: ITEM_WIDTH, height: ITEM_WIDTH, borderRadius: ITEM_WIDTH / 2 }}
+        contentFit="cover"
+      />
+      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', marginTop: 6, textAlign: 'center' }} numberOfLines={1}>{artist.name}</Text>
+      <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>Artist</Text>
+    </Pressable>
+  );
+}
 
 type FilterType = 'playlists' | 'artists' | 'albums' | 'downloaded' | 'saved_external' | 'vybe_originals';
 const DOWNLOAD_FILTERS = ['Playlists', 'Podcasts', 'Songs', 'Albums'];
@@ -251,27 +296,47 @@ export default function LibraryScreen() {
     );
   };
 
+  // Build unique artist list from downloaded tracks
+  const libraryArtists = React.useMemo(() => {
+    const map = new Map<string, { name: string; artworks: string[] }>();
+    downloads.forEach(t => {
+      if (!t.artist) return;
+      const key = t.artist.toLowerCase();
+      if (!map.has(key)) map.set(key, { name: t.artist, artworks: [] });
+      if (t.artwork && !map.get(key)!.artworks.includes(t.artwork)) {
+        map.get(key)!.artworks.push(t.artwork);
+      }
+    });
+    // Fall back to mock artists if no downloads
+    if (map.size === 0) {
+      artists.forEach(a => map.set(a.name.toLowerCase(), { name: a.name, artworks: [a.image] }));
+    }
+    return Array.from(map.values());
+  }, [downloads]);
+
   const renderContent = () => {
     if (activeFilter === 'artists') {
+      if (libraryArtists.length === 0) {
+        return (
+          <View style={{ alignItems: 'center', justifyContent: 'center', paddingTop: 80 }}>
+            <User size={48} color="rgba(255,255,255,0.2)" />
+            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 15, marginTop: 16, textAlign: 'center' }}>
+              Download tracks to see{'\n'}artists here
+            </Text>
+          </View>
+        );
+      }
       return (
-        <View>
-          {artists.slice(0, 8).map(artist => (
-            <Pressable
-              key={artist.id}
-              onPress={() => router.push(`/(app)/artist/${artist.id}` as never)}
-              className="flex-row items-center px-5 py-3"
-            >
-              <Image
-                source={{ uri: artist.image }}
-                style={{ width: 56, height: 56, borderRadius: 28 }}
-                contentFit="cover"
-              />
-              <View className="flex-1 ml-4">
-                <Text className="text-white font-medium">{artist.name}</Text>
-                <Text className="text-white/60 text-sm">Artist</Text>
-              </View>
-              <ChevronRight size={20} color="rgba(255,255,255,0.4)" />
-            </Pressable>
+        <View style={{ paddingHorizontal: 16, flexDirection: 'row', flexWrap: 'wrap', gap: 9 }}>
+          {libraryArtists.map(artist => (
+            <ArtistCard
+              key={artist.name}
+              artist={{ id: artist.name, name: artist.name, image: artist.artworks[0] ?? '' }}
+              onPress={() => router.push({
+                pathname: '/(app)/artist-profile',
+                params: { name: artist.name, artworks: artist.artworks.join('|||') },
+              } as never)}
+            />
           ))}
         </View>
       );

@@ -151,6 +151,12 @@ export default function AppLayout() {
           }}
         />
         <Stack.Screen
+          name="artist-profile"
+          options={{
+            animation: 'slide_from_right',
+          }}
+        />
+        <Stack.Screen
           name="import-audio"
           options={{
             animation: 'slide_from_right',

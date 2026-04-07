@@ -2,7 +2,58 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { MMKV } from 'react-native-mmkv';
 import * as FileSystem from 'expo-file-system';
+import { NativeModules, Platform } from 'react-native';
 import { Track } from '@/types/music';
+import { getDownloadDir } from './storageSettingsStore';
+
+// ── Live Activity bridge (iOS 16.1+ only) ─────────────────────────────────────
+const LiveActivityBridge = Platform.OS === 'ios' ? NativeModules.VybeDownloadActivity : null;
+
+async function laStartDownloadActivity(trackTitle: string, artistName: string): Promise<void> {
+  try {
+    await LiveActivityBridge?.startActivity(trackTitle, artistName);
+  } catch {}
+}
+
+function laUpdateProgress(progress: number, statusText: string): void {
+  try {
+    LiveActivityBridge?.updateProgress(progress, statusText);
+  } catch {}
+}
+
+function laEndActivity(success: boolean): void {
+  try {
+    LiveActivityBridge?.endActivity(success);
+  } catch {}
+}
+
+// ── Serial download queue ──────────────────────────────────────────────────────
+// Prevents simultaneous yt-dlp processes from aborting each other.
+type QueueEntry = { id: string; fn: () => Promise<void> };
+const _queue: QueueEntry[] = [];
+let _queueRunning = false;
+
+async function _processQueue(): Promise<void> {
+  if (_queueRunning || _queue.length === 0) return;
+  _queueRunning = true;
+  while (_queue.length > 0) {
+    const entry = _queue.shift()!;
+    try { await entry.fn(); } catch (e) { console.error('[DownloadQueue]', e); }
+  }
+  _queueRunning = false;
+}
+
+/** Enqueue a download. Duplicate IDs are silently ignored. */
+export function enqueueDownload(trackId: string, fn: () => Promise<void>): void {
+  if (_queue.some(e => e.id === trackId)) return;
+  _queue.push({ id: trackId, fn });
+  _processQueue();
+}
+
+/** True if this track ID is currently waiting or running in the queue. */
+export function isDownloadQueued(trackId: string): boolean {
+  return _queue.some(e => e.id === trackId);
+}
 
 const downloadsStorage = new MMKV({ id: 'vybe-downloads-storage' });
 
@@ -178,55 +229,96 @@ export async function downloadYouTubeTrack(
   store.setImporting(true);
   store.setImportProgress(0);
 
+  const trackTitle = track.title ?? 'Unknown track';
+  const artistName = track.artist ?? 'Unknown artist';
+
+  // Start Dynamic Island Live Activity
+  await laStartDownloadActivity(trackTitle, artistName);
+
   const base = backendBaseUrl.replace(/\/$/, '');
-  const audioUrl = `${base}/api/youtube/audio/${videoId}`;
 
   try {
-    const fileName = `yt_${videoId}.mp4`;
-    const dir = `${FileSystem.documentDirectory}vybe_downloads/`;
-    const localFilePath = `${dir}${fileName}`;
+    const { dir, isICloud } = await getDownloadDir();
+    if (isICloud) console.log('[downloadYouTubeTrack] saving to iCloud:', dir);
 
-    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+    onProgress?.(0.01);
+    store.setImportProgress(0.01);
+    laUpdateProgress(0.01, 'Fetching from server…');
 
-    const downloadResumable = FileSystem.createDownloadResumable(
-      audioUrl,
-      localFilePath,
-      {},
-      (downloadProgress) => {
-        const total = downloadProgress.totalBytesExpectedToWrite;
-        const progress =
-          total > 0 ? downloadProgress.totalBytesWritten / total : 0;
-        store.setImportProgress(progress);
-        onProgress?.(progress);
-      }
-    );
+    // Use /download/ endpoint: backend uses yt-dlp to download to a temp file first,
+    // then serves it with Content-Length. This is much faster than the /audio/ streaming
+    // proxy because yt-dlp fetches from YouTube CDN at full server speed, and the mobile
+    // then downloads over LAN in seconds instead of minutes.
+    // 8-minute timeout covers: 3 min yt-dlp download + 5 min mobile transfer buffer.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 480_000);
 
-    const result = await downloadResumable.downloadAsync();
-    if (!result || result.status !== 200) {
-      throw new Error(`Download failed with status ${result?.status ?? 'unknown'}`);
+    let resp: Response;
+    try {
+      resp = await fetch(`${base}/api/youtube/download/${videoId}`, { signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+    if (!resp.ok) {
+      let reason = `Server error (${resp.status})`;
+      try {
+        const json = await resp.json();
+        if (json?.error) reason = json.error;
+      } catch {}
+      throw new Error(reason);
     }
 
-    const fileInfo = await FileSystem.getInfoAsync(localFilePath, { size: true });
-    const fileSize =
-      fileInfo.exists && 'size' in fileInfo ? (fileInfo.size ?? 0) : 0;
+    laUpdateProgress(0.5, 'Saving to device…');
 
+    // Detect actual format from Content-Type
+    const ct = resp.headers.get('Content-Type') ?? '';
+    const fileExt = ct.includes('mpeg') ? 'mp3' : 'm4a';
+    const localFilePath = `${dir}yt_${videoId}.${fileExt}`;
+
+    const buffer = await resp.arrayBuffer();
+    const fileSize = buffer.byteLength;
+    if (fileSize === 0) throw new Error('Downloaded file is empty');
+
+    onProgress?.(0.9);
+    store.setImportProgress(0.9);
+    laUpdateProgress(0.9, 'Almost done…');
+
+    // Convert to base64 in chunks to avoid call-stack overflow on large files
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 8192;
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...(bytes.subarray(i, i + chunkSize) as unknown as number[]));
+    }
+    const base64 = btoa(binary);
+
+    await FileSystem.writeAsStringAsync(localFilePath, base64, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    onProgress?.(1);
+    store.setImportProgress(1);
+    laUpdateProgress(1, 'Downloaded');
+
+    const fileFormat = fileExt === 'mp3' ? 'MP3' : 'M4A';
     const downloadedTrack: DownloadedTrack = {
       ...track,
-      source: 'vybe',
       isDownloaded: true,
       localFilePath,
       audioUrl: localFilePath,
       importedAt: Date.now(),
       isUserImported: false,
       fileSize,
-      fileFormat: 'MP4',
+      fileFormat,
     };
 
     store.addDownload(downloadedTrack);
+    laEndActivity(true);
     return { success: true };
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Download failed';
     console.error('[downloadYouTubeTrack]', msg);
+    laEndActivity(false);
     return { success: false, error: msg };
   } finally {
     store.setImporting(false);
@@ -236,13 +328,15 @@ export async function downloadYouTubeTrack(
 
 /**
  * Download a SoundCloud track for offline playback.
- * Streams audio from the backend `GET /api/soundcloud/audio?url=...&dl=1` route
- * and saves it under the app documents directory.
+ * Uses the backend `GET /api/soundcloud/download?url=...` route which pre-downloads
+ * via yt-dlp then serves the full file — same pattern as the YouTube download endpoint.
  */
 export async function downloadSoundCloudTrack(
   track: Track & { soundcloudUrl?: string },
   backendBaseUrl: string,
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  /** When true, suppress isImporting UI state (used for background quality upgrades) */
+  silent = false,
 ): Promise<{ success: boolean; error?: string }> {
   if (!track.soundcloudUrl) {
     return { success: false, error: 'No SoundCloud URL on this track' };
@@ -254,60 +348,94 @@ export async function downloadSoundCloudTrack(
     return { success: true };
   }
 
-  store.setImporting(true);
-  store.setImportProgress(0);
+  if (!silent) {
+    store.setImporting(true);
+    store.setImportProgress(0);
+  }
+
+  const trackTitle = track.title ?? 'Unknown track';
+  const artistName = track.artist ?? 'Unknown artist';
+
+  await laStartDownloadActivity(trackTitle, artistName);
 
   const base = backendBaseUrl.replace(/\/$/, '');
-  const audioUrl = `${base}/api/soundcloud/audio?url=${encodeURIComponent(track.soundcloudUrl)}&dl=1`;
+  const audioUrl = `${base}/api/soundcloud/download?url=${encodeURIComponent(track.soundcloudUrl)}`;
 
   try {
     const safeId = track.id.replace(/[^\w-]/g, '_');
-    const fileName = `sc_${safeId}.m4a`;
-    const dir = `${FileSystem.documentDirectory}vybe_downloads/`;
-    const localFilePath = `${dir}${fileName}`;
+    const { dir, isICloud } = await getDownloadDir();
+    if (isICloud) console.log('[downloadSoundCloudTrack] saving to iCloud:', dir);
 
-    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
+    onProgress?.(0.01);
+    if (!silent) store.setImportProgress(0.01);
+    laUpdateProgress(0.01, 'Fetching from server…');
 
-    const downloadResumable = FileSystem.createDownloadResumable(
-      audioUrl,
-      localFilePath,
-      {},
-      (downloadProgress) => {
-        const total = downloadProgress.totalBytesExpectedToWrite;
-        const progress = total > 0 ? downloadProgress.totalBytesWritten / total : 0;
-        store.setImportProgress(progress);
-        onProgress?.(progress);
-      }
-    );
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 300_000);
 
-    const result = await downloadResumable.downloadAsync();
-    if (!result || result.status !== 200) {
-      throw new Error(`Download failed with status ${result?.status ?? 'unknown'}`);
+    let resp: Response;
+    try {
+      resp = await fetch(audioUrl, { signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
     }
+    if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
 
-    const fileInfo = await FileSystem.getInfoAsync(localFilePath, { size: true });
-    const fileSize = fileInfo.exists && 'size' in fileInfo ? (fileInfo.size ?? 0) : 0;
+    laUpdateProgress(0.5, silent ? 'Upgrading quality…' : 'Saving to device…');
+
+    // Detect format from Content-Type before buffering
+    const respContentType = resp.headers.get('Content-Type') ?? '';
+    const fileFormat = respContentType.includes('mpeg') ? 'MP3' : 'M4A';
+    const fileExt = fileFormat === 'MP3' ? 'mp3' : 'm4a';
+    const localFilePath = `${dir}sc_${safeId}.${fileExt}`;
+
+    const buffer = await resp.arrayBuffer();
+    const fileSize = buffer.byteLength;
+    if (fileSize === 0) throw new Error('Downloaded file is empty');
+
+    onProgress?.(0.9);
+    if (!silent) store.setImportProgress(0.9);
+    laUpdateProgress(0.9, 'Almost done…');
+
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 8192;
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...(bytes.subarray(i, i + chunkSize) as unknown as number[]));
+    }
+    const base64 = btoa(binary);
+
+    await FileSystem.writeAsStringAsync(localFilePath, base64, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    onProgress?.(1);
+    if (!silent) store.setImportProgress(1);
+    laUpdateProgress(1, silent ? 'Quality upgraded' : 'Downloaded');
 
     const downloadedTrack: DownloadedTrack = {
       ...track,
-      source: 'vybe',
       isDownloaded: true,
       localFilePath,
       audioUrl: localFilePath,
       importedAt: Date.now(),
       isUserImported: false,
       fileSize,
-      fileFormat: 'M4A',
+      fileFormat,
     };
 
     store.addDownload(downloadedTrack);
+    laEndActivity(true);
     return { success: true };
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Download failed';
     console.error('[downloadSoundCloudTrack]', msg);
+    laEndActivity(false);
     return { success: false, error: msg };
   } finally {
-    store.setImporting(false);
-    store.setImportProgress(0);
+    if (!silent) {
+      store.setImporting(false);
+      store.setImportProgress(0);
+    }
   }
 }

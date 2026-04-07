@@ -4,6 +4,10 @@ import { Track, TrackSource, RepeatMode } from '@/types/music';
 import * as Haptics from 'expo-haptics';
 import { isEventObject, isValidTrack, isValidId } from '@/lib/eventGuard';
 import { useRecentsStore } from '@/stores/recentsStore';
+import { updateNowPlaying, updateNowPlayingProgress, clearNowPlaying, registerRemoteHandlers } from '@/lib/NowPlayingManager';
+import { startNowPlayingActivity, updateNowPlayingActivity, endNowPlayingActivity, formatTime } from '@/lib/NowPlayingActivityManager';
+import { usePlaybackSettingsStore } from '@/stores/playbackSettingsStore';
+import { useDownloadsStore, downloadSoundCloudTrack, enqueueDownload } from '@/stores/downloadsStore';
 
 /**
  * Unified Playback Controller
@@ -47,6 +51,213 @@ let soundcloudAdapterRef: PlayerAdapter | null = null;
 // Track if audio session is initialized
 let audioSessionInitialized = false;
 
+// ── Crossfade state ───────────────────────────────────────────────────────────
+let crossfadeSound: Audio.Sound | null = null;   // next track being faded in
+let oldFadingSound: Audio.Sound | null = null;   // current track being faded out
+let crossfadeFadeInterval: ReturnType<typeof setInterval> | null = null;
+let crossfadeTriggeredForTrackId: string | null = null;
+
+function clearCrossfadeState() {
+  if (crossfadeFadeInterval) { clearInterval(crossfadeFadeInterval); crossfadeFadeInterval = null; }
+  // Only unload crossfadeSound if it hasn't already become vybeSound
+  if (crossfadeSound && crossfadeSound !== vybeSound) {
+    crossfadeSound.stopAsync().catch(() => {});
+    crossfadeSound.unloadAsync().catch(() => {});
+  }
+  crossfadeSound = null;
+  if (oldFadingSound) {
+    oldFadingSound.stopAsync().catch(() => {});
+    oldFadingSound.unloadAsync().catch(() => {});
+    oldFadingSound = null;
+  }
+  crossfadeTriggeredForTrackId = null;
+}
+
+async function triggerCrossfade(fadeSecs: number) {
+  const state = usePlaybackController.getState();
+  const { queue, queueIndex, repeatMode, isShuffled } = state;
+
+  // Find next track index
+  let nextIndex: number;
+  if (isShuffled) {
+    nextIndex = Math.floor(Math.random() * queue.length);
+  } else if (queueIndex < queue.length - 1) {
+    nextIndex = queueIndex + 1;
+  } else if (repeatMode === 'all') {
+    nextIndex = 0;
+  } else {
+    return; // Nothing to crossfade to
+  }
+
+  const nextTrack = queue[nextIndex];
+  if (!nextTrack) return;
+
+  // Resolve audio URI for next track
+  const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
+  let nextUri = '';
+  const nextSource = nextTrack.source || 'vybe';
+
+  // Always check downloads store first — a downloaded track (any source) plays from local file
+  const dlNext = useDownloadsStore.getState().getDownloadedTrack(nextTrack.id);
+  if (dlNext?.localFilePath) {
+    nextUri = dlNext.localFilePath;
+  } else if (nextTrack.audioUrl?.startsWith('file://')) {
+    nextUri = nextTrack.audioUrl;
+  } else if (nextSource === 'soundcloud') {
+    const nextScUrl = (nextTrack as Track & { soundcloudUrl?: string }).soundcloudUrl;
+    if (!nextScUrl) { crossfadeTriggeredForTrackId = null; return; }
+    nextUri = `${backendBase}/api/soundcloud/audio?url=${encodeURIComponent(nextScUrl)}`;
+  } else if (nextSource === 'youtube' || nextSource === 'youtube_music') {
+    const ytId = (nextTrack as Track & { youtubeId?: string; youtubeMusicId?: string }).youtubeId
+      || (nextTrack as Track & { youtubeId?: string; youtubeMusicId?: string }).youtubeMusicId;
+    if (!ytId) return;
+    nextUri = `${backendBase}/api/youtube/audio/${ytId}`;
+  } else {
+    nextUri = nextTrack.audioUrl || '';
+  }
+
+  if (!nextUri) return;
+
+  try {
+    const newSound = new Audio.Sound();
+    crossfadeSound = newSound;
+    await newSound.loadAsync({ uri: nextUri }, { shouldPlay: true, volume: 0 });
+
+    // Update store to reflect the new current track (UI updates immediately)
+    usePlaybackController.setState({
+      currentTrack: nextTrack,
+      queueIndex: nextIndex,
+      progress: 0,
+      duration: nextTrack.duration || 0,
+      playbackState: 'playing',
+    });
+
+    // Wire status updates for the incoming track
+    newSound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
+      const { currentTrack } = usePlaybackController.getState();
+      if (currentTrack?.id !== nextTrack.id) return;
+      if (status.isLoaded) {
+        usePlaybackController.setState({
+          progress: status.positionMillis / 1000,
+          duration: (status.durationMillis ?? 0) / 1000,
+          playbackState: status.isPlaying ? 'playing' : 'paused',
+        });
+        if (status.didJustFinish) {
+          const { repeatMode: rm } = usePlaybackController.getState();
+          if (rm === 'one') {
+            newSound.replayAsync();
+          } else {
+            usePlaybackController.setState({ playbackState: 'ended' });
+            usePlaybackController.getState().next();
+          }
+        }
+      }
+    });
+
+    // Swap sound references: new track is now the "current" vybeSound
+    const fadingOut = vybeSound;
+    oldFadingSound = fadingOut;
+    vybeSound = newSound;
+
+    // Equal-power crossfade: sin/cos curve avoids the volume dip of a linear fade
+    // incoming: sin(t * π/2),  outgoing: cos(t * π/2)
+    const STEPS_PER_SEC = 25; // 40 ms per step — smooth without hammering the audio thread
+    const totalSteps = Math.ceil(fadeSecs * STEPS_PER_SEC);
+    const stepMs = (fadeSecs * 1000) / totalSteps;
+    let step = 0;
+
+    crossfadeFadeInterval = setInterval(async () => {
+      step++;
+      const t = Math.min(step / totalSteps, 1);
+      const volIn  = Math.sin(t * Math.PI / 2);           // 0 → 1 (ease in)
+      const volOut = Math.cos(t * Math.PI / 2);           // 1 → 0 (ease out)
+      await newSound.setVolumeAsync(volIn).catch(() => {});
+      await fadingOut?.setVolumeAsync(volOut).catch(() => {});
+      if (step >= totalSteps) {
+        clearInterval(crossfadeFadeInterval!);
+        crossfadeFadeInterval = null;
+        fadingOut?.stopAsync().catch(() => {});
+        fadingOut?.unloadAsync().catch(() => {});
+        oldFadingSound = null;
+        crossfadeSound = null;
+      }
+    }, stepMs);
+
+  } catch (e) {
+    console.error('[Crossfade] Error starting crossfade:', e);
+    crossfadeSound = null;
+    crossfadeTriggeredForTrackId = null;
+  }
+}
+
+// ── Auto-queue ────────────────────────────────────────────────────────────────
+/**
+ * Builds a related-tracks queue from the downloaded library.
+ * Priority: same artist → same source → everything else (all shuffled).
+ * If playNext=true, starts playing the first related track after appending.
+ */
+async function autoFillQueue(seedTrack: Track, currentQueue: Track[], playNext = false) {
+  try {
+    const downloads = useDownloadsStore.getState().downloads;
+
+    const excludeIds = new Set(currentQueue.map(t => t.id));
+    const pool = downloads.filter(d => !excludeIds.has(d.id) && d.id !== seedTrack.id);
+    if (pool.length === 0) return;
+
+    const artist = seedTrack.artist?.toLowerCase() ?? '';
+    const source = seedTrack.source;
+    const shuffle = <T>(arr: T[]) => [...arr].sort(() => Math.random() - 0.5);
+
+    const sameArtist = shuffle(pool.filter(d => d.artist?.toLowerCase() === artist));
+    const sameSource = shuffle(pool.filter(d => d.source === source && d.artist?.toLowerCase() !== artist));
+    const rest       = shuffle(pool.filter(d => d.source !== source && d.artist?.toLowerCase() !== artist));
+
+    const related = [...sameArtist, ...sameSource, ...rest].slice(0, 25) as Track[];
+    if (related.length === 0) return;
+
+    const state = usePlaybackController.getState();
+    // Bail if the user already switched to a different track
+    if (playNext && state.currentTrack?.id !== seedTrack.id) return;
+
+    const newQueue = [...state.queue, ...related];
+    usePlaybackController.setState({ queue: newQueue });
+
+    if (playNext) {
+      const nextIndex = state.queue.length; // first newly added track
+      state.playTrack(related[0], newQueue);
+      usePlaybackController.setState({ queueIndex: nextIndex });
+    }
+  } catch (e) {
+    console.warn('[AutoQueue] Failed to fill queue:', e);
+  }
+}
+
+// Now Playing Live Activity update interval
+let nowPlayingInterval: ReturnType<typeof setInterval> | null = null;
+
+function startNowPlayingInterval() {
+  stopNowPlayingInterval();
+  nowPlayingInterval = setInterval(() => {
+    const { currentTrack, playbackState, progress, duration } = usePlaybackController.getState();
+    if (!currentTrack || playbackState === 'idle' || playbackState === 'error') return;
+    updateNowPlayingActivity(
+      playbackState === 'playing',
+      duration > 0 ? progress / duration : 0,
+      progress,
+      duration,
+      currentTrack.title,
+      currentTrack.artist,
+    );
+  }, 1000);
+}
+
+function stopNowPlayingInterval() {
+  if (nowPlayingInterval !== null) {
+    clearInterval(nowPlayingInterval);
+    nowPlayingInterval = null;
+  }
+}
+
 // Register adapter refs
 export const registerYouTubeAdapter = (adapter: PlayerAdapter | null) => {
   youtubeAdapterRef = adapter;
@@ -85,6 +296,7 @@ const initializeAudioSession = async (): Promise<void> => {
       playsInSilentModeIOS: true,
       staysActiveInBackground: true,
       shouldDuckAndroid: true,
+      allowsRecordingIOS: false,
       interruptionModeIOS: InterruptionModeIOS.DoNotMix,
       interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
     });
@@ -97,6 +309,15 @@ const initializeAudioSession = async (): Promise<void> => {
 
 // Initialize on module load
 initializeAudioSession();
+
+// Register lock screen / Control Center remote handlers once at startup
+registerRemoteHandlers({
+  onPlay:     () => usePlaybackController.getState().play(),
+  onPause:    () => usePlaybackController.getState().pause(),
+  onNext:     () => usePlaybackController.getState().next(),
+  onPrevious: () => usePlaybackController.getState().previous(),
+  onSeek:     (pos) => usePlaybackController.getState().seekTo(pos),
+});
 
 interface PlaybackControllerState {
   // Current playback
@@ -165,6 +386,7 @@ interface PlaybackControllerState {
 
 // Stop VYBE native audio only
 const stopVybeAudio = async (): Promise<void> => {
+  clearCrossfadeState();
   if (vybeSound) {
     try {
       await vybeSound.stopAsync();
@@ -173,6 +395,8 @@ const stopVybeAudio = async (): Promise<void> => {
       // Ignore cleanup errors
     }
     vybeSound = null;
+    // Reset flag so the next track re-activates the iOS audio session
+    audioSessionInitialized = false;
   }
 };
 
@@ -253,13 +477,15 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     // Add to recents
     useRecentsStore.getState().addToRecents(track);
 
-    // Ensure audio session is active
-    await initializeAudioSession();
-
     // ONE PLAYER RULE: Stop all sources before starting new playback
+    // (this may deactivate the iOS audio session)
     await stopAllSources();
 
+    // Re-activate audio session after stopping (unloadAsync deactivates it on iOS)
+    await initializeAudioSession();
+
     // Update state immediately for instant UI feedback
+    const trackIndex = index >= 0 ? index : 0;
     set({
       currentTrack: track,
       currentSource: source,
@@ -268,42 +494,242 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       duration: track.duration || 0,
       error: null,
       queue: newQueue,
-      queueIndex: index >= 0 ? index : 0,
+      queueIndex: trackIndex,
       lastProgressTime: Date.now(),
       silentRetryCount: 0,
     });
 
-    // Get adapter for this source (pools may not be registered yet on first tap)
-    let adapter = getAdapterForSource(source);
-    if ((source === 'youtube' || source === 'youtube_music') && !adapter) {
-      adapter = await waitForYouTubeAdapter(12_000);
+    // Auto-fill queue with related downloaded tracks if no upcoming songs
+    const upcomingCount = newQueue.length - trackIndex - 1;
+    if (upcomingCount === 0) {
+      autoFillQueue(track, newQueue);
     }
-    if (source === 'soundcloud' && !adapter) {
-      adapter = await waitForSoundCloudAdapter(8_000);
+
+    // Update Now Playing Info Center (lock screen metadata + remote controls)
+    updateNowPlaying({
+      trackTitle: track.title,
+      artistName: track.artist,
+      artworkUrl: track.artwork ?? '',
+      duration: track.duration || 0,
+      currentTime: 0,
+      isPlaying: true,
+    });
+
+    // Start / update Now Playing Live Activity (Dynamic Island)
+    startNowPlayingActivity(track.title, track.artist, track.artwork ?? '', track.duration || 0);
+    startNowPlayingInterval();
+
+    // If the track has been downloaded locally, always play from the local file
+    // regardless of its original source (handles downloaded SoundCloud/YouTube tracks)
+    if (track.audioUrl?.startsWith('file://')) {
+      try {
+        const { sound, status } = await Audio.Sound.createAsync(
+          { uri: track.audioUrl },
+          { shouldPlay: true, volume: get().volume },
+          (status: AVPlaybackStatus) => {
+            const { currentTrack } = get();
+            if (currentTrack?.id !== track.id) return;
+            if (status.isLoaded) {
+              const progressSec = status.positionMillis / 1000;
+              const durationSec = (status.durationMillis ?? track.duration * 1000) / 1000;
+              set({ progress: progressSec, duration: durationSec, playbackState: status.isPlaying ? 'playing' : 'paused' });
+              const { crossfadeEnabled, crossfadeDuration } = usePlaybackSettingsStore.getState();
+              if (crossfadeEnabled && crossfadeTriggeredForTrackId !== track.id && durationSec > 0 && progressSec > 0 && durationSec - progressSec <= crossfadeDuration) {
+                crossfadeTriggeredForTrackId = track.id;
+                triggerCrossfade(crossfadeDuration);
+              }
+              if (status.didJustFinish) {
+                const { repeatMode } = get();
+                if (repeatMode === 'one') { sound.replayAsync(); }
+                else if (crossfadeTriggeredForTrackId !== track.id) { set({ playbackState: 'ended' }); get().next(); }
+              }
+            } else if ('error' in status && status.error) {
+              set({ playbackState: 'error', error: 'Playback failed' });
+            }
+          }
+        );
+        if (status.isLoaded) { vybeSound = sound; set({ playbackState: 'playing' }); }
+        else { set({ playbackState: 'error', error: 'Failed to load audio' }); }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        set({ playbackState: 'error', error: `Failed to load audio: ${msg}` });
+      }
+      return;
     }
+
+    // YouTube tracks: stream via backend yt-dlp proxy (IFrame API blocks most embeds)
+    const ytVideoId = track.youtubeId || track.youtubeMusicId;
+    if ((source === 'youtube' || source === 'youtube_music') && ytVideoId) {
+      const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
+      const audioUrl = `${backendBase}/api/youtube/audio/${ytVideoId}`;
+      console.log('[PlaybackController] YouTube via backend proxy:', audioUrl);
+      try {
+        const sound = new Audio.Sound();
+        // Set vybeSound immediately so play/pause controls work during buffering
+        vybeSound = sound;
+
+        sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
+          const { currentTrack } = get();
+          if (currentTrack?.id !== track.id) return;
+          if (status.isLoaded) {
+            const progressSec = status.positionMillis / 1000;
+            const durationSec = (status.durationMillis ?? 0) / 1000;
+            set({
+              progress: progressSec,
+              duration: durationSec,
+              playbackState: status.isPlaying ? 'playing' : 'paused',
+            });
+            // Crossfade trigger
+            const { crossfadeEnabled, crossfadeDuration } = usePlaybackSettingsStore.getState();
+            if (
+              crossfadeEnabled &&
+              crossfadeTriggeredForTrackId !== track.id &&
+              durationSec > 0 &&
+              progressSec > 0 &&
+              durationSec - progressSec <= crossfadeDuration
+            ) {
+              crossfadeTriggeredForTrackId = track.id;
+              triggerCrossfade(crossfadeDuration);
+            }
+            if (status.didJustFinish) {
+              const { repeatMode } = get();
+              if (repeatMode === 'one') {
+                sound.replayAsync();
+              } else if (crossfadeTriggeredForTrackId !== track.id) {
+                // Only call next() if crossfade didn't already handle it
+                set({ playbackState: 'ended' });
+                get().next();
+              }
+            }
+          } else if ('error' in status && status.error) {
+            console.error('[PlaybackController] Playback error:', status.error);
+            set({ playbackState: 'error', error: 'Playback failed' });
+          }
+        });
+
+        await sound.loadAsync({ uri: audioUrl }, { shouldPlay: false, volume: get().volume });
+        await sound.playAsync();
+        set({ playbackState: 'playing' });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        console.error('[PlaybackController] YouTube proxy error:', msg);
+        set({ playbackState: 'error', error: `Failed to play: ${msg}` });
+      }
+      return;
+    }
+
+    // SoundCloud tracks: stream low-quality first for fast start,
+    // then background-download the HQ version and seamlessly switch.
+    const scUrl = (track as Track & { soundcloudUrl?: string }).soundcloudUrl;
+    if (source === 'soundcloud' && scUrl) {
+      const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
+      // Low-quality stream loads ~3x faster than best audio
+      const lqUrl = `${backendBase}/api/soundcloud/audio?url=${encodeURIComponent(scUrl)}&quality=low`;
+      console.log('[PlaybackController] SoundCloud LQ stream start:', lqUrl);
+
+      const makeSCStatusCallback = (snd: Audio.Sound) => (status: AVPlaybackStatus) => {
+        const { currentTrack } = get();
+        if (currentTrack?.id !== track.id) return;
+        if (status.isLoaded) {
+          const progressSec = status.positionMillis / 1000;
+          const durationSec = (status.durationMillis ?? 0) / 1000;
+          set({ progress: progressSec, duration: durationSec, playbackState: status.isPlaying ? 'playing' : 'paused' });
+          const { crossfadeEnabled, crossfadeDuration } = usePlaybackSettingsStore.getState();
+          if (crossfadeEnabled && crossfadeTriggeredForTrackId !== track.id && durationSec > 0 && progressSec > 0 && durationSec - progressSec <= crossfadeDuration) {
+            crossfadeTriggeredForTrackId = track.id;
+            triggerCrossfade(crossfadeDuration);
+          }
+          if (status.didJustFinish) {
+            const { repeatMode } = get();
+            if (repeatMode === 'one') { snd.replayAsync(); }
+            else if (crossfadeTriggeredForTrackId !== track.id) { set({ playbackState: 'ended' }); get().next(); }
+          }
+        } else if ('error' in status && status.error) {
+          console.error('[PlaybackController] SoundCloud error:', status.error);
+          set({ playbackState: 'error', error: 'Playback failed' });
+        }
+      };
+
+      try {
+        const sound = new Audio.Sound();
+        vybeSound = sound;
+        sound.setOnPlaybackStatusUpdate(makeSCStatusCallback(sound));
+        await sound.loadAsync({ uri: lqUrl }, { shouldPlay: false, volume: get().volume });
+        await sound.playAsync();
+        set({ playbackState: 'playing' });
+
+        // Background: download HQ version, then seamlessly switch to it
+        (async () => {
+          try {
+            // downloadSoundCloudTrack and enqueueDownload now statically imported
+            enqueueDownload(track.id, async () => {
+              const result = await downloadSoundCloudTrack(
+                track as Track & { soundcloudUrl?: string },
+                backendBase,
+                undefined,
+                true, // silent — no loading UI, just Dynamic Island progress
+              );
+              if (!result.success) return;
+
+              // Only upgrade if this track is still active
+              const state = usePlaybackController.getState();
+              if (state.currentTrack?.id !== track.id) return;
+
+              const downloaded = useDownloadsStore.getState().getDownloadedTrack(track.id);
+              if (!downloaded?.localFilePath) return;
+
+              const savedProgress = state.progress;
+              console.log('[PlaybackController] SoundCloud HQ upgrade at', savedProgress.toFixed(1), 's');
+
+              // Stop LQ stream
+              clearCrossfadeState();
+              if (vybeSound) {
+                try { await vybeSound.stopAsync(); await vybeSound.unloadAsync(); } catch {}
+                vybeSound = null;
+                audioSessionInitialized = false;
+              }
+              await initializeAudioSession();
+
+              // Load HQ local file at same position
+              const hqSound = new Audio.Sound();
+              hqSound.setOnPlaybackStatusUpdate(makeSCStatusCallback(hqSound));
+              try {
+                await hqSound.loadAsync({ uri: downloaded.localFilePath }, { shouldPlay: false, volume: get().volume });
+                await hqSound.setPositionAsync(Math.round(savedProgress * 1000));
+                await hqSound.playAsync();
+                vybeSound = hqSound;
+                set({ playbackState: 'playing' });
+                console.log('[PlaybackController] SoundCloud switched to HQ local file');
+              } catch (e) {
+                console.warn('[PlaybackController] HQ upgrade failed, staying on LQ stream:', e);
+                try { await hqSound.unloadAsync(); } catch {}
+              }
+            });
+          } catch (e) {
+            console.warn('[PlaybackController] HQ upgrade setup failed:', e);
+          }
+        })();
+
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        console.error('[PlaybackController] SoundCloud stream error:', msg);
+        set({ playbackState: 'error', error: `Failed to play: ${msg}` });
+      }
+      return;
+    }
+
+    // Fallback: adapter-based playback (WebView embed)
+    const adapter = getAdapterForSource(source);
 
     if (adapter) {
       try {
         await adapter.prepare(track);
-        // For all sources: call play() after prepare().
         await adapter.play();
         set({ playbackState: 'playing' });
       } catch (e) {
         console.log('[PlaybackController] Adapter error:', e);
         set({ playbackState: 'error', error: 'Failed to start playback' });
       }
-    } else if (source === 'youtube' || source === 'youtube_music') {
-      console.error('[PlaybackController] YouTube adapter not ready after wait');
-      set({
-        playbackState: 'error',
-        error: 'YouTube player is still loading. Tap again in a moment.',
-      });
-    } else if (source === 'soundcloud') {
-      console.error('[PlaybackController] SoundCloud adapter not ready after wait');
-      set({
-        playbackState: 'error',
-        error: 'SoundCloud player is still loading. Tap again in a moment.',
-      });
     } else {
       // VYBE native audio
       try {
@@ -338,12 +764,25 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
                   playbackState: status.isPlaying ? 'playing' : 'paused',
                 });
 
+                // Crossfade trigger
+                const { crossfadeEnabled, crossfadeDuration } = usePlaybackSettingsStore.getState();
+                if (
+                  crossfadeEnabled &&
+                  crossfadeTriggeredForTrackId !== track.id &&
+                  durationSec > 0 &&
+                  progressSec > 0 &&
+                  durationSec - progressSec <= crossfadeDuration
+                ) {
+                  crossfadeTriggeredForTrackId = track.id;
+                  triggerCrossfade(crossfadeDuration);
+                }
+
                 // Auto-play next track when finished
                 if (status.didJustFinish) {
                   const { repeatMode } = get();
                   if (repeatMode === 'one') {
                     sound.replayAsync();
-                  } else {
+                  } else if (crossfadeTriggeredForTrackId !== track.id) {
                     set({ playbackState: 'ended' });
                     get().next();
                   }
@@ -385,25 +824,19 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     // Ensure audio session is active before playing
     await initializeAudioSession();
 
-    const adapter = getAdapterForSource(currentSource ?? undefined);
-
-    if (__DEV__) {
-      console.log('[PlaybackController] play()', {
-        source: currentSource,
-        hasAdapter: !!adapter,
-        hasVybeSound: !!vybeSound,
-      });
-    }
-
-    if (adapter) {
-      await adapter.play();
-      // Inline YoutubePlayer uses `play={isPlaying}`; pool stateChange also confirms.
-      set({ playbackState: 'playing' });
-    } else if (vybeSound) {
+    // Prefer native sound (vybe or youtube-via-proxy) over WebView adapters
+    if (vybeSound) {
       await vybeSound.playAsync();
       set({ playbackState: 'playing' });
-    } else if (__DEV__ && (currentSource === 'youtube' || currentSource === 'youtube_music')) {
-      console.warn('[PlaybackController] play() skipped: no YouTube adapter registered');
+      updateNowPlayingProgress(get().progress, true);
+      return;
+    }
+
+    const adapter = getAdapterForSource(currentSource ?? undefined);
+    if (adapter) {
+      await adapter.play();
+      set({ playbackState: 'playing' });
+      updateNowPlayingProgress(get().progress, true);
     }
   },
 
@@ -412,25 +845,27 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-    const adapter = getAdapterForSource(currentSource ?? undefined);
-
-    if (__DEV__) {
-      console.log('[PlaybackController] pause()', { source: currentSource, hasAdapter: !!adapter });
+    // Prefer native sound (vybe or youtube-via-proxy) over WebView adapters
+    if (vybeSound) {
+      await vybeSound.pauseAsync();
+      set({ playbackState: 'paused' });
+      updateNowPlayingProgress(get().progress, false);
+      return;
     }
 
+    const adapter = getAdapterForSource(currentSource ?? undefined);
     if (adapter) {
       await adapter.pause();
       set({ playbackState: 'paused' });
-    } else if (vybeSound) {
-      await vybeSound.pauseAsync();
-      set({ playbackState: 'paused' });
-    } else if (__DEV__ && (currentSource === 'youtube' || currentSource === 'youtube_music')) {
-      console.warn('[PlaybackController] pause() skipped: no YouTube adapter registered');
+      updateNowPlayingProgress(get().progress, false);
     }
   },
 
   stop: async () => {
     await stopAllSources();
+    clearNowPlaying();
+    stopNowPlayingInterval();
+    endNowPlayingActivity();
     set({
       playbackState: 'idle',
       progress: 0,
@@ -440,12 +875,13 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
   seekTo: async (seconds: number) => {
     const { currentSource } = get();
 
-    const adapter = getAdapterForSource(currentSource ?? undefined);
-
-    if (adapter) {
-      await adapter.seek(seconds);
-    } else if (vybeSound) {
+    if (vybeSound) {
       await vybeSound.setPositionAsync(seconds * 1000);
+    } else {
+      const adapter = getAdapterForSource(currentSource ?? undefined);
+      if (adapter) {
+        await adapter.seek(seconds);
+      }
     }
 
     set({ progress: seconds });
@@ -465,6 +901,9 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     } else if (repeatMode === 'all') {
       nextIndex = 0;
     } else {
+      // Queue exhausted — auto-fill with related tracks and keep playing
+      const seedTrack = queue[queueIndex];
+      if (seedTrack) autoFillQueue(seedTrack, queue, true);
       return;
     }
 
@@ -627,6 +1066,10 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     // Track when progress actually changes for silent playback detection
     if (progress !== prevProgress && progress > 0) {
       set({ progress, lastProgressTime: Date.now() });
+      // Update Now Playing elapsed time every ~2 seconds to avoid excessive native calls
+      if (Math.abs(progress - prevProgress) >= 2) {
+        updateNowPlayingProgress(progress, get().playbackState === 'playing');
+      }
     } else {
       set({ progress });
     }
