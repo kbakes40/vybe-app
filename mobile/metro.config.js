@@ -100,8 +100,11 @@ config.resolver = {
     }
 
     // Fix @better-auth/expo incorrectly importing metro-config (dev-time only)
-    // This import shouldn't exist in client code - mock it
-    if (moduleName.includes("@expo/metro-config") || moduleName.includes("async-require")) {
+    // Only mock when originating from @better-auth/expo — Expo Router needs async-require as a real function
+    if (
+      (moduleName.includes("@expo/metro-config") || moduleName.includes("async-require")) &&
+      context.originModulePath?.includes("@better-auth/expo")
+    ) {
       return { type: "empty" };
     }
 

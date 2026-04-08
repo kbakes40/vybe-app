@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { MMKV } from 'react-native-mmkv';
 
-const storage = new MMKV({ id: 'vybe-user-settings-v2' });
+const storage = new MMKV({ id: 'vybe-user-settings-v3' });
 const mmkvStorage = {
   getItem: (name: string) => storage.getString(name) ?? null,
   setItem: (name: string, value: string) => storage.set(name, value),
@@ -10,6 +10,10 @@ const mmkvStorage = {
 };
 
 interface UserSettingsState {
+  // Profile
+  profileImage: string | null;
+  setProfileImage: (uri: string | null) => void;
+
   // Playback
   gapless: boolean;
   normalizeVolume: boolean;
@@ -51,6 +55,9 @@ interface UserSettingsState {
 export const useUserSettingsStore = create<UserSettingsState>()(
   persist(
     (set) => ({
+      profileImage: null,
+      setProfileImage: (uri) => set({ profileImage: uri }),
+
       gapless: true,
       normalizeVolume: true,
       autoplay: true,
@@ -80,10 +87,11 @@ export const useUserSettingsStore = create<UserSettingsState>()(
       setExplicitContent: (v) => set({ explicitContent: v }),
     }),
     {
-      name: 'vybe-user-settings-v2',
+      name: 'vybe-user-settings-v3',
       storage: mmkvStorage,
-      version: 1,
+      version: 2,
       migrate: (_: unknown) => ({
+        profileImage: null,
         gapless: true,
         normalizeVolume: true,
         autoplay: true,

@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { VybeIcon } from '@/components/VybeIcon';
 import * as Haptics from 'expo-haptics';
 import Animated, {
   useSharedValue,
@@ -18,10 +17,6 @@ import Animated, {
   withSpring,
   withTiming,
   runOnJS,
-  SlideInDown,
-  SlideOutDown,
-  FadeIn,
-  FadeOut,
 } from 'react-native-reanimated';
 import {
   UserPlus,
@@ -34,6 +29,7 @@ import {
   X,
 } from 'lucide-react-native';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
+import { ProfileAvatar } from '@/components/ProfileAvatar';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -96,11 +92,43 @@ export function ProfileMenuOverlay({
   const [activityEnabled, setActivityEnabled] = React.useState(true);
   const [hasUpdates, setHasUpdates] = React.useState(true);
 
+  // Animation values
+  const sheetTranslateY = useSharedValue(SCREEN_HEIGHT);
+  const backdropOpacity = useSharedValue(0);
+
+  // Store pending navigation route so we can navigate after modal closes
+  const pendingRoute = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    if (visible) {
+      backdropOpacity.value = withTiming(1, { duration: 200 });
+      sheetTranslateY.value = withSpring(0, { damping: 20, stiffness: 200 });
+    } else {
+      backdropOpacity.value = withTiming(0, { duration: 200 });
+      sheetTranslateY.value = withTiming(SCREEN_HEIGHT, { duration: 250 });
+
+      // Navigate after close animation
+      if (pendingRoute.current) {
+        const route = pendingRoute.current;
+        pendingRoute.current = null;
+        setTimeout(() => {
+          router.push(route as never);
+        }, 260);
+      }
+    }
+  }, [visible]);
+
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: backdropOpacity.value,
+  }));
+
+  const sheetStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: sheetTranslateY.value }],
+  }));
+
   const handleNavigate = (route: string) => {
+    pendingRoute.current = route;
     onClose();
-    setTimeout(() => {
-      router.push(route as never);
-    }, 300);
   };
 
   return (
@@ -113,28 +141,30 @@ export function ProfileMenuOverlay({
     >
       {/* Backdrop */}
       <Animated.View
-        entering={FadeIn.duration(200)}
-        exiting={FadeOut.duration(200)}
-        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)' }}
+        style={[
+          { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)' },
+          backdropStyle,
+        ]}
       >
         <Pressable style={{ flex: 1 }} onPress={onClose} />
       </Animated.View>
 
-      {/* Menu Content */}
+      {/* Sheet */}
       <Animated.View
-        entering={SlideInDown.springify().damping(20)}
-        exiting={SlideOutDown.springify().damping(20)}
-        style={{
-          position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          backgroundColor: '#121212',
-          borderTopLeftRadius: 24,
-          borderTopRightRadius: 24,
-          paddingBottom: insets.bottom + 20,
-          maxHeight: SCREEN_HEIGHT * 0.85,
-        }}
+        style={[
+          {
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            backgroundColor: '#121212',
+            borderTopLeftRadius: 24,
+            borderTopRightRadius: 24,
+            paddingBottom: insets.bottom + 20,
+            maxHeight: SCREEN_HEIGHT * 0.85,
+          },
+          sheetStyle,
+        ]}
       >
         {/* Handle bar */}
         <View className="items-center py-3">
@@ -153,7 +183,7 @@ export function ProfileMenuOverlay({
         <ScrollView showsVerticalScrollIndicator={false}>
           {/* Profile Header */}
           <View className="flex-row items-center px-5 py-4">
-            <VybeIcon size={80} backgroundColor="#2D1B69" />
+            <ProfileAvatar size={80} allowUpload />
             <View className="flex-1 ml-4">
               <Text className="text-white text-xl font-bold">{userName}</Text>
               <Pressable

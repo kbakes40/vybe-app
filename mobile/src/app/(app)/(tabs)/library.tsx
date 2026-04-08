@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
+import { ProfileAvatar } from '@/components/ProfileAvatar';
 import {
   Heart,
   Plus,
@@ -79,7 +80,6 @@ function ArtistCard({ artist, onPress }: { artist: { id: string; name: string; i
 }
 
 type FilterType = 'playlists' | 'artists' | 'albums' | 'downloaded' | 'saved_external' | 'vybe_originals';
-const DOWNLOAD_FILTERS = ['Playlists', 'Podcasts', 'Songs', 'Albums'];
 
 // YouTube icon component
 function YouTubeIcon({ size = 14 }: { size?: number }) {
@@ -181,9 +181,6 @@ export default function LibraryScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState<FilterType | null>(null);
-  const [viewMode, setViewMode] = useState<'library' | 'downloads'>('library');
-  const [showModeSheet, setShowModeSheet] = useState(false);
-  const [activeDownloadFilter, setActiveDownloadFilter] = useState('Songs');
   const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
   const [playlistName, setPlaylistName] = useState('');
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set());
@@ -309,58 +306,7 @@ export default function LibraryScreen() {
     }
   }, [activeFilter, router]);
 
-  const renderDownloadsEmptyState = () => (
-    <View style={{ alignItems: 'center', justifyContent: 'center', paddingTop: 100, paddingBottom: 60 }}>
-      <View style={{ marginBottom: 18 }}><Music2 size={58} color="rgba(255,255,255,0.25)" /></View>
-      <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 16, fontWeight: '500', marginBottom: 28, textAlign: 'center' }}>
-        Content you download will show here
-      </Text>
-      <Pressable
-        onPress={() => router.push('/(app)/(tabs)/' as never)}
-        style={{ backgroundColor: '#fff', borderRadius: 28, paddingHorizontal: 36, paddingVertical: 14 }}
-      >
-        <Text style={{ color: '#000', fontSize: 14, fontWeight: '700' }}>Find music</Text>
-      </Pressable>
-    </View>
-  );
 
-  const renderDownloadsContent = () => {
-    if (activeDownloadFilter !== 'Songs') {
-      return renderDownloadsEmptyState();
-    }
-    if (downloadedTracks.length === 0) {
-      return renderDownloadsEmptyState();
-    }
-    return (
-      <>
-        <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, marginBottom: 12 }}>
-          {downloadedTracks.length} {downloadedTracks.length === 1 ? 'song' : 'songs'}
-        </Text>
-        {downloadedTracks.map(track => (
-          <Pressable
-            key={track.id}
-            onPress={() => playTrack(track, downloadedTracks)}
-            style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }}
-          >
-            {track.artwork ? (
-              <Image source={{ uri: track.artwork }} style={{ width: 56, height: 56, borderRadius: 6 }} contentFit="cover" />
-            ) : (
-              <View style={{ width: 56, height: 56, borderRadius: 6, backgroundColor: 'rgba(139,92,246,0.2)', alignItems: 'center', justifyContent: 'center' }}>
-                <Music2 size={24} color="#8B5CF6" />
-              </View>
-            )}
-            <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }} numberOfLines={1}>{track.title}</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3 }}>
-                <Download size={11} color="#1DB954" />
-                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginLeft: 5 }}>{track.artist}</Text>
-              </View>
-            </View>
-          </Pressable>
-        ))}
-      </>
-    );
-  };
 
   // Album expand state
   const [expandedAlbum, setExpandedAlbum] = useState<string | null>(null);
@@ -748,20 +694,10 @@ export default function LibraryScreen() {
       {/* Header */}
       <View className="px-4 py-3" style={{ paddingTop: insets.top + 12 }}>
         <View className="flex-row items-center justify-between mb-4">
-          <Pressable
-            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowModeSheet(true); }}
-            style={{ flexDirection: 'row', alignItems: 'center' }}
-          >
-            <Image
-              source={{ uri: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop' }}
-              style={{ width: 32, height: 32, borderRadius: 16 }}
-              contentFit="cover"
-            />
-            <Text className="text-white text-[22px] font-bold ml-3">
-              {viewMode === 'downloads' ? 'Downloads' : 'Your Library'}
-            </Text>
-            <ChevronDown size={20} color="rgba(255,255,255,0.6)" style={{ marginLeft: 4, marginTop: 2 }} />
-          </Pressable>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <ProfileAvatar size={32} />
+            <Text className="text-white text-[22px] font-bold ml-3">Your Library</Text>
+          </View>
           <Pressable
             onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setShowCreatePlaylist(true); }}
             className="p-2"
@@ -777,43 +713,23 @@ export default function LibraryScreen() {
           style={{ flexGrow: 0, marginLeft: -4 }}
           contentContainerStyle={{ paddingRight: 16 }}
         >
-          {viewMode === 'downloads' ? (
-            DOWNLOAD_FILTERS.map(f => (
-              <Pressable
-                key={f}
-                onPress={() => setActiveDownloadFilter(f)}
-                style={{
-                  backgroundColor: activeDownloadFilter === f ? '#fff' : '#232323',
-                  paddingHorizontal: 14,
-                  paddingVertical: 8,
-                  borderRadius: 20,
-                  marginLeft: 8,
-                }}
-              >
-                <Text style={{ color: activeDownloadFilter === f ? '#000' : '#fff', fontSize: 13, fontWeight: '500' }}>
-                  {f}
-                </Text>
-              </Pressable>
-            ))
-          ) : (
-            filters.map(filter => (
-              <Pressable
-                key={filter.key}
-                onPress={() => setActiveFilter(activeFilter === filter.key ? null : filter.key)}
-                style={{
-                  backgroundColor: activeFilter === filter.key ? '#1DB954' : '#232323',
-                  paddingHorizontal: 14,
-                  paddingVertical: 8,
-                  borderRadius: 20,
-                  marginLeft: 8,
-                }}
-              >
-                <Text style={{ color: activeFilter === filter.key ? '#000' : '#fff', fontSize: 13, fontWeight: '500' }}>
-                  {filter.label}
-                </Text>
-              </Pressable>
-            ))
-          )}
+          {filters.map(filter => (
+            <Pressable
+              key={filter.key}
+              onPress={() => setActiveFilter(activeFilter === filter.key ? null : filter.key)}
+              style={{
+                backgroundColor: activeFilter === filter.key ? '#1DB954' : '#232323',
+                paddingHorizontal: 14,
+                paddingVertical: 8,
+                borderRadius: 20,
+                marginLeft: 8,
+              }}
+            >
+              <Text style={{ color: activeFilter === filter.key ? '#000' : '#fff', fontSize: 13, fontWeight: '500' }}>
+                {filter.label}
+              </Text>
+            </Pressable>
+          ))}
         </ScrollView>
       </View>
 
@@ -822,57 +738,9 @@ export default function LibraryScreen() {
         contentContainerStyle={{ paddingBottom: 120 }}
         showsVerticalScrollIndicator={false}
       >
-        {viewMode === 'downloads' ? (
-          <View style={{ paddingHorizontal: 20, paddingTop: 8 }}>
-            {renderDownloadsContent()}
-          </View>
-        ) : (
-          renderContent()
-        )}
+        {renderContent()}
       </ScrollView>
 
-      {/* View mode bottom sheet */}
-      <Modal
-        visible={showModeSheet}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowModeSheet(false)}
-      >
-        <Pressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
-          onPress={() => setShowModeSheet(false)}
-        >
-          <Pressable onPress={() => {}}>
-            <View style={{ backgroundColor: '#1C1C1E', borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingTop: 8, paddingBottom: 36 }}>
-              {/* Handle bar */}
-              <View style={{ width: 36, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, alignSelf: 'center', marginBottom: 16 }} />
-              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, textAlign: 'center', marginBottom: 12, letterSpacing: 0.3 }}>
-                VIEW
-              </Text>
-              {/* Library option */}
-              <Pressable
-                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setViewMode('library'); setShowModeSheet(false); }}
-                style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 0.5, borderBottomColor: 'rgba(255,255,255,0.08)' }}
-              >
-                <Text style={{ flex: 1, color: '#fff', fontSize: 17, fontWeight: viewMode === 'library' ? '600' : '400' }}>
-                  Library
-                </Text>
-                {viewMode === 'library' && <Check size={20} color="#8B5CF6" />}
-              </Pressable>
-              {/* Downloads option */}
-              <Pressable
-                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setViewMode('downloads'); setShowModeSheet(false); }}
-                style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16 }}
-              >
-                <Text style={{ flex: 1, color: '#fff', fontSize: 17, fontWeight: viewMode === 'downloads' ? '600' : '400' }}>
-                  Downloads
-                </Text>
-                {viewMode === 'downloads' && <Check size={20} color="#8B5CF6" />}
-              </Pressable>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
 
       {/* Create Playlist Modal — full screen */}
       <Modal

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,23 @@ import { authClient } from '@/lib/auth/auth-client';
 import { api } from '@/lib/api/api';
 import { VybeIcon } from '@/components/VybeIcon';
 import { useVybePopup } from '@/components/VybePopup';
+import { useUpgradePromptStore } from '@/stores/upgradePromptStore';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import * as AuthSession from 'expo-auth-session';
+import * as WebBrowser from 'expo-web-browser';
+
+WebBrowser.maybeCompleteAuthSession();
+
+// Google OAuth discovery document
+const googleDiscovery = {
+  authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+  tokenEndpoint: 'https://oauth2.googleapis.com/token',
+  revocationEndpoint: 'https://oauth2.googleapis.com/revoke',
+};
+
+interface UserPreferences {
+  onboardingDone: boolean;
+}
 
 type AuthView = 'main' | 'email';
 
@@ -33,23 +50,158 @@ export default function SignInScreen() {
   const [view, setView] = useState<AuthView>('main');
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isAppleAvailable, setIsAppleAvailable] = useState(false);
+  const hasSeenPrompt = useUpgradePromptStore((s) => s.hasSeenPrompt);
 
-  const handleAppleSignIn = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    showVybePopup({
-      title: 'Coming Soon',
-      message: 'Apple Sign In will be available soon.',
-      type: 'info',
-    });
+  // Navigate after successful social auth
+  const navigateAfterAuth = async () => {
+    try {
+      const preferences = await api.get<UserPreferences>('/api/user/preferences');
+      if (preferences?.onboardingDone) {
+        if (!hasSeenPrompt) {
+          router.replace('/(app)/upgrade');
+        } else {
+          router.replace('/(app)/(tabs)');
+        }
+      } else {
+        router.replace('/onboarding');
+      }
+    } catch {
+      // Default to onboarding if can't fetch preferences
+      router.replace('/onboarding');
+    }
   };
 
-  const handleGoogleSignIn = () => {
+  // Google OAuth setup
+  const googleClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || '';
+  const redirectUri = AuthSession.makeRedirectUri({ scheme: 'vibecode' });
+
+  const [googleRequest, googleResponse, promptGoogleAsync] = AuthSession.useAuthRequest(
+    {
+      clientId: googleClientId,
+      redirectUri,
+      scopes: ['openid', 'profile', 'email'],
+      responseType: AuthSession.ResponseType.IdToken,
+    },
+    googleDiscovery
+  );
+
+  // Check Apple Sign In availability
+  useEffect(() => {
+    if (Platform.OS === 'ios') {
+      AppleAuthentication.isAvailableAsync().then(setIsAppleAvailable);
+    }
+  }, []);
+
+  // Handle Google OAuth response
+  useEffect(() => {
+    if (googleResponse?.type === 'success' && googleResponse.params?.id_token) {
+      handleGoogleToken(googleResponse.params.id_token);
+    }
+  }, [googleResponse]);
+
+  const handleGoogleToken = async (idToken: string) => {
+    setIsLoading(true);
+    try {
+      const result = await authClient.signIn.social({
+        provider: 'google',
+        idToken: { token: idToken },
+      });
+      if (result.error) {
+        throw new Error(result.error.message);
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await navigateAfterAuth();
+    } catch (error: any) {
+      showVybePopup({
+        title: 'Sign In Failed',
+        message: error.message || 'Failed to sign in with Google. Please try again.',
+        type: 'error',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleAppleSignIn = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    showVybePopup({
-      title: 'Coming Soon',
-      message: 'Google Sign In will be available soon.',
-      type: 'info',
-    });
+
+    if (Platform.OS !== 'ios') {
+      showVybePopup({
+        title: 'Not Available',
+        message: 'Apple Sign In is only available on iOS devices.',
+        type: 'info',
+      });
+      return;
+    }
+
+    if (!isAppleAvailable) {
+      showVybePopup({
+        title: 'Not Available',
+        message: 'Apple Sign In requires a native build. Please use Email or Google sign in for now.',
+        type: 'info',
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+
+      if (credential.identityToken) {
+        const result = await authClient.signIn.social({
+          provider: 'apple',
+          idToken: { token: credential.identityToken },
+        });
+        if (result.error) {
+          throw new Error(result.error.message);
+        }
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        await navigateAfterAuth();
+      }
+    } catch (error: any) {
+      if (error.code === 'ERR_REQUEST_CANCELED') {
+        // User cancelled, don't show error
+        return;
+      }
+      showVybePopup({
+        title: 'Sign In Failed',
+        message: error.message || 'Failed to sign in with Apple. Please try again.',
+        type: 'error',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    if (!googleClientId || !googleRequest) {
+      showVybePopup({
+        title: 'Not Configured',
+        message: 'Google Sign In is not configured yet.',
+        type: 'info',
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await promptGoogleAsync();
+    } catch (error: any) {
+      showVybePopup({
+        title: 'Sign In Failed',
+        message: error.message || 'Failed to start Google sign in.',
+        type: 'error',
+      });
+      setIsLoading(false);
+    }
   };
 
   const handleEmailContinue = () => {

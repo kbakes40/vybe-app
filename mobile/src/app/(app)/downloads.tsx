@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { View, Text, Pressable, ScrollView, ActivityIndicator, Modal, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, Pressable, ScrollView, ActivityIndicator, Modal } from 'react-native';
 import ReanimatedSwipeable, { SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, { SharedValue, useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
 import * as FileSystem from 'expo-file-system';
@@ -159,8 +159,9 @@ export default function DownloadsScreen() {
 
   const [exportingAll, setExportingAll] = React.useState(false);
   const [exportDone, setExportDone] = React.useState(0);
+  const [exportTotal, setExportTotal] = React.useState(0);
+  const [exportPhase, setExportPhase] = React.useState<'idle' | 'copying' | 'sharing'>('idle');
   const [folderModalVisible, setFolderModalVisible] = React.useState(false);
-  const [folderName, setFolderName] = React.useState('Vybe Music');
 
   const showMiniPlayer = !!currentTrack;
   const bottomPadding = insets.bottom + (showMiniPlayer ? MINI_PLAYER_HEIGHT : 0) + 40;
@@ -229,29 +230,74 @@ export default function DownloadsScreen() {
   const handleExportAll = () => {
     const exportable = downloads.filter(d => !!d.localFilePath);
     if (exportable.length === 0) return;
-    setFolderName('Vybe Music');
     setFolderModalVisible(true);
   };
 
-  const startExportWithFolder = async (folder: string) => {
+  // Build a clean filename: "Artist - Title.ext"
+  const buildExportName = (track: DownloadedTrack): string => {
+    const ext = track.fileFormat?.toLowerCase() === 'mp3' ? 'mp3' : 'm4a';
+    const artist = (track.artist || 'Unknown Artist').replace(/[/\\:*?"<>|]/g, '_').trim();
+    const title = (track.title || 'Unknown Title').replace(/[/\\:*?"<>|]/g, '_').trim();
+    return `${artist} - ${title}.${ext}`;
+  };
+
+  const startExport = async () => {
     const exportable = downloads.filter(d => !!d.localFilePath);
     setFolderModalVisible(false);
     setExportingAll(true);
     setExportDone(0);
+    setExportTotal(exportable.length);
+    setExportPhase('copying');
+
+    // Step 1: copy all files with proper Artist - Title.ext names into a temp folder
+    const exportDir = (FileSystem.cacheDirectory ?? '') + 'vybe-export/';
+    try {
+      await FileSystem.deleteAsync(exportDir, { idempotent: true });
+      await FileSystem.makeDirectoryAsync(exportDir, { intermediates: true });
+    } catch {}
+
+    const copied: string[] = [];
     for (const track of exportable) {
       try {
         const info = await FileSystem.getInfoAsync(track.localFilePath);
         if (info.exists) {
-          await Sharing.shareAsync(track.localFilePath, {
-            mimeType: track.fileFormat === 'MP3' ? 'audio/mpeg' : 'audio/mp4',
-            dialogTitle: `Save to "${folder}" — ${track.title}`,
-            UTI: track.fileFormat === 'MP3' ? 'public.mp3' : 'public.mpeg-4-audio',
-          });
+          const destPath = exportDir + buildExportName(track);
+          await FileSystem.copyAsync({ from: track.localFilePath, to: destPath });
+          copied.push(destPath);
         }
       } catch {}
       setExportDone(n => n + 1);
     }
+
+    if (copied.length === 0) {
+      setExportingAll(false);
+      setExportPhase('idle');
+      return;
+    }
+
+    // Step 2: share — try the whole folder first (one share sheet, user picks iCloud once)
+    setExportPhase('sharing');
+    try {
+      await Sharing.shareAsync(exportDir, {
+        dialogTitle: 'Save to iCloud Drive',
+        UTI: 'public.folder',
+      });
+    } catch {
+      // Fallback: share each renamed file individually
+      for (const filePath of copied) {
+        try {
+          const isMP3 = filePath.endsWith('.mp3');
+          await Sharing.shareAsync(filePath, {
+            mimeType: isMP3 ? 'audio/mpeg' : 'audio/mp4',
+            UTI: isMP3 ? 'public.mp3' : 'public.mpeg-4-audio',
+            dialogTitle: 'Save to iCloud Drive',
+          });
+        } catch {}
+      }
+    }
+
     setExportingAll(false);
+    setExportPhase('idle');
   };
 
   const handleClearAll = () => {
@@ -326,8 +372,10 @@ export default function DownloadsScreen() {
                 {downloads.length > 0 && (
                   exportingAll ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                      <ActivityIndicator size="small" color="#6366F1" />
-                      <Text style={{ color: '#6366F1', fontSize: 12, fontWeight: '600' }}>{exportDone}/{downloads.filter(d => !!d.localFilePath).length}</Text>
+                      <ActivityIndicator size="small" color="#0A84FF" />
+                      <Text style={{ color: '#0A84FF', fontSize: 12, fontWeight: '600' }}>
+                        {exportPhase === 'copying' ? `Preparing ${exportDone}/${exportTotal}` : 'Opening Files…'}
+                      </Text>
                     </View>
                   ) : (
                     <Pressable
@@ -427,86 +475,69 @@ export default function DownloadsScreen() {
           )}
         </ScrollView>
 
-        {/* iCloud Folder Picker Modal */}
+        {/* Export Preview Modal */}
         <Modal
           visible={folderModalVisible}
           transparent
-          animationType="fade"
+          animationType="slide"
           onRequestClose={() => setFolderModalVisible(false)}
         >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.75)' }}
-          >
-            <View style={{ width: '88%', backgroundColor: '#1C1C1E', borderRadius: 18, overflow: 'hidden' }}>
+          <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' }}>
+            <View style={{ backgroundColor: '#1C1C1E', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '80%', overflow: 'hidden' }}>
+              {/* Handle */}
+              <View style={{ alignItems: 'center', paddingTop: 12, paddingBottom: 4 }}>
+                <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+              </View>
+
               {/* Header */}
-              <View style={{ padding: 20, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)', alignItems: 'center' }}>
-                <Cloud size={28} color="#0A84FF" />
-                <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700', marginTop: 10 }}>Save to iCloud Drive</Text>
-                <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, textAlign: 'center', marginTop: 6 }}>
-                  Choose a folder name. When the share sheet opens, tap "Save to Files" and navigate to your iCloud folder.
+              <View style={{ paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                  <Cloud size={22} color="#0A84FF" />
+                  <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginLeft: 10 }}>
+                    Save to iCloud Drive
+                  </Text>
+                </View>
+                <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13 }}>
+                  {downloads.filter(d => !!d.localFilePath).length} songs — tap "Export to Files" then choose your iCloud folder
                 </Text>
               </View>
 
-              {/* Folder input */}
-              <View style={{ padding: 20 }}>
-                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, fontWeight: '600', letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 8 }}>
-                  Folder Name
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 4 }}>
-                  <Cloud size={16} color="#0A84FF" />
-                  <TextInput
-                    value={folderName}
-                    onChangeText={setFolderName}
-                    placeholder="Vybe Music"
-                    placeholderTextColor="rgba(255,255,255,0.25)"
-                    style={{ flex: 1, color: '#fff', fontSize: 16, paddingVertical: 10, marginLeft: 10 }}
-                    autoFocus
-                    selectTextOnFocus
-                    returnKeyType="done"
-                    onSubmitEditing={() => startExportWithFolder(folderName.trim() || 'Vybe Music')}
-                  />
-                </View>
-
-                {/* Preset folders */}
-                <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12, marginTop: 14, marginBottom: 8 }}>Quick picks</Text>
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                  {['Vybe Music', 'Music', 'Downloads', 'My Playlist'].map(preset => (
-                    <Pressable
-                      key={preset}
-                      onPress={() => setFolderName(preset)}
-                      style={{
-                        backgroundColor: folderName === preset ? 'rgba(10,132,255,0.2)' : 'rgba(255,255,255,0.07)',
-                        borderWidth: 1,
-                        borderColor: folderName === preset ? '#0A84FF' : 'transparent',
-                        borderRadius: 8,
-                        paddingHorizontal: 12,
-                        paddingVertical: 6,
-                      }}
-                    >
-                      <Text style={{ color: folderName === preset ? '#0A84FF' : 'rgba(255,255,255,0.6)', fontSize: 13 }}>{preset}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
+              {/* Track list preview */}
+              <ScrollView style={{ maxHeight: 320 }} contentContainerStyle={{ paddingVertical: 8 }}>
+                {downloads.filter(d => !!d.localFilePath).map((track, i) => (
+                  <View key={track.id} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 10 }}>
+                    <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, width: 24 }}>{i + 1}</Text>
+                    <View style={{ flex: 1, marginLeft: 4 }}>
+                      <Text style={{ color: '#fff', fontSize: 14, fontWeight: '500' }} numberOfLines={1}>
+                        {buildExportName(track)}
+                      </Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, marginTop: 1 }}>
+                        {track.fileFormat ?? 'Audio'} · {formatFileSize(track.fileSize)}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+              </ScrollView>
 
               {/* Actions */}
-              <View style={{ flexDirection: 'row', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)' }}>
+              <View style={{ padding: 16, gap: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)' }}>
+                <Pressable
+                  onPress={startExport}
+                  style={{ backgroundColor: '#0A84FF', borderRadius: 14, paddingVertical: 16, alignItems: 'center' }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>Export to Files →</Text>
+                </Pressable>
                 <Pressable
                   onPress={() => setFolderModalVisible(false)}
-                  style={{ flex: 1, paddingVertical: 16, alignItems: 'center', borderRightWidth: 1, borderRightColor: 'rgba(255,255,255,0.08)' }}
+                  style={{ paddingVertical: 12, alignItems: 'center' }}
                 >
-                  <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 16 }}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => startExportWithFolder(folderName.trim() || 'Vybe Music')}
-                  style={{ flex: 1, paddingVertical: 16, alignItems: 'center' }}
-                >
-                  <Text style={{ color: '#0A84FF', fontSize: 16, fontWeight: '700' }}>Export</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 15 }}>Cancel</Text>
                 </Pressable>
               </View>
+
+              <View style={{ height: insets.bottom }} />
             </View>
-          </KeyboardAvoidingView>
+          </View>
         </Modal>
       </LinearGradient>
     </View>

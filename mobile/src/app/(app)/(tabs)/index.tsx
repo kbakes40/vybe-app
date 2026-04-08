@@ -21,6 +21,7 @@ import Animated, {
 import { PlaylistCard } from '@/components/PlaylistCard';
 import { AlbumCard } from '@/components/AlbumCard';
 import { VybeIcon } from '@/components/VybeIcon';
+import { ProfileAvatar } from '@/components/ProfileAvatar';
 import { ProfileMenuOverlay } from '@/components/ProfileMenuOverlay';
 import { FreePDSection } from '@/components/FreePDSection';
 import {
@@ -740,14 +741,13 @@ export default function HomeScreen() {
           {/* Logo and profile row */}
           <View className="flex-row items-center justify-between px-5 pt-4 pb-2">
             <VybeIcon size={36} variant="primary" />
-            <Pressable
+            <ProfileAvatar
+              size={36}
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 setShowProfileMenu(true);
               }}
-            >
-              <VybeIcon size={36} backgroundColor="#2D1B69" />
-            </Pressable>
+            />
           </View>
           {/* Dynamic greeting - fades on scroll */}
           <Animated.View style={[{ paddingHorizontal: 20, paddingBottom: 12 }, greetingAnimatedStyle]}>

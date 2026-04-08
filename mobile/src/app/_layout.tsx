@@ -10,6 +10,7 @@ import { Appearance } from 'react-native';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { VybePopupProvider } from '@/components/VybePopup';
 import { FlyAnimationOverlay } from '@/components/FlyAnimationOverlay';
+import { authClient } from '@/lib/auth/auth-client';
 
 // Force dark mode globally
 Appearance.setColorScheme('dark');
@@ -29,7 +30,8 @@ function RootLayoutNav() {
     SplashScreen.hideAsync();
   }, []);
 
-  const isAuthenticated = true;
+  const { data: session, isPending } = authClient.useSession();
+  const isAuthenticated = isPending || !!session?.user;
 
   // CRITICAL: Render ONLY auth stack OR app stack - never both
   // This prevents swipe-back from app to auth screens
@@ -41,10 +43,11 @@ function RootLayoutNav() {
           headerShown: false,
           contentStyle: { backgroundColor: '#0A0A0A' },
           animation: 'fade',
+          gestureEnabled: false,
         }}
       >
-        {/* Main app routes */}
-        <Stack.Screen name="(app)" />
+        {/* Main app routes — gesture disabled so user can never swipe back to auth */}
+        <Stack.Screen name="(app)" options={{ gestureEnabled: false }} />
 
         {/* Paywall - modal presentation (accessible when logged in) */}
         <Stack.Screen
@@ -52,6 +55,7 @@ function RootLayoutNav() {
           options={{
             presentation: 'modal',
             animation: 'slide_from_bottom',
+            gestureEnabled: true,
           }}
         />
 

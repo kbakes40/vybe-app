@@ -410,16 +410,37 @@ export async function getHiddenGems(
 
 // ─── Curated Playlists ───────────────────────────────────────────────────────
 
-const CURATED_PLAYLIST_IDS = [
-  'RDCLAK5uy_m7EF_vYZXBhXNuduyXmhT00DYapc8cobs',
-  'RDCLAK5uy_nZiG9ehz_MQoWQxY5yElsLHCcG0tv9PRg',
-  'RDCLAK5uy_kZFOUXnpa_oJMql3vYc-jq6yVxwqhdkrM',
-  'RDCLAK5uy_mv1P2oVguxLCIDXavV-jcDG1lQyukfSpo',
-  'RDCLAK5uy_kP2172rQNb3KFXz880xp6M98R_ME5CIKA',
-  'RDCLAK5uy_k4QxtdDiyPtN17wezA186nbXuqO36QOiU',
-  'RDCLAK5uy_kw2wIlEv9llILhO0qoMTLsBBhmjzuibAc',
-  'OLAK5uy_nE_yXCZeQMMpkcszZD3v9oiY8DnuKmaAw',
-  'RDCLAK5uy_k6PkYWus1Mt-aKrbb0Ne8SkA2BgAk1Yy4',
+// Each entry has a hardcoded display name so we don't need the YouTube Data API.
+// yt-dlp fetches the tracks; the first track's thumbnail becomes the cover.
+const CURATED_PLAYLISTS_META: { id: string; name: string; category?: string; section?: string }[] = [
+  // ── All-time Essentials (default section) ─────────────────────────────────
+  { id: 'RDCLAK5uy_m7EF_vYZXBhXNuduyXmhT00DYapc8cobs', name: 'Pop Essentials' },
+  { id: 'RDCLAK5uy_nZiG9ehz_MQoWQxY5yElsLHCcG0tv9PRg', name: 'Hip-Hop Essentials' },
+  { id: 'RDCLAK5uy_kZFOUXnpa_oJMql3vYc-jq6yVxwqhdkrM', name: 'Rock Classics' },
+  { id: 'RDCLAK5uy_mv1P2oVguxLCIDXavV-jcDG1lQyukfSpo', name: 'R&B Essentials' },
+  { id: 'RDCLAK5uy_kP2172rQNb3KFXz880xp6M98R_ME5CIKA', name: '80s Hits' },
+  { id: 'RDCLAK5uy_k4QxtdDiyPtN17wezA186nbXuqO36QOiU', name: 'Party Anthems' },
+  { id: 'RDCLAK5uy_kw2wIlEv9llILhO0qoMTLsBBhmjzuibAc', name: 'Chill Vibes' },
+  { id: 'RDCLAK5uy_k6PkYWus1Mt-aKrbb0Ne8SkA2BgAk1Yy4', name: 'Today\'s Hits' },
+  { id: 'PLWjTcqMGesppVAXK4hz80NBun3iKkgXK2', name: 'Throwback Hits' },
+  // Pump It Up sub-category (still under All-time Essentials)
+  { id: 'RDCLAK5uy_l6kL_b50WBydgZr18yRk1axaBan0R6hAk', name: 'Dance Classics', category: 'Pump It Up' },
+  { id: 'RDCLAK5uy_kN4eY_ibobGvCBwIJGEGpDjuwzYHIG_iE', name: 'Hip-Hop Party', category: 'Pump It Up' },
+  { id: 'RDCLAK5uy_nCDa4LLlnoMWB4l9fkePWyXPQKCjnM_KQ', name: 'Disco Fever', category: 'Pump It Up' },
+  { id: 'RDCLAK5uy_lioDBH5_01phR1xiypkAx0t4u5AsJobFg', name: 'Funk Essentials', category: 'Pump It Up' },
+  { id: 'RDCLAK5uy_k1VVBVsS6pu1pVkYZK2B0EWic3i4j_TY4', name: 'Trap Bangers', category: 'Pump It Up' },
+  { id: 'RDCLAK5uy_llM83Y-j8DfoxM_iJMHCU2NMM_UytLTT0', name: 'Old School Rap', category: 'Pump It Up' },
+
+  // ── Popular Playlists ──────────────────────────────────────────────────────
+  // Hits / Mainstream
+  { id: 'RDCLAK5uy_kmPRjHDECIcuVwnKsx2Ng7fyNgFKWNJFs', name: 'The Hit List', section: 'popular', category: 'Hits / Mainstream' },
+  { id: 'PLC5bCqVUrpkI9d7ATvKLY5b7v66zGbH2a', name: 'Top 100 Pop Hits 2026', section: 'popular', category: 'Hits / Mainstream' },
+  // Chill / Relaxed
+  { id: 'PL2CBngpmiUgUJEyRPTK46HjIUhAGV8v9m', name: 'Chill Pop Playlist', section: 'popular', category: 'Chill / Relaxed' },
+  { id: 'PLMmqTuUsDkRJKVeUDJVjR9IRQRLTLrfu9', name: 'Chill Pop 2026', section: 'popular', category: 'Chill / Relaxed' },
+  { id: 'PL4QNnZJr8sRPmuz_d87ygGR6YAYEF-fmw', name: 'Best Relaxing Pop', section: 'popular', category: 'Chill / Relaxed' },
+  // Workout / Energy
+  { id: 'PLnfcpZm6el8i_u-S_T4Uz-NdVs4xkPS8V', name: 'Workout Songs 2026', section: 'popular', category: 'Workout / Energy' },
 ];
 
 export interface PlaylistTrack {
@@ -435,127 +456,106 @@ export interface CuratedPlaylistResult {
   name: string;
   thumbnailUrl: string;
   tracks: PlaylistTrack[];
+  category?: string;
+  section?: string;
 }
 
-interface YouTubePlaylistItemsResponse {
-  items: Array<{
-    snippet: {
-      title: string;
-      channelTitle: string;
-      thumbnails: {
-        default: { url: string };
-        medium?: { url: string };
-        high?: { url: string };
-        maxres?: { url: string };
-      };
-      publishedAt: string;
-      resourceId: { videoId: string };
-    };
-  }>;
-}
-
-interface YouTubePlaylistsMetaResponse {
-  items: Array<{
-    id: string;
-    snippet: {
-      title: string;
-      thumbnails: {
-        default: { url: string };
-        medium?: { url: string };
-        high?: { url: string };
-        maxres?: { url: string };
-      };
-    };
-  }>;
-}
 
 let curatedPlaylistsCache: { results: CuratedPlaylistResult[]; expiresAt: number } | null = null;
 
+const YTDLP_BIN = '/opt/homebrew/bin/yt-dlp';
+
 /**
- * Fetch tracks from a single YouTube playlist
+ * Fetch tracks from a YouTube Music playlist via yt-dlp — no API key needed.
  */
-export async function fetchPlaylistTracks(playlistId: string): Promise<PlaylistTrack[]> {
-  const apiKey = getActiveKey();
-  if (!apiKey) return [];
-
-  const params = new URLSearchParams({
-    part: 'snippet',
-    playlistId,
-    maxResults: '20',
-    key: apiKey,
+function fetchPlaylistTracksViaYTDLP(playlistId: string): Promise<PlaylistTrack[]> {
+  return new Promise((resolve) => {
+    const { spawn } = require('child_process');
+    const url = playlistId.startsWith('PL')
+      ? `https://www.youtube.com/playlist?list=${playlistId}`
+      : `https://music.youtube.com/playlist?list=${playlistId}`;
+    const proc = spawn(YTDLP_BIN, [
+      url, '--flat-playlist', '--dump-json', '--no-warnings', '--quiet',
+    ]);
+    const timeout = setTimeout(() => { proc.kill('SIGKILL'); resolve([]); }, 30_000);
+    let out = '';
+    proc.stdout.on('data', (d: Buffer) => { out += d.toString(); });
+    proc.on('close', () => {
+      clearTimeout(timeout);
+      const tracks: PlaylistTrack[] = [];
+      for (const line of out.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const item = JSON.parse(line);
+          const videoId = item.id ?? item.url?.split('v=')[1];
+          if (!videoId) continue;
+          tracks.push({
+            videoId,
+            title: item.title ?? '',
+            channelName: item.channel ?? item.uploader ?? '',
+            thumbnailUrl: item.thumbnail ?? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+            publishedAt: item.upload_date ?? '',
+          });
+        } catch {}
+      }
+      resolve(tracks);
+    });
+    proc.on('error', () => { clearTimeout(timeout); resolve([]); });
   });
-
-  try {
-    const response = await fetch(`${YOUTUBE_API_BASE}/playlistItems?${params}`);
-    if (!response.ok) return [];
-
-    const data = await response.json() as YouTubePlaylistItemsResponse;
-    return data.items
-      .filter(item => item.snippet?.resourceId?.videoId)
-      .map(item => {
-        const thumb = item.snippet.thumbnails;
-        return {
-          videoId: item.snippet.resourceId.videoId,
-          title: decodeHtmlEntities(item.snippet.title),
-          channelName: decodeHtmlEntities(item.snippet.channelTitle),
-          thumbnailUrl: thumb.maxres?.url ?? thumb.high?.url ?? thumb.medium?.url ?? thumb.default.url,
-          publishedAt: item.snippet.publishedAt,
-        };
-      });
-  } catch {
-    return [];
-  }
 }
 
 /**
- * Fetch all 5 curated playlists with their tracks (cached 24 hours)
+ * Fetch tracks from a single YouTube playlist (kept for external callers).
  */
-export async function fetchCuratedPlaylists(): Promise<CuratedPlaylistResult[]> {
-  const apiKey = getActiveKey();
-  if (!apiKey) return [];
+export async function fetchPlaylistTracks(playlistId: string): Promise<PlaylistTrack[]> {
+  return fetchPlaylistTracksViaYTDLP(playlistId);
+}
 
+/**
+ * Fetch all "All Time Essentials" playlists via yt-dlp (cached 24 hours).
+ * No YouTube Data API key required.
+ */
+async function fetchPlaylistThumbnailFromAPI(playlistId: string): Promise<string> {
+  const apiKey = getActiveKey();
+  if (!apiKey) return '';
+  try {
+    const params = new URLSearchParams({ part: 'snippet', id: playlistId, key: apiKey });
+    const res = await fetch(`${YOUTUBE_API_BASE}/playlists?${params}`);
+    if (!res.ok) return '';
+    const json = await res.json() as { items?: { snippet: { thumbnails: { maxres?: { url: string }; high?: { url: string }; medium?: { url: string }; default?: { url: string } } } }[] };
+    const thumbnails = json.items?.[0]?.snippet?.thumbnails;
+    if (!thumbnails) return '';
+    return thumbnails.maxres?.url ?? thumbnails.high?.url ?? thumbnails.medium?.url ?? thumbnails.default?.url ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export async function fetchCuratedPlaylists(): Promise<CuratedPlaylistResult[]> {
   if (curatedPlaylistsCache && Date.now() < curatedPlaylistsCache.expiresAt) {
     return curatedPlaylistsCache.results;
   }
 
-  // Fetch playlist metadata (names + thumbnails) in one call
-  const metaParams = new URLSearchParams({
-    part: 'snippet',
-    id: CURATED_PLAYLIST_IDS.join(','),
-    key: apiKey,
-  });
-
-  const playlistMeta = new Map<string, { name: string; thumbnailUrl: string }>();
-  try {
-    const metaRes = await fetch(`${YOUTUBE_API_BASE}/playlists?${metaParams}`);
-    if (metaRes.ok) {
-      const metaData = await metaRes.json() as YouTubePlaylistsMetaResponse;
-      for (const item of metaData.items) {
-        const t = item.snippet.thumbnails;
-        playlistMeta.set(item.id, {
-          name: decodeHtmlEntities(item.snippet.title),
-          thumbnailUrl: t.maxres?.url ?? t.high?.url ?? t.medium?.url ?? t.default.url,
-        });
-      }
-    }
-  } catch {}
-
-  // Fetch tracks for all playlists in parallel
   const results = await Promise.all(
-    CURATED_PLAYLIST_IDS.map(async (playlistId) => {
-      const tracks = await fetchPlaylistTracks(playlistId);
-      const meta = playlistMeta.get(playlistId);
+    CURATED_PLAYLISTS_META.map(async ({ id, name, category, section }) => {
+      const [tracks, playlistThumbnail] = await Promise.all([
+        fetchPlaylistTracksViaYTDLP(id).then(t => t.slice(0, 15)),
+        fetchPlaylistThumbnailFromAPI(id),
+      ]);
       return {
-        playlistId,
-        name: meta?.name ?? 'Curated Playlist',
-        thumbnailUrl: meta?.thumbnailUrl ?? tracks[0]?.thumbnailUrl ?? '',
+        playlistId: id,
+        name,
+        thumbnailUrl: playlistThumbnail || tracks[0]?.thumbnailUrl || '',
         tracks,
+        ...(category ? { category } : {}),
+        ...(section ? { section } : {}),
       };
     })
   );
 
-  curatedPlaylistsCache = { results, expiresAt: Date.now() + SEARCH_CACHE_TTL_MS };
-  return results;
+  const nonEmpty = results.filter(r => r.tracks.length > 0);
+  curatedPlaylistsCache = { results: nonEmpty, expiresAt: Date.now() + SEARCH_CACHE_TTL_MS };
+  return nonEmpty;
 }
 
 // ─── New Releases (Trending Music) ───────────────────────────────────────────

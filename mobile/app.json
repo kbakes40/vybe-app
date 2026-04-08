@@ -13,7 +13,8 @@
       "appleTeamId": "FCXP585VH2"
     },
     "android": {
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.vibecode.app"
     },
     "plugins": [
       "expo-router"
