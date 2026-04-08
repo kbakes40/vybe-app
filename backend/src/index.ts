@@ -80,6 +80,7 @@ app.route("/api/discover", discoverRouter);
 app.route("/api/freepd", freepdRouter);
 app.route("/api/musicgen", musicgenRouter);
 app.route("/api/youtube", youtubeRouter);
+app.get("/api/youtube-test", (c) => c.json({ mounted: true }));
 app.route("/api/spotify", spotifyRouter);
 app.route("/api/apple-music", appleMusicRouter);
 
