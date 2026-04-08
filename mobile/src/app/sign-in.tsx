@@ -26,9 +26,17 @@ import { VybeIcon } from '@/components/VybeIcon';
 import { useVybePopup } from '@/components/VybePopup';
 import { useUpgradePromptStore } from '@/stores/upgradePromptStore';
 import * as AppleAuthentication from 'expo-apple-authentication';
+import * as AuthSession from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 
 WebBrowser.maybeCompleteAuthSession();
+
+// Google OAuth using iOS client — gets idToken directly, no PKCE redirect needed
+const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '';
+const googleDiscovery = {
+  authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+  tokenEndpoint: 'https://oauth2.googleapis.com/token',
+};
 
 interface UserPreferences {
   onboardingDone: boolean;
@@ -47,6 +55,18 @@ export default function SignInScreen() {
   const hasSeenPrompt = useUpgradePromptStore((s) => s.hasSeenPrompt);
   const browserOpenRef = useRef(false);
 
+  // Google auth request — uses iOS client ID to get idToken (no PKCE)
+  const [googleRequest, googleResponse, promptGoogleAsync] = AuthSession.useAuthRequest(
+    {
+      clientId: GOOGLE_IOS_CLIENT_ID,
+      redirectUri: AuthSession.makeRedirectUri({ scheme: 'com.googleusercontent.apps.405236221156-rg9n0cquvqrh7rcg7nrbmgc20i46kgpn' }),
+      responseType: AuthSession.ResponseType.IdToken,
+      scopes: ['openid', 'email', 'profile'],
+      usePKCE: false,
+    },
+    googleDiscovery,
+  );
+
   // Reset loading when user comes back to app after cancelling browser auth
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
@@ -58,7 +78,23 @@ export default function SignInScreen() {
     return () => sub.remove();
   }, []);
 
-  // Navigate after successful social auth
+  // Handle Google response
+  useEffect(() => {
+    if (googleResponse?.type === 'success') {
+      const idToken = googleResponse.params?.id_token;
+      if (idToken) {
+        handleGoogleToken(idToken);
+      } else {
+        setIsLoading(false);
+        browserOpenRef.current = false;
+      }
+    } else if (googleResponse?.type === 'error' || googleResponse?.type === 'dismiss') {
+      setIsLoading(false);
+      browserOpenRef.current = false;
+    }
+  }, [googleResponse]);
+
+  // Navigate after successful auth
   const navigateAfterAuth = async () => {
     try {
       const preferences = await api.get<UserPreferences>('/api/user/preferences');
@@ -73,6 +109,28 @@ export default function SignInScreen() {
       }
     } catch {
       router.replace('/onboarding');
+    }
+  };
+
+  // Exchange Google idToken with Better Auth
+  const handleGoogleToken = async (idToken: string) => {
+    try {
+      const result = await authClient.signIn.social({
+        provider: 'google',
+        idToken: { token: idToken },
+      });
+      if (result.error) throw new Error(result.error.message);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await navigateAfterAuth();
+    } catch (error: any) {
+      showVybePopup({
+        title: 'Sign In Failed',
+        message: error.message || 'Failed to sign in with Google. Please try again.',
+        type: 'error',
+      });
+    } finally {
+      setIsLoading(false);
+      browserOpenRef.current = false;
     }
   };
 
@@ -118,16 +176,12 @@ export default function SignInScreen() {
           provider: 'apple',
           idToken: { token: credential.identityToken },
         });
-        if (result.error) {
-          throw new Error(result.error.message);
-        }
+        if (result.error) throw new Error(result.error.message);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         await navigateAfterAuth();
       }
     } catch (error: any) {
-      if (error.code === 'ERR_REQUEST_CANCELED') {
-        return;
-      }
+      if (error.code === 'ERR_REQUEST_CANCELED') return;
       showVybePopup({
         title: 'Sign In Failed',
         message: error.message || 'Failed to sign in with Apple. Please try again.',
@@ -144,22 +198,16 @@ export default function SignInScreen() {
     setIsLoading(true);
     browserOpenRef.current = true;
     try {
-      await authClient.signIn.oauth2({ providerId: 'google', callbackURL: '/' });
-      browserOpenRef.current = false;
-      const session = await authClient.getSession();
-      if (session?.data?.session) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        await navigateAfterAuth();
-      }
+      await promptGoogleAsync();
+      // response handled in useEffect above
     } catch (error: any) {
       showVybePopup({
         title: 'Sign In Failed',
-        message: error.message || 'Failed to sign in with Google.',
+        message: error.message || 'Failed to start Google sign in.',
         type: 'error',
       });
-    } finally {
-      browserOpenRef.current = false;
       setIsLoading(false);
+      browserOpenRef.current = false;
     }
   };
 
@@ -182,10 +230,7 @@ export default function SignInScreen() {
     setIsLoading(true);
 
     try {
-      await authClient.emailOtp.sendVerificationOtp({
-        email,
-        type: 'sign-in',
-      });
+      await authClient.emailOtp.sendVerificationOtp({ email, type: 'sign-in' });
       router.push({ pathname: '/verify-otp', params: { email } });
     } catch (error) {
       showVybePopup({
@@ -201,12 +246,9 @@ export default function SignInScreen() {
   const handleGuestLogin = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setIsLoading(true);
-
     try {
       const result = await api.post<{ user: { id: string }; isGuest: boolean }>('/api/user/guest', {});
-      if (result?.isGuest) {
-        router.replace('/onboarding');
-      }
+      if (result?.isGuest) router.replace('/onboarding');
     } catch (error) {
       showVybePopup({
         title: 'Error',
@@ -242,20 +284,13 @@ export default function SignInScreen() {
               exiting={SlideOutLeft.duration(300)}
               style={{ flex: 1 }}
             >
-              {/* Back Button */}
-              <Pressable
-                onPress={handleBack}
-                className="flex-row items-center px-4 py-2"
-              >
+              <Pressable onPress={handleBack} className="flex-row items-center px-4 py-2">
                 <ChevronLeft size={24} color="#fff" />
                 <Text className="text-white text-base ml-1">Back</Text>
               </Pressable>
 
-              {/* Email Input View */}
               <View className="flex-1 px-8 justify-center">
-                <Text className="text-white text-3xl font-bold mb-2">
-                  Enter your email
-                </Text>
+                <Text className="text-white text-3xl font-bold mb-2">Enter your email</Text>
                 <Text className="text-white/60 text-base mb-8">
                   We will send you a verification code
                 </Text>
@@ -282,19 +317,12 @@ export default function SignInScreen() {
                     colors={email ? ['#8B5CF6', '#3B82F6'] : ['#333', '#333']}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 0 }}
-                    style={{
-                      paddingVertical: 16,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      flexDirection: 'row',
-                    }}
+                    style={{ paddingVertical: 16, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' }}
                   >
                     {isLoading ? (
                       <ActivityIndicator color="#fff" />
                     ) : (
-                      <Text className="text-white font-semibold text-lg">
-                        Send Code
-                      </Text>
+                      <Text className="text-white font-semibold text-lg">Send Code</Text>
                     )}
                   </LinearGradient>
                 </Pressable>
@@ -306,38 +334,25 @@ export default function SignInScreen() {
               exiting={FadeOut.duration(300)}
               style={{ flex: 1 }}
             >
-              {/* Logo and Tagline */}
               <View className="flex-1 items-center justify-center px-8">
                 <View className="items-center mb-16">
                   <View className="mb-6">
                     <VybeIcon size={110} variant="primary" />
                   </View>
-                  <Text className="text-white text-4xl font-bold tracking-wider">
-                    VYBE
-                  </Text>
-                  <Text className="text-white/50 text-base mt-2 italic">
-                    break the loop
-                  </Text>
+                  <Text className="text-white text-4xl font-bold tracking-wider">VYBE</Text>
+                  <Text className="text-white/50 text-base mt-2 italic">break the loop</Text>
                 </View>
               </View>
 
-              {/* Sign In Options */}
-              <View
-                className="px-8"
-                style={{ paddingBottom: insets.bottom + 24 }}
-              >
+              <View className="px-8" style={{ paddingBottom: insets.bottom + 24 }}>
                 {/* Apple Sign In */}
                 <Pressable
                   onPress={handleAppleSignIn}
                   disabled={isLoading}
                   className="bg-white rounded-xl py-4 flex-row items-center justify-center mb-3"
                 >
-                  <Text className="text-[#0A0A0A] text-lg mr-2">
-                    {'\uF8FF'}
-                  </Text>
-                  <Text className="text-[#0A0A0A] font-semibold text-base">
-                    Continue with Apple
-                  </Text>
+                  <Text className="text-[#0A0A0A] text-lg mr-2">{'\uF8FF'}</Text>
+                  <Text className="text-[#0A0A0A] font-semibold text-base">Continue with Apple</Text>
                 </Pressable>
 
                 {/* Google Sign In */}
@@ -349,9 +364,7 @@ export default function SignInScreen() {
                   {isLoading ? (
                     <ActivityIndicator color="#fff" size="small" />
                   ) : (
-                    <Text className="text-white font-semibold text-base">
-                      Continue with Google
-                    </Text>
+                    <Text className="text-white font-semibold text-base">Continue with Google</Text>
                   )}
                 </Pressable>
 
@@ -361,9 +374,7 @@ export default function SignInScreen() {
                   className="border border-[#444] rounded-xl py-4 flex-row items-center justify-center mb-6"
                 >
                   <Mail size={20} color="#fff" />
-                  <Text className="text-white font-semibold text-base ml-2">
-                    Continue with Email
-                  </Text>
+                  <Text className="text-white font-semibold text-base ml-2">Continue with Email</Text>
                 </Pressable>
 
                 {/* Guest Login */}
@@ -372,9 +383,7 @@ export default function SignInScreen() {
                   disabled={isLoading}
                   className="items-center py-2"
                 >
-                  <Text className="text-white/60 text-base">
-                    Continue as Guest
-                  </Text>
+                  <Text className="text-white/60 text-base">Continue as Guest</Text>
                 </Pressable>
               </View>
             </Animated.View>

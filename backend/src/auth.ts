@@ -1,7 +1,7 @@
 import { betterAuth } from "better-auth";
 import { expo } from "@better-auth/expo";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { emailOTP, genericOAuth } from "better-auth/plugins";
+import { emailOTP } from "better-auth/plugins";
 import { prisma } from "./prisma";
 import { env } from "./env";
 
@@ -35,24 +35,15 @@ export const auth = betterAuth({
       clientSecret: process.env.APPLE_CLIENT_SECRET || "",
       enabled: !!process.env.APPLE_CLIENT_SECRET,
     },
+    google: {
+      clientId: process.env.GOOGLE_CLIENT_ID || "",
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+      enabled: !!process.env.GOOGLE_CLIENT_SECRET,
+    },
   },
 
   plugins: [
     expo(),
-    // Google via genericOAuth with pkce:false — Better Auth's built-in Google
-    // provider forces PKCE which Google rejects from native/mobile clients.
-    ...(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
-      ? [genericOAuth({
-          config: [{
-            providerId: "google",
-            clientId: process.env.GOOGLE_CLIENT_ID,
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-            discoveryUrl: "https://accounts.google.com/.well-known/openid-configuration",
-            scopes: ["openid", "email", "profile"],
-            pkce: false,
-          }],
-        })]
-      : []),
     emailOTP({
       async sendVerificationOTP({ email, otp, type }) {
         if (type !== "sign-in") return;

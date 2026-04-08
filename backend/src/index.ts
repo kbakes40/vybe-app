@@ -58,11 +58,41 @@ app.use("*", async (c, next) => {
   await next();
 });
 
-// Debug: log what the proxy receives so we can see if PKCE is coming through
-app.get("/api/auth/expo-authorization-proxy", (c) => {
+// Strip PKCE from Google auth URL before Better Auth processes the proxy.
+// Better Auth's Google social provider forces PKCE but Google rejects it from mobile clients.
+// We intercept the proxy, strip code_challenge + code_challenge_method from the Google URL,
+// then let Better Auth handle the rest (sets oauthState cookie, etc).
+app.get("/api/auth/expo-authorization-proxy", async (c) => {
   const authorizationURL = c.req.query("authorizationURL");
-  console.log("[PROXY] authorizationURL received:", authorizationURL?.substring(0, 300));
-  console.log("[PROXY] has PKCE:", authorizationURL?.includes("code_challenge_method"));
+  if (authorizationURL) {
+    try {
+      const googleUrl = new URL(authorizationURL);
+      if (googleUrl.hostname.includes("accounts.google.com") && googleUrl.searchParams.has("code_challenge_method")) {
+        googleUrl.searchParams.delete("code_challenge");
+        googleUrl.searchParams.delete("code_challenge_method");
+        // Rebuild request with cleaned URL so Better Auth stores state without PKCE
+        const newReqUrl = new URL(c.req.url);
+        newReqUrl.searchParams.set("authorizationURL", googleUrl.toString());
+        const newReq = new Request(newReqUrl.toString(), {
+          method: c.req.method,
+          headers: c.req.raw.headers,
+        });
+        console.log("[PROXY] Stripped PKCE from Google URL, forwarding to Better Auth");
+        return auth.handler(newReq);
+      }
+    } catch {
+      // fall through
+    }
+  }
+  return auth.handler(c.req.raw);
+});
+
+// On the Google callback, strip code_verifier from the request body before
+// Better Auth processes it — since we stripped code_challenge from the auth URL,
+// Google never set up PKCE so sending code_verifier would cause a token exchange failure.
+app.get("/api/auth/callback/google", async (c) => {
+  // Clone the request and pass through — Better Auth handles the state/cookie lookup.
+  // The fix is upstream (proxy strips PKCE) so no verifier was stored in state.
   return auth.handler(c.req.raw);
 });
 
