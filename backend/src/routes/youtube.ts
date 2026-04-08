@@ -102,9 +102,7 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
     "--get-url",
     "--no-playlist",
     "--quiet",
-    "--extractor-args", "youtube:player_client=web",
-      "--js-runtimes", "node",
-    ...cookieArgs(),
+    "--extractor-args", "youtube:player_client=ios",
   ];
   console.log("[yt-dlp] running:", YTDLP_BINARY_PATH, args.join(" "));
   try {
@@ -444,9 +442,7 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
     "--no-playlist",
     "--quiet",
     "--no-warnings",
-    "--extractor-args", "youtube:player_client=web",
-      "--js-runtimes", "node",
-    ...cookieArgs(),
+    "--extractor-args", "youtube:player_client=ios",
   ]);
   const lines = output.trim().split("\n");
   if (lines.length < 3) throw new Error(`yt-dlp info returned insufficient output`);
