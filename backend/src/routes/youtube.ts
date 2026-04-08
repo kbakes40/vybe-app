@@ -1,27 +1,50 @@
 import { Hono } from "hono";
-import { spawn } from "child_process";
+import YTDlpWrap from "yt-dlp-wrap";
+import path from "path";
+import os from "os";
 import { getQuotaStats, getSearchCacheSize, purgeExpiredSearchCache, fetchNewReleases, fetchCuratedPlaylists, searchYouTube } from "../services/youtubeService";
 
 const youtubeRouter = new Hono();
 
 const VIDEO_ID_RE = /^[a-zA-Z0-9_-]{6,32}$/;
-const YTDLP = process.env.YTDLP_PATH || (process.platform === 'darwin' ? '/opt/homebrew/bin/yt-dlp' : 'yt-dlp');
+const YTDLP_BINARY_PATH = path.join(os.tmpdir(), "yt-dlp");
+const ytDlp = new YTDlpWrap(YTDLP_BINARY_PATH);
+const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), "youtube-cookies.txt");
 
-// Lazily checked on first use — never runs at module load time so Railway import never crashes
-let ytdlpAvailable: boolean | null = null;
-
-function checkYtdlpAvailable(): boolean {
-  if (ytdlpAvailable !== null) return ytdlpAvailable;
+// Download the standalone yt-dlp binary on startup.
+// yt-dlp_linux is self-contained — no python3 required at runtime.
+(async () => {
   try {
-    const { execSync } = require('child_process');
-    execSync(`${YTDLP} --version`, { stdio: 'ignore', timeout: 5000 });
-    ytdlpAvailable = true;
-    console.log(`[YouTube] yt-dlp available at ${YTDLP}`);
-  } catch {
-    ytdlpAvailable = false;
-    console.warn(`[YouTube] yt-dlp not found (${YTDLP}) - audio streaming will not work`);
+    const fs = await import("fs");
+    if (fs.existsSync(YTDLP_BINARY_PATH)) {
+      console.log("[yt-dlp] binary already present at", YTDLP_BINARY_PATH);
+    } else {
+      console.log("[yt-dlp] downloading standalone binary...");
+      const url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const buf = await res.arrayBuffer();
+      fs.writeFileSync(YTDLP_BINARY_PATH, Buffer.from(buf), { mode: 0o755 });
+      console.log("[yt-dlp] binary downloaded to", YTDLP_BINARY_PATH);
+    }
+    const cookiesB64 = process.env.YOUTUBE_COOKIES;
+    if (cookiesB64) {
+      fs.writeFileSync(YTDLP_COOKIES_PATH, Buffer.from(cookiesB64, "base64").toString("utf-8"));
+      console.log("[yt-dlp] cookies written to", YTDLP_COOKIES_PATH);
+    } else {
+      console.warn("[yt-dlp] YOUTUBE_COOKIES not set — YouTube may block requests");
+    }
+  } catch (e: any) {
+    console.error("[yt-dlp] startup error:", e.message);
   }
-  return ytdlpAvailable;
+})();
+
+// Returns cookie args if the cookie file was written, otherwise empty array
+function cookieArgs(): string[] {
+  try {
+    const fs = require("fs");
+    return fs.existsSync(YTDLP_COOKIES_PATH) ? ["--cookies", YTDLP_COOKIES_PATH] : [];
+  } catch { return []; }
 }
 
 // Cache resolved CDN URLs so repeated range requests don't re-run yt-dlp
@@ -44,50 +67,28 @@ function setCachedUrl(videoId: string, url: string): void {
  * Resolve a YouTube videoId to a direct CDN audio URL using yt-dlp.
  * Prefers m4a (AAC) which iOS AVPlayer can decode natively.
  */
-function resolveAudioUrl(videoId: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    if (!checkYtdlpAvailable()) {
-      reject(new Error('yt-dlp is not available on this server'));
-      return;
-    }
-
-    let ytdlp: ReturnType<typeof spawn>;
-    try {
-      ytdlp = spawn(YTDLP, [
-        `https://www.youtube.com/watch?v=${videoId}`,
-        "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio",
-        "--get-url",
-        "--no-playlist",
-        "--quiet",
-      ]);
-    } catch (err: any) {
-      reject(new Error(`Failed to spawn yt-dlp: ${err.message}`));
-      return;
-    }
-
-    const timeout = setTimeout(() => {
-      ytdlp.kill("SIGKILL");
-      reject(new Error(`yt-dlp timed out resolving ${videoId}`));
-    }, 30_000);
-
-    let output = "";
-    let errOutput = "";
-    ytdlp.stdout.on("data", (chunk) => { output += chunk.toString(); });
-    ytdlp.stderr.on("data", (chunk) => { errOutput += chunk.toString(); });
-    ytdlp.on("close", (code) => {
-      clearTimeout(timeout);
-      const url = output.trim().split("\n")[0];
-      if (code === 0 && url.startsWith("http")) {
-        resolve(url);
-      } else {
-        reject(new Error(`yt-dlp failed (${code}): ${errOutput.slice(0, 200)}`));
-      }
-    });
-    ytdlp.on("error", (err) => {
-      clearTimeout(timeout);
-      reject(new Error(`yt-dlp spawn error: ${err.message}`));
-    });
-  });
+async function resolveAudioUrl(videoId: string): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const output = await ytDlp.execPromise([
+      `https://www.youtube.com/watch?v=${videoId}`,
+      "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio",
+      "--get-url",
+      "--no-playlist",
+      "--quiet",
+      "--extractor-args", "youtube:player_client=ios",
+      ...cookieArgs(),
+    ], {}, controller.signal);
+    clearTimeout(timer);
+    const url = output.trim().split("\n")[0];
+    if (!url.startsWith("http")) throw new Error(`yt-dlp returned invalid URL`);
+    return url;
+  } catch (e: any) {
+    clearTimeout(timer);
+    console.error("[yt-dlp] resolveAudioUrl error:", e.message);
+    throw new Error(`yt-dlp failed: ${e.message}`);
+  }
 }
 
 // Track in-flight resolutions so concurrent requests for the same video
@@ -213,56 +214,38 @@ youtubeRouter.get("/download/:videoId", async (c) => {
   const tmpBase = `/tmp/yt_${videoId}_${Date.now()}`;
   const tmpTemplate = `${tmpBase}.%(ext)s`;
 
-  const result = await new Promise<{ ok: true; path: string } | { ok: false; reason: string }>((resolve) => {
-    const ytdlp = spawn(YTDLP, [
-      `https://www.youtube.com/watch?v=${videoId}`,
-      "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio",
-      "--no-playlist",
-      "-o", tmpTemplate,
-      "--no-warnings",
-      "--no-part",
-      "--print", "after_move:filepath",
-    ]);
-
-    const timeout = setTimeout(() => {
-      ytdlp.kill("SIGKILL");
+  const result = await (async (): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
       Bun.spawn(["sh", "-c", `rm -f ${tmpBase}.* 2>/dev/null`]);
-      resolve({ ok: false, reason: "Download timed out" });
     }, 60_000);
-
-    let stdoutBuf = "";
-    let errBuf = "";
-    ytdlp.stdout.on("data", (chunk: Buffer) => { stdoutBuf += chunk.toString(); });
-    ytdlp.stderr.on("data", (chunk: Buffer) => { errBuf += chunk.toString(); });
-
-    ytdlp.on("close", (code: number | null) => {
-      clearTimeout(timeout);
-      const finalPath = stdoutBuf.trim().split("\n").pop()?.trim() ?? "";
-      if (code === 0 && finalPath) {
-        resolve({ ok: true, path: finalPath });
-        return;
-      }
-      if (code === 0) {
-        import("child_process").then(({ execSync }) => {
-          try {
-            const listed = execSync(`ls ${tmpBase}.* 2>/dev/null | head -1`).toString().trim();
-            if (listed) resolve({ ok: true, path: listed });
-            else resolve({ ok: false, reason: "yt-dlp produced no output file" });
-          } catch { resolve({ ok: false, reason: "yt-dlp produced no output file" }); }
-        });
-        return;
-      }
-      const errLine = errBuf.split("\n").find((l) => l.includes("ERROR:")) ?? "";
-      const reason = errLine.replace(/^ERROR:\s*\[youtube\]\s*[\w-]+:\s*/, "").trim() || `Exit ${code}`;
+    try {
+      const output = await ytDlp.execPromise([
+        `https://www.youtube.com/watch?v=${videoId}`,
+        "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio",
+        "--no-playlist",
+        "-o", tmpTemplate,
+        "--no-warnings",
+        "--no-part",
+        "--print", "after_move:filepath",
+        "--extractor-args", "youtube:player_client=ios",
+        ...cookieArgs(),
+      ], {}, controller.signal);
+      clearTimeout(timer);
+      const finalPath = output.trim().split("\n").pop()?.trim() ?? "";
+      if (finalPath) return { ok: true, path: finalPath };
+      return { ok: false, reason: "yt-dlp produced no output file" };
+    } catch (e: any) {
+      clearTimeout(timer);
       Bun.spawn(["sh", "-c", `rm -f ${tmpBase}.* 2>/dev/null`]);
-      resolve({ ok: false, reason });
-    });
-    ytdlp.on("error", (e: Error) => {
-      clearTimeout(timeout);
-      Bun.spawn(["sh", "-c", `rm -f ${tmpBase}.* 2>/dev/null`]);
-      resolve({ ok: false, reason: e.message });
-    });
-  });
+      const msg: string = e.message ?? "";
+      if (msg.includes("aborted")) return { ok: false, reason: "Download timed out" };
+      const errLine = msg.split("\n").find((l: string) => l.includes("ERROR:")) ?? "";
+      const reason = errLine.replace(/^ERROR:\s*\[youtube\]\s*[\w-]+:\s*/, "").trim() || msg.slice(0, 200);
+      return { ok: false, reason };
+    }
+  })();
 
   if (!result.ok) {
     console.error(`[YouTube] download failed for ${videoId}: ${result.reason}`);
@@ -362,41 +345,40 @@ youtubeRouter.get("/search", async (c) => {
   }
 });
 
-function searchYouTubeYtDlp(query: string, maxResults: number): Promise<Array<{
+async function searchYouTubeYtDlp(query: string, maxResults: number): Promise<Array<{
   videoId: string; title: string; channelName: string; thumbnailUrl: string; publishedAt: string; searchQuery: string;
 }>> {
-  return new Promise((resolve, reject) => {
-    const fetchCount = Math.min(maxResults * 3, 50);
-    const ytdlp = spawn(YTDLP, [
+  const fetchCount = Math.min(maxResults * 3, 50);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  let output: string;
+  try {
+    output = await ytDlp.execPromise([
       `ytsearch${fetchCount}:${query}`,
       "--dump-json", "--flat-playlist", "--quiet", "--no-warnings",
-    ]);
-    const timeout = setTimeout(() => { ytdlp.kill("SIGKILL"); reject(new Error("yt-dlp timeout")); }, 20_000);
-    let output = "";
-    ytdlp.stdout.on("data", (chunk: Buffer) => { output += chunk.toString(); });
-    ytdlp.on("close", () => {
-      clearTimeout(timeout);
-      const tracks = output.trim().split("\n").filter(l => l.trim()).flatMap(line => {
-        try {
-          const j = JSON.parse(line);
-          const videoId: string = j.id ?? "";
-          if (!videoId) return [];
-          const duration: number = j.duration ?? 0;
-          if (duration > 480) return [];
-          return [{
-            videoId,
-            title: j.title ?? "",
-            channelName: j.uploader ?? j.channel ?? "",
-            thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-            publishedAt: "",
-            searchQuery: query,
-          }];
-        } catch { return []; }
-      }).slice(0, maxResults);
-      resolve(tracks);
-    });
-    ytdlp.on("error", reject);
-  });
+    ], {}, controller.signal);
+    clearTimeout(timer);
+  } catch (e: any) {
+    clearTimeout(timer);
+    throw new Error(`yt-dlp search failed: ${e.message}`);
+  }
+  return output.trim().split("\n").filter(l => l.trim()).flatMap(line => {
+    try {
+      const j = JSON.parse(line);
+      const videoId: string = j.id ?? "";
+      if (!videoId) return [];
+      const duration: number = j.duration ?? 0;
+      if (duration > 480) return [];
+      return [{
+        videoId,
+        title: j.title ?? "",
+        channelName: j.uploader ?? j.channel ?? "",
+        thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        publishedAt: "",
+        searchQuery: query,
+      }];
+    } catch { return []; }
+  }).slice(0, maxResults);
 }
 
 /**
@@ -416,37 +398,25 @@ youtubeRouter.get("/info/:videoId", async (c) => {
   }
 });
 
-function getVideoInfo(videoId: string): Promise<{ title: string; channel: string; thumbnail: string; duration: number }> {
-  return new Promise((resolve, reject) => {
-    const ytdlp = spawn(YTDLP, [
-      `https://www.youtube.com/watch?v=${videoId}`,
-      "--print", "%(title)s",
-      "--print", "%(uploader)s",
-      "--print", "%(thumbnail)s",
-      "--print", "%(duration)s",
-      "--no-playlist",
-      "--quiet",
-      "--no-warnings",
-    ]);
-    let out = "";
-    let err = "";
-    ytdlp.stdout.on("data", (d) => { out += d.toString(); });
-    ytdlp.stderr.on("data", (d) => { err += d.toString(); });
-    ytdlp.on("close", (code) => {
-      const lines = out.trim().split("\n");
-      if (code === 0 && lines.length >= 3) {
-        resolve({
-          title: lines[0] ?? "Unknown Title",
-          channel: lines[1] ?? "Unknown Artist",
-          thumbnail: lines[2] ?? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-          duration: parseInt(lines[3] ?? "0") || 0,
-        });
-      } else {
-        reject(new Error(`yt-dlp info failed (${code}): ${err.slice(0, 200)}`));
-      }
-    });
-    ytdlp.on("error", reject);
-  });
+async function getVideoInfo(videoId: string): Promise<{ title: string; channel: string; thumbnail: string; duration: number }> {
+  const output = await ytDlp.execPromise([
+    `https://www.youtube.com/watch?v=${videoId}`,
+    "--print", "%(title)s",
+    "--print", "%(uploader)s",
+    "--print", "%(thumbnail)s",
+    "--print", "%(duration)s",
+    "--no-playlist",
+    "--quiet",
+    "--no-warnings",
+  ]);
+  const lines = output.trim().split("\n");
+  if (lines.length < 3) throw new Error(`yt-dlp info returned insufficient output`);
+  return {
+    title: lines[0] ?? "Unknown Title",
+    channel: lines[1] ?? "Unknown Artist",
+    thumbnail: lines[2] ?? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+    duration: parseInt(lines[3] ?? "0") || 0,
+  };
 }
 
 /**
@@ -466,61 +436,49 @@ youtubeRouter.get("/playlist-tracks", async (c) => {
   }
 });
 
-function getPlaylistTracks(listId: string): Promise<Array<{ videoId: string; title: string; channel: string; thumbnail: string; duration: number }>> {
-  return new Promise((resolve, reject) => {
-    const ytdlp = spawn(YTDLP, [
+async function getPlaylistTracks(listId: string): Promise<Array<{ videoId: string; title: string; channel: string; thumbnail: string; duration: number }>> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60_000);
+  let output: string;
+  try {
+    output = await ytDlp.execPromise([
       `https://music.youtube.com/playlist?list=${listId}`,
       "--flat-playlist",
       "--dump-json",
       "--no-warnings",
       "--quiet",
-    ]);
-
-    const timeout = setTimeout(() => {
-      ytdlp.kill("SIGKILL");
-      reject(new Error("yt-dlp timed out fetching playlist"));
-    }, 60_000);
-
-    let output = "";
-    let errOutput = "";
-    ytdlp.stdout.on("data", (chunk: Buffer) => { output += chunk.toString(); });
-    ytdlp.stderr.on("data", (chunk: Buffer) => { errOutput += chunk.toString(); });
-    ytdlp.on("close", (code: number | null) => {
-      clearTimeout(timeout);
-      if (code !== 0) {
-        reject(new Error(`yt-dlp failed (${code}): ${errOutput.slice(0, 300)}`));
-        return;
+    ], {}, controller.signal);
+    clearTimeout(timer);
+  } catch (e: any) {
+    clearTimeout(timer);
+    throw new Error(`yt-dlp playlist failed: ${e.message}`);
+  }
+  return output
+    .trim()
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => {
+      try {
+        const j = JSON.parse(line);
+        const id: string = j.id ?? "";
+        if (!id) return null;
+        const thumbnails: Array<{ url: string }> = j.thumbnails ?? [];
+        const thumb =
+          thumbnails.length > 0
+            ? thumbnails[thumbnails.length - 1].url
+            : `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
+        return {
+          videoId: id,
+          title: (j.title as string) ?? "Unknown",
+          channel: (j.channel ?? j.uploader ?? "Unknown") as string,
+          thumbnail: thumb,
+          duration: (j.duration as number) ?? 0,
+        };
+      } catch {
+        return null;
       }
-      const tracks = output
-        .trim()
-        .split("\n")
-        .filter((line) => line.trim())
-        .map((line) => {
-          try {
-            const j = JSON.parse(line);
-            const id: string = j.id ?? "";
-            if (!id) return null;
-            const thumbnails: Array<{ url: string }> = j.thumbnails ?? [];
-            const thumb =
-              thumbnails.length > 0
-                ? thumbnails[thumbnails.length - 1].url
-                : `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
-            return {
-              videoId: id,
-              title: (j.title as string) ?? "Unknown",
-              channel: (j.channel ?? j.uploader ?? "Unknown") as string,
-              thumbnail: thumb,
-              duration: (j.duration as number) ?? 0,
-            };
-          } catch {
-            return null;
-          }
-        })
-        .filter((t): t is NonNullable<typeof t> => t !== null);
-      resolve(tracks);
-    });
-    ytdlp.on("error", (e: Error) => { clearTimeout(timeout); reject(e); });
-  });
+    })
+    .filter((t): t is NonNullable<typeof t> => t !== null);
 }
 
 youtubeRouter.get("/new-releases", async (c) => {

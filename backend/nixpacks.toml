@@ -1,8 +1,11 @@
 [phases.setup]
-nixPkgs = ["python3", "ffmpeg", "yt-dlp"]
+aptPkgs = ["python3", "python3-pip", "ffmpeg"]
 
 [phases.install]
-cmds = ["bun install"]
+cmds = ["pip3 install yt-dlp", "bun install"]
+
+[phases.build]
+cmds = ["yt-dlp --version"]
 
 [start]
 cmd = "bun run start"

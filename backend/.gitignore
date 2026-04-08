@@ -41,4 +41,4 @@ prisma/dev.db-wal
 .DS_Store
 
 # Prisma generated files (bunx prisma generate)
-/generated/prisma
+/generated/prismadev.db

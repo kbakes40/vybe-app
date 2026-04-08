@@ -2,10 +2,9 @@ import { Hono } from "hono";
 import { stream } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
-import { spawn } from "child_process";
+import YTDlpWrap from "yt-dlp-wrap";
 
-const YTDLP = "/opt/homebrew/bin/yt-dlp";
-const FFMPEG = "/opt/homebrew/bin/ffmpeg";
+const ytDlp = new YTDlpWrap();
 const SC_URL_RE = /^https:\/\/(soundcloud\.com|on\.soundcloud\.com)\/.+/;
 
 // SoundCloud oEmbed response type
@@ -1127,7 +1126,7 @@ soundcloudRouter.get("/search", async (c) => {
   }
 });
 
-function searchSoundCloud(query: string, maxResults: number): Promise<Array<{
+async function searchSoundCloud(query: string, maxResults: number): Promise<Array<{
   trackId: string;
   title: string;
   artist: string;
@@ -1135,60 +1134,53 @@ function searchSoundCloud(query: string, maxResults: number): Promise<Array<{
   duration: number;
   soundcloudUrl: string;
 }>> {
-  return new Promise((resolve, reject) => {
-    const ytdlp = spawn(YTDLP, [
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 45_000);
+  let output: string;
+  try {
+    output = await ytDlp.execPromise([
       `scsearch${maxResults}:${query}`,
       "--dump-json",
       "--flat-playlist",
       "--quiet",
       "--no-warnings",
-    ]);
-
-    const timeout = setTimeout(() => {
-      ytdlp.kill("SIGKILL");
-      reject(new Error("yt-dlp search timed out"));
-    }, 45_000);
-
-    let output = "";
-    ytdlp.stdout.on("data", (chunk: Buffer) => { output += chunk.toString(); });
-    ytdlp.on("close", (code: number | null) => {
-      clearTimeout(timeout);
-      // yt-dlp may exit non-zero even when some results were returned
-      const tracks = output
-        .trim()
-        .split("\n")
-        .filter((line) => line.trim())
-        .map((line) => {
-          try {
-            const j = JSON.parse(line);
-            const id: string = j.id ?? "";
-            if (!id) return null;
-            const thumbs: Array<{ url: string }> = j.thumbnails ?? [];
-            const artwork = thumbs.length > 0
-              ? thumbs[thumbs.length - 1].url
-              : "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop";
-            return {
-              trackId: id,
-              title: (j.title as string) ?? "Unknown",
-              artist: (j.uploader ?? j.channel ?? "Unknown") as string,
-              artwork,
-              duration: (j.duration as number) ?? 0,
-              soundcloudUrl: (j.webpage_url ?? j.url ?? `https://soundcloud.com/${id}`) as string,
-            };
-          } catch {
-            return null;
-          }
-        })
-        .filter((t): t is NonNullable<typeof t> => t !== null);
-
-      if (tracks.length > 0) {
-        resolve(tracks);
-      } else {
-        reject(new Error(`yt-dlp returned no results (code ${code})`));
+    ], {}, controller.signal);
+    clearTimeout(timer);
+  } catch (e: any) {
+    clearTimeout(timer);
+    // yt-dlp may exit non-zero even when some results were returned; use partial output if available
+    output = e.stderr ?? "";
+    if (!output) throw new Error(`yt-dlp search failed: ${e.message}`);
+  }
+  const tracks = output
+    .trim()
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => {
+      try {
+        const j = JSON.parse(line);
+        const id: string = j.id ?? "";
+        if (!id) return null;
+        const thumbs: Array<{ url: string }> = j.thumbnails ?? [];
+        const artwork = thumbs.length > 0
+          ? thumbs[thumbs.length - 1].url
+          : "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop";
+        return {
+          trackId: id,
+          title: (j.title as string) ?? "Unknown",
+          artist: (j.uploader ?? j.channel ?? "Unknown") as string,
+          artwork,
+          duration: (j.duration as number) ?? 0,
+          soundcloudUrl: (j.webpage_url ?? j.url ?? `https://soundcloud.com/${id}`) as string,
+        };
+      } catch {
+        return null;
       }
-    });
-    ytdlp.on("error", (e: Error) => { clearTimeout(timeout); reject(e); });
-  });
+    })
+    .filter((t): t is NonNullable<typeof t> => t !== null);
+
+  if (tracks.length === 0) throw new Error(`yt-dlp returned no results`);
+  return tracks;
 }
 
 /**
@@ -1225,51 +1217,28 @@ soundcloudRouter.get("/audio", async (c) => {
   let actualPath = "";
 
   try {
-    actualPath = await new Promise<string>((resolve, reject) => {
-      const ytdlp = spawn(YTDLP, [
-        url,
-        "-f", formatArg,
-        "--no-playlist",
-        "-o", tmpTemplate,
-        "--no-warnings",
-        "--no-part",
-        // Print the final filename so we know which file was written
-        "--print", "after_move:filepath",
-      ]);
-
-      // Kill if yt-dlp hangs for more than 120 seconds
-      const timeout = setTimeout(() => {
-        ytdlp.kill("SIGKILL");
-        reject(new Error("yt-dlp timed out after 120s"));
-      }, 120_000);
-
-      let stdoutBuf = "";
-      let errOutput = "";
-      ytdlp.stdout.on("data", (d: Buffer) => { stdoutBuf += d.toString(); });
-      ytdlp.stderr.on("data", (d: Buffer) => { errOutput += d.toString(); });
-
-      ytdlp.on("close", (code: number | null) => {
-        clearTimeout(timeout);
-        const finalPath = stdoutBuf.trim().split("\n").pop()?.trim() ?? "";
-        if (code === 0 && finalPath) {
-          resolve(finalPath);
-        } else if (code === 0) {
-          // yt-dlp exited 0 but didn't print a filepath — check if any file was created
-          // (some yt-dlp versions don't support --print after_move:filepath)
-          const { execSync } = require("child_process") as typeof import("child_process");
-          try {
-            const listed = execSync(`ls ${tmpBase}.* 2>/dev/null | head -1`).toString().trim();
-            if (listed) resolve(listed);
-            else reject(new Error("yt-dlp exited 0 but produced no file"));
-          } catch {
-            reject(new Error("yt-dlp exited 0 but produced no file"));
-          }
-        } else {
-          reject(new Error(`yt-dlp failed (${code}): ${errOutput.slice(0, 300)}`));
-        }
-      });
-      ytdlp.on("error", (e: Error) => { clearTimeout(timeout); reject(e); });
-    });
+    actualPath = await (async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 120_000);
+      try {
+        const output = await ytDlp.execPromise([
+          url,
+          "-f", formatArg,
+          "--no-playlist",
+          "-o", tmpTemplate,
+          "--no-warnings",
+          "--no-part",
+          "--print", "after_move:filepath",
+        ], {}, controller.signal);
+        clearTimeout(timer);
+        const finalPath = output.trim().split("\n").pop()?.trim() ?? "";
+        if (finalPath) return finalPath;
+        throw new Error("yt-dlp produced no output file");
+      } catch (e: any) {
+        clearTimeout(timer);
+        throw new Error(e.message?.includes("aborted") ? "yt-dlp timed out after 120s" : e.message);
+      }
+    })();
 
     const file = Bun.file(actualPath);
     const size = file.size;
@@ -1329,32 +1298,28 @@ soundcloudRouter.get("/download", async (c) => {
   type DlResult = { ok: true; path: string; ext: string } | { ok: false; reason: string };
 
   async function runYtdlp(extraArgs: string[] = []): Promise<DlResult> {
-    return new Promise((resolve) => {
-      const args = [
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 300_000);
+    try {
+      await ytDlp.execPromise([
         url,
         "-f", "bestaudio[protocol=https][ext=mp3]/bestaudio[protocol=http][ext=mp3]/bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio",
         "-o", `${safeBase}.%(ext)s`,
         "--no-playlist",
         "--quiet",
         ...extraArgs,
-      ];
-      const proc = spawn(YTDLP, args);
-      const timeout = setTimeout(() => { proc.kill("SIGKILL"); resolve({ ok: false, reason: "Download timed out" }); }, 300_000);
-      let errOut = "";
-      proc.stderr.on("data", (d: Buffer) => { errOut += d.toString(); });
-      proc.on("close", async (code) => {
-        clearTimeout(timeout);
-        if (code !== 0) { resolve({ ok: false, reason: errOut.slice(0, 200) }); return; }
-        // Find the output file
-        for (const ext of ["mp3", "m4a", "opus", "ogg", "webm"]) {
-          const candidate = `${safeBase}.${ext}`;
-          const info = Bun.file(candidate);
-          if (await info.exists()) { resolve({ ok: true, path: candidate, ext }); return; }
-        }
-        resolve({ ok: false, reason: "Output file not found after download" });
-      });
-      proc.on("error", (e: Error) => { clearTimeout(timeout); resolve({ ok: false, reason: e.message }); });
-    });
+      ], {}, controller.signal);
+      clearTimeout(timer);
+    } catch (e: any) {
+      clearTimeout(timer);
+      if (e.message?.includes("aborted")) return { ok: false, reason: "Download timed out" };
+      return { ok: false, reason: (e.message ?? "").slice(0, 200) };
+    }
+    for (const ext of ["mp3", "m4a", "opus", "ogg", "webm"]) {
+      const candidate = `${safeBase}.${ext}`;
+      if (await Bun.file(candidate).exists()) return { ok: true, path: candidate, ext };
+    }
+    return { ok: false, reason: "Output file not found after download" };
   }
 
   let result = await runYtdlp();

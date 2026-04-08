@@ -88,7 +88,7 @@
         "expo-sms": "~13.1.4",
         "expo-speech": "~13.1.6",
         "expo-splash-screen": "~0.30.10",
-        "expo-sqlite": "~14.0.0",
+        "expo-sqlite": "14.0.6",
         "expo-status-bar": "~2.2.3",
         "expo-symbols": "~0.4.4",
         "expo-system-ui": "~5.0.7",
