@@ -144,7 +144,7 @@ export default function SignInScreen() {
     setIsLoading(true);
     browserOpenRef.current = true;
     try {
-      await authClient.signIn.social({ provider: 'google', callbackURL: '/' });
+      await authClient.signIn.oauth2({ providerId: 'google', callbackURL: '/' });
       browserOpenRef.current = false;
       const session = await authClient.getSession();
       if (session?.data?.session) {
