@@ -45,6 +45,7 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
     ], {}, controller.signal);
     clearTimeout(timer);
     const url = output.trim().split("\n")[0];
+    console.log('[yt-dlp output]', url);
     if (!url.startsWith("http")) throw new Error(`yt-dlp returned invalid URL`);
     return url;
   } catch (e: any) {
