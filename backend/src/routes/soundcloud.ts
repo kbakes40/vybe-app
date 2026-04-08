@@ -3,8 +3,11 @@ import { stream } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import YTDlpWrap from "yt-dlp-wrap";
+import path from "path";
+import os from "os";
 
-const ytDlp = new YTDlpWrap();
+const YTDLP_BINARY_PATH = path.join(os.tmpdir(), "yt-dlp");
+const ytDlp = new YTDlpWrap(YTDLP_BINARY_PATH);
 const SC_URL_RE = /^https:\/\/(soundcloud\.com|on\.soundcloud\.com)\/.+/;
 
 // SoundCloud oEmbed response type
@@ -1148,9 +1151,7 @@ async function searchSoundCloud(query: string, maxResults: number): Promise<Arra
     clearTimeout(timer);
   } catch (e: any) {
     clearTimeout(timer);
-    // yt-dlp may exit non-zero even when some results were returned; use partial output if available
-    output = e.stderr ?? "";
-    if (!output) throw new Error(`yt-dlp search failed: ${e.message}`);
+    throw new Error(`yt-dlp search failed: ${e.message}`);
   }
   const tracks = output
     .trim()
