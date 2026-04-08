@@ -5,7 +5,21 @@ import { getQuotaStats, getSearchCacheSize, purgeExpiredSearchCache, fetchNewRel
 const youtubeRouter = new Hono();
 
 const VIDEO_ID_RE = /^[a-zA-Z0-9_-]{6,32}$/;
-const YTDLP = "/opt/homebrew/bin/yt-dlp";
+const YTDLP = process.env.YTDLP_PATH || (process.platform === 'darwin' ? '/opt/homebrew/bin/yt-dlp' : '/usr/local/bin/yt-dlp');
+
+// Check if yt-dlp is available at startup
+let ytdlpAvailable = false;
+try {
+  const { existsSync } = require('fs');
+  ytdlpAvailable = existsSync(YTDLP);
+  if (!ytdlpAvailable) {
+    console.warn(`[YouTube] yt-dlp not found at ${YTDLP} - audio streaming will not work`);
+  } else {
+    console.log(`[YouTube] yt-dlp found at ${YTDLP}`);
+  }
+} catch {
+  console.warn('[YouTube] Could not check yt-dlp availability');
+}
 
 // Cache resolved CDN URLs so repeated range requests don't re-run yt-dlp
 // YouTube CDN URLs expire after ~6 hours, so cache for 4 hours to be safe
@@ -29,13 +43,24 @@ function setCachedUrl(videoId: string, url: string): void {
  */
 function resolveAudioUrl(videoId: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const ytdlp = spawn(YTDLP, [
-      `https://www.youtube.com/watch?v=${videoId}`,
-      "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio",
-      "--get-url",
-      "--no-playlist",
-      "--quiet",
-    ]);
+    if (!ytdlpAvailable) {
+      reject(new Error('yt-dlp is not available on this server'));
+      return;
+    }
+
+    let ytdlp: ReturnType<typeof spawn>;
+    try {
+      ytdlp = spawn(YTDLP, [
+        `https://www.youtube.com/watch?v=${videoId}`,
+        "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio",
+        "--get-url",
+        "--no-playlist",
+        "--quiet",
+      ]);
+    } catch (err: any) {
+      reject(new Error(`Failed to spawn yt-dlp: ${err.message}`));
+      return;
+    }
 
     const timeout = setTimeout(() => {
       ytdlp.kill("SIGKILL");
@@ -55,7 +80,10 @@ function resolveAudioUrl(videoId: string): Promise<string> {
         reject(new Error(`yt-dlp failed (${code}): ${errOutput.slice(0, 200)}`));
       }
     });
-    ytdlp.on("error", reject);
+    ytdlp.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(new Error(`yt-dlp spawn error: ${err.message}`));
+    });
   });
 }
 
