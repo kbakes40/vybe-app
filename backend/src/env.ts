@@ -12,6 +12,8 @@ const envSchema = z.object({
 
   // Database
   DATABASE_URL: z.string().default("file:./dev.db"),
+  TURSO_URL: z.string().optional(),
+  TURSO_AUTH_TOKEN: z.string().optional(),
 
   // Auth
   BETTER_AUTH_SECRET: z.string().min(1, "BETTER_AUTH_SECRET is required"),

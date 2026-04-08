@@ -419,3 +419,29 @@ model HiddenDiscoverItem {
   @@unique([userId, discoverItemId])
   @@index([userId])
 }
+
+// ============================================
+// ADMIN MODELS
+// ============================================
+
+// Ads for free tier users
+model Ad {
+  id            String    @id @default(cuid())
+  name          String
+  type          String    // 'audio' | 'banner' | 'interstitial'
+  mediaUrl      String    // URL to ad media
+  clickUrl      String?   // Redirect URL when clicked
+  duration      Int       @default(30) // Duration in seconds (for audio ads)
+  active        Boolean   @default(true)
+  priority      Int       @default(0) // Higher = shown more often
+
+  // Targeting
+  targetTier    String    @default("free") // Which subscription tier sees this
+
+  // Stats
+  impressions   Int       @default(0)
+  clicks        Int       @default(0)
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
