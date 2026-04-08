@@ -80,8 +80,7 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
     "--get-url",
     "--no-playlist",
     "--quiet",
-    "--extractor-args", "youtube:player_client=ios",
-    "--js-runtimes", "node",
+    "--extractor-args", "youtube:player_client=web",
     ...cookieArgs(),
   ];
   console.log("[yt-dlp] running:", YTDLP_BINARY_PATH, args.join(" "));
@@ -422,8 +421,7 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
     "--no-playlist",
     "--quiet",
     "--no-warnings",
-    "--extractor-args", "youtube:player_client=ios",
-    "--js-runtimes", "node",
+    "--extractor-args", "youtube:player_client=web",
     ...cookieArgs(),
   ]);
   const lines = output.trim().split("\n");
