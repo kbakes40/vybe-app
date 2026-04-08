@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, ScrollView, Pressable, Modal, Dimensions, TextInput, KeyboardAvoidingView, Platform, Keyboard } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, ScrollView, Pressable, Modal, TextInput, KeyboardAvoidingView, Platform, Keyboard } from 'react-native';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, { SharedValue, useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,11 +18,8 @@ import {
   User,
   Disc,
   Download,
-  Bookmark,
-  Cloud,
   Upload,
   FileAudio,
-  Sparkles,
   X,
   ListMusic,
   Trash2,
@@ -30,12 +27,9 @@ import {
 import { playlists, artists, getLikedTracks, tracks } from '@/data/mockData';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useDownloadsStore, formatFileSize } from '@/stores/downloadsStore';
-import { useSoundCloudPreloadStore } from '@/stores/soundcloudPreloadStore';
 import { useUserPlaylistStore } from '@/stores/userPlaylistStore';
 import { Track } from '@/types/music';
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
-const ITEM_WIDTH = (SCREEN_WIDTH - 32 - 36) / 4;
 
 // Module-level cache so photos survive re-renders
 const artistImgCache = new Map<string, string>();
@@ -64,100 +58,34 @@ function useArtistImage(artistName: string, fallback: string): string {
   return img;
 }
 
-function ArtistCard({ artist, onPress }: { artist: { id: string; name: string; image: string }; onPress: () => void }) {
+function ArtistListRow({ artist, onPress }: { artist: { id: string; name: string; image: string }; onPress: () => void }) {
   const photo = useArtistImage(artist.name, artist.image);
   return (
-    <Pressable onPress={onPress} style={{ width: ITEM_WIDTH, alignItems: 'center', marginBottom: 20 }}>
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        backgroundColor: pressed ? 'rgba(255,255,255,0.04)' : 'transparent',
+      })}
+    >
       <Image
         source={{ uri: photo }}
-        style={{ width: ITEM_WIDTH, height: ITEM_WIDTH, borderRadius: ITEM_WIDTH / 2 }}
+        style={{ width: 64, height: 64, borderRadius: 32 }}
         contentFit="cover"
       />
-      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', marginTop: 6, textAlign: 'center' }} numberOfLines={1}>{artist.name}</Text>
-      <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>Artist</Text>
+      <View style={{ flex: 1, marginLeft: 16 }}>
+        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }} numberOfLines={1}>{artist.name}</Text>
+        <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 2 }}>Artist</Text>
+      </View>
     </Pressable>
   );
 }
 
-type FilterType = 'playlists' | 'artists' | 'albums' | 'downloaded' | 'saved_external' | 'vybe_originals';
+type FilterType = 'playlists' | 'artists' | 'albums' | 'downloaded' | 'vybe_originals';
 
-// YouTube icon component
-function YouTubeIcon({ size = 14 }: { size?: number }) {
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        backgroundColor: '#FF0000',
-        borderRadius: 3,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <View
-        style={{
-          width: 0,
-          height: 0,
-          borderLeftWidth: size * 0.35,
-          borderTopWidth: size * 0.2,
-          borderBottomWidth: size * 0.2,
-          borderLeftColor: '#fff',
-          borderTopColor: 'transparent',
-          borderBottomColor: 'transparent',
-          marginLeft: 1,
-        }}
-      />
-    </View>
-  );
-}
-
-// YouTube Music icon component
-function YouTubeMusicIcon({ size = 14 }: { size?: number }) {
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        backgroundColor: '#FF0000',
-        borderRadius: size / 2,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <View
-        style={{
-          width: 0,
-          height: 0,
-          borderLeftWidth: size * 0.3,
-          borderTopWidth: size * 0.18,
-          borderBottomWidth: size * 0.18,
-          borderLeftColor: '#fff',
-          borderTopColor: 'transparent',
-          borderBottomColor: 'transparent',
-          marginLeft: 1,
-        }}
-      />
-    </View>
-  );
-}
-
-// SoundCloud icon component
-function SoundCloudIcon({ size = 14 }: { size?: number }) {
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        backgroundColor: '#FF5500',
-        borderRadius: 3,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <Cloud size={size * 0.7} color="#fff" strokeWidth={3} />
-    </View>
-  );
-}
 
 function PlaylistDeleteAction({ progress, onPress }: { progress: SharedValue<number>; onPress: () => void }) {
   const style = useAnimatedStyle(() => ({
@@ -182,14 +110,14 @@ export default function LibraryScreen() {
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState<FilterType | null>(null);
   const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
+  const isCreatingRef = useRef(false);
   const [playlistName, setPlaylistName] = useState('');
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set());
   const [trackSearchQuery, setTrackSearchQuery] = useState('');
   const likedTracks = usePlaybackController(s => s.likedTracks);
   const playTrack = usePlaybackController(s => s.playTrack);
   const downloads = useDownloadsStore(s => s.downloads);
-  const preloadBatch = useSoundCloudPreloadStore(s => s.preloadBatch);
-  const userPlaylists = useUserPlaylistStore(s => s.playlists);
+const userPlaylists = useUserPlaylistStore(s => s.playlists);
   const createPlaylist = useUserPlaylistStore(s => s.createPlaylist);
   const deletePlaylist = useUserPlaylistStore(s => s.deletePlaylist);
 
@@ -198,36 +126,10 @@ export default function LibraryScreen() {
     { key: 'albums', label: 'Albums' },
     { key: 'artists', label: 'Artists' },
     { key: 'downloaded', label: 'Downloaded' },
-    { key: 'saved_external', label: 'Saved External' },
   ];
 
   // All liked tracks — union of static isLiked flag and dynamically liked tracks from playback controller
   const likedSongs = tracks.filter(t => likedTracks.has(t.id) || t.isLiked);
-
-  // Get external tracks that are liked (saved to library)
-  const savedExternalTracks = tracks.filter(
-    t => (t.source === 'youtube' || t.source === 'youtube_music' || t.source === 'soundcloud') && likedTracks.has(t.id)
-  );
-
-  // Preload SoundCloud tracks when saved_external filter is active
-  useEffect(() => {
-    if (activeFilter === 'saved_external') {
-      const soundcloudTracks = savedExternalTracks
-        .filter(t => t.source === 'soundcloud' && t.soundcloudUrl)
-        .map(t => ({
-          id: t.id,
-          soundcloudUrl: t.soundcloudUrl!,
-          artwork: t.artwork,
-          title: t.title,
-          artist: t.artist,
-          duration: t.duration,
-        }));
-
-      if (soundcloudTracks.length > 0) {
-        preloadBatch(soundcloudTracks);
-      }
-    }
-  }, [activeFilter, savedExternalTracks, preloadBatch]);
 
   // Use actual downloads from store
   const downloadedTracks = downloads;
@@ -253,15 +155,22 @@ export default function LibraryScreen() {
   };
 
   const handleCreatePlaylist = () => {
+    if (isCreatingRef.current) return;
+    isCreatingRef.current = true;
     Keyboard.dismiss();
     const name = playlistName.trim() || 'My Playlist';
     const selected = allAvailableTracks.filter(t => selectedTrackIds.has(t.id));
-    createPlaylist(name, selected);
+    const newId = `pl-${Date.now()}`;
+    createPlaylist(name, selected, newId);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setShowCreatePlaylist(false);
     setPlaylistName('');
     setSelectedTrackIds(new Set());
     setTrackSearchQuery('');
+    setTimeout(() => {
+      router.push(`/(app)/my-playlist/${newId}` as never);
+      isCreatingRef.current = false;
+    }, 350);
   };
 
   const handleCloseCreatePlaylist = () => {
@@ -270,32 +179,6 @@ export default function LibraryScreen() {
     setPlaylistName('');
     setSelectedTrackIds(new Set());
     setTrackSearchQuery('');
-  };
-
-  const getSourceIcon = (source: string) => {
-    switch (source) {
-      case 'youtube':
-        return <YouTubeIcon size={14} />;
-      case 'youtube_music':
-        return <YouTubeMusicIcon size={14} />;
-      case 'soundcloud':
-        return <SoundCloudIcon size={14} />;
-      default:
-        return null;
-    }
-  };
-
-  const getSourceLabel = (source: string) => {
-    switch (source) {
-      case 'youtube':
-        return 'YouTube';
-      case 'youtube_music':
-        return 'YouTube Music';
-      case 'soundcloud':
-        return 'SoundCloud';
-      default:
-        return 'VYBE';
-    }
   };
 
   // Handle VYBE Originals navigation in useEffect to avoid setState during render
@@ -358,9 +241,9 @@ export default function LibraryScreen() {
         );
       }
       return (
-        <View style={{ paddingHorizontal: 16, flexDirection: 'row', flexWrap: 'wrap', gap: 9 }}>
+        <View>
           {libraryArtists.map(artist => (
-            <ArtistCard
+            <ArtistListRow
               key={artist.name}
               artist={{ id: artist.name, name: artist.name, image: artist.artworks[0] ?? '' }}
               onPress={() => router.push({
@@ -420,8 +303,8 @@ export default function LibraryScreen() {
                   style={{ padding: 8 }}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1DB954', alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ color: '#000', fontSize: 14, marginLeft: 2 }}>▶</Text>
+                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#4F6CF5', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ color: '#fff', fontSize: 14, marginLeft: 2 }}>▶</Text>
                   </View>
                 </Pressable>
                 <ChevronDown
@@ -529,62 +412,13 @@ export default function LibraryScreen() {
                       {track.isUserImported ? (
                         <FileAudio size={12} color="#8B5CF6" />
                       ) : (
-                        <Download size={12} color="#1DB954" />
+                        <Download size={12} color="#4F6CF5" />
                       )}
                       <Text className="text-white/60 text-sm ml-1">{track.artist}</Text>
                       <Text className="text-white/30 mx-1">•</Text>
                       <Text className="text-white/40 text-xs">{formatFileSize(track.fileSize)}</Text>
                     </View>
                   </View>
-                </Pressable>
-              ))}
-            </>
-          )}
-        </View>
-      );
-    }
-
-    if (activeFilter === 'saved_external') {
-      return (
-        <View className="px-5">
-          {savedExternalTracks.length === 0 ? (
-            <View className="items-center justify-center py-20">
-              <View className="w-16 h-16 bg-[#8B5CF6]/20 rounded-full items-center justify-center mb-4">
-                <Bookmark size={32} color="#8B5CF6" />
-              </View>
-              <Text className="text-white font-semibold text-lg">No saved external tracks</Text>
-              <Text className="text-white/50 text-sm mt-2 text-center px-8">
-                Save tracks from YouTube, YouTube Music, and SoundCloud to access them here.
-              </Text>
-            </View>
-          ) : (
-            <>
-              <Text className="text-white/50 text-xs mb-4">
-                External tracks are bookmarks. Tap to open in their source app.
-              </Text>
-              {savedExternalTracks.map(track => (
-                <Pressable
-                  key={track.id}
-                  onPress={() => playTrack(track, savedExternalTracks)}
-                  className="flex-row items-center py-3"
-                >
-                  <Image
-                    source={{ uri: track.artwork }}
-                    style={{ width: 56, height: 56, borderRadius: 4 }}
-                    contentFit="cover"
-                  />
-                  <View className="flex-1 ml-4">
-                    <Text className="text-white font-medium" numberOfLines={1}>{track.title}</Text>
-                    <View className="flex-row items-center mt-0.5">
-                      {getSourceIcon(track.source || '')}
-                      <Text className="text-white/50 text-sm ml-1.5">
-                        {getSourceLabel(track.source || '')}
-                      </Text>
-                      <Text className="text-white/30 mx-1">·</Text>
-                      <Text className="text-white/50 text-sm">{track.artist}</Text>
-                    </View>
-                  </View>
-                  <ChevronRight size={20} color="rgba(255,255,255,0.4)" />
                 </Pressable>
               ))}
             </>
@@ -718,14 +552,14 @@ export default function LibraryScreen() {
               key={filter.key}
               onPress={() => setActiveFilter(activeFilter === filter.key ? null : filter.key)}
               style={{
-                backgroundColor: activeFilter === filter.key ? '#1DB954' : '#232323',
+                backgroundColor: activeFilter === filter.key ? '#4F6CF5' : '#232323',
                 paddingHorizontal: 14,
                 paddingVertical: 8,
                 borderRadius: 20,
                 marginLeft: 8,
               }}
             >
-              <Text style={{ color: activeFilter === filter.key ? '#000' : '#fff', fontSize: 13, fontWeight: '500' }}>
+              <Text style={{ color: '#fff', fontSize: 13, fontWeight: '500' }}>
                 {filter.label}
               </Text>
             </Pressable>
