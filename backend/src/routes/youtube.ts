@@ -38,6 +38,28 @@ const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), "youtube-cookies.txt");
     } else {
       console.warn("[yt-dlp] YOUTUBE_COOKIES not set — YouTube may block requests");
     }
+
+    // yt-dlp's web client needs a JS runtime to solve YouTube's n-challenge.
+    // Railway only provides 'bun', not 'node', so create a /tmp/node → bun symlink.
+    const { execSync } = require("child_process");
+    try {
+      execSync("node --version 2>/dev/null", { stdio: "ignore" });
+      console.log("[yt-dlp] node already available for JS challenge solving");
+    } catch {
+      try {
+        const bunPath = execSync("which bun 2>/dev/null", { encoding: "utf-8" }).trim();
+        if (bunPath) {
+          fs.writeFileSync("/tmp/node", `#!/bin/sh\nexec "${bunPath}" "$@"\n`);
+          fs.chmodSync("/tmp/node", 0o755);
+          if (!process.env.PATH?.startsWith("/tmp:")) {
+            process.env.PATH = `/tmp:${process.env.PATH}`;
+          }
+          console.log("[yt-dlp] created /tmp/node → bun shim for JS challenge solving");
+        }
+      } catch (shimErr: any) {
+        console.warn("[yt-dlp] could not create node shim:", shimErr.message);
+      }
+    }
   } catch (e: any) {
     console.error("[yt-dlp] startup error:", e.message);
   }
@@ -81,6 +103,7 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
     "--no-playlist",
     "--quiet",
     "--extractor-args", "youtube:player_client=web",
+      "--js-runtimes", "node",
     ...cookieArgs(),
   ];
   console.log("[yt-dlp] running:", YTDLP_BINARY_PATH, args.join(" "));
@@ -422,6 +445,7 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
     "--quiet",
     "--no-warnings",
     "--extractor-args", "youtube:player_client=web",
+      "--js-runtimes", "node",
     ...cookieArgs(),
   ]);
   const lines = output.trim().split("\n");
