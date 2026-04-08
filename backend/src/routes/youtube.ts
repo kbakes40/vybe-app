@@ -10,10 +10,26 @@ const VIDEO_ID_RE = /^[a-zA-Z0-9_-]{6,32}$/;
 const YTDLP_BINARY_PATH = path.join(os.tmpdir(), "yt-dlp");
 const ytDlp = new YTDlpWrap(YTDLP_BINARY_PATH);
 
-// Download yt-dlp binary on startup
-YTDlpWrap.downloadFromGithub(YTDLP_BINARY_PATH).catch((e) => {
-  console.error("[yt-dlp] Failed to download binary:", e.message);
-});
+// Download the standalone yt-dlp binary on startup.
+// We fetch yt-dlp_linux directly so it doesn't require python3 at runtime.
+(async () => {
+  try {
+    const fs = await import("fs");
+    if (fs.existsSync(YTDLP_BINARY_PATH)) {
+      console.log("[yt-dlp] binary already present at", YTDLP_BINARY_PATH);
+      return;
+    }
+    console.log("[yt-dlp] downloading standalone binary...");
+    const url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = await res.arrayBuffer();
+    fs.writeFileSync(YTDLP_BINARY_PATH, Buffer.from(buf), { mode: 0o755 });
+    console.log("[yt-dlp] binary downloaded to", YTDLP_BINARY_PATH);
+  } catch (e: any) {
+    console.error("[yt-dlp] failed to download binary:", e.message);
+  }
+})();
 
 // Cache resolved CDN URLs so repeated range requests don't re-run yt-dlp
 // YouTube CDN URLs expire after ~6 hours, so cache for 4 hours to be safe
