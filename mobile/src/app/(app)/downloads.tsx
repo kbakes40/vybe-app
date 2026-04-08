@@ -1,30 +1,148 @@
-import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  Pressable,
-  ScrollView,
-} from 'react-native';
+import React, { useRef } from 'react';
+import { View, Text, Pressable, ScrollView, ActivityIndicator, Modal, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import ReanimatedSwipeable, { SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
+import Animated, { SharedValue, useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
-import {
-  ChevronLeft,
-  Download,
-  Play,
-  Trash2,
-  FileAudio,
-  HardDrive,
-  Music,
-  Upload,
-  MoreVertical,
-} from 'lucide-react-native';
+import { ChevronLeft, Download, Trash2, FileAudio, HardDrive, Music, Upload, Share2, Cloud, Settings } from 'lucide-react-native';
 import { useDownloadsStore, formatFileSize, DownloadedTrack } from '@/stores/downloadsStore';
+import { useStorageSettingsStore } from '@/stores/storageSettingsStore';
 import { usePlaybackController } from '@/stores/playbackController';
 import { MINI_PLAYER_HEIGHT } from './_layout';
 import { useVybePopup } from '@/components/VybePopup';
+
+// ─── TrackRow ────────────────────────────────────────────────────────────────
+
+interface TrackRowProps {
+  track: DownloadedTrack;
+  isActive: boolean;
+  onPlay: (track: DownloadedTrack) => void;
+  onDelete: (track: DownloadedTrack) => void;
+  onShare: (track: DownloadedTrack) => void;
+}
+
+function DeleteAction({
+  progress,
+  onPress,
+}: {
+  progress: SharedValue<number>;
+  onPress: () => void;
+}) {
+  const style = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 0.5, 1], [0, 0.8, 1], Extrapolation.CLAMP),
+    transform: [{ translateX: interpolate(progress.value, [0, 1], [16, 0], Extrapolation.CLAMP) }],
+  }));
+
+  return (
+    <Animated.View style={[style, { width: 80, justifyContent: 'center', alignItems: 'center' }]}>
+      <Pressable
+        onPress={onPress}
+        style={{
+          width: 68,
+          height: '100%',
+          backgroundColor: '#EF4444',
+          borderRadius: 10,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Trash2 size={22} color="#fff" />
+        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700', marginTop: 3 }}>Delete</Text>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+function TrackRow({ track, isActive, onPlay, onDelete, onShare }: TrackRowProps) {
+  const swipeRef = useRef<SwipeableMethods>(null);
+
+  const handleDelete = () => {
+    swipeRef.current?.close();
+    onDelete(track);
+  };
+
+  return (
+    <ReanimatedSwipeable
+      ref={swipeRef}
+      friction={2}
+      rightThreshold={60}
+      renderRightActions={(progress) => (
+        <DeleteAction progress={progress} onPress={handleDelete} />
+      )}
+      onSwipeableWillOpen={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
+      containerStyle={{ marginBottom: 8 }}
+    >
+      <Pressable
+        onPress={() => onPlay(track)}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: isActive ? 'rgba(139,92,246,0.15)' : '#1A1A1A',
+          borderRadius: 10,
+          padding: 12,
+        }}
+      >
+        {track.artwork ? (
+          <Image
+            source={{ uri: track.artwork }}
+            style={{ width: 50, height: 50, borderRadius: 6 }}
+            contentFit="cover"
+          />
+        ) : (
+          <View style={{ width: 50, height: 50, backgroundColor: 'rgba(139,92,246,0.2)', borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
+            <Music size={24} color="#8B5CF6" />
+          </View>
+        )}
+
+        <View style={{ flex: 1, marginLeft: 12 }}>
+          <Text style={{ color: isActive ? '#8B5CF6' : '#fff', fontWeight: '600', fontSize: 14 }} numberOfLines={1}>
+            {track.title}
+          </Text>
+          <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13, marginTop: 1 }} numberOfLines={1}>
+            {track.artist}
+          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>
+              {formatFileSize(track.fileSize)}
+            </Text>
+            <Text style={{ color: 'rgba(255,255,255,0.3)', marginHorizontal: 4 }}>•</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>
+              {track.fileFormat}
+            </Text>
+            {track.isUserImported && (
+              <>
+                <Text style={{ color: 'rgba(255,255,255,0.3)', marginHorizontal: 4 }}>•</Text>
+                <View style={{ backgroundColor: 'rgba(139,92,246,0.2)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                  <Text style={{ color: '#8B5CF6', fontSize: 10 }}>Imported</Text>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+
+        {/* Share button — blocks swipe/play propagation */}
+        <View onStartShouldSetResponder={() => true}>
+          <Pressable
+            onPress={() => onShare(track)}
+            hitSlop={8}
+            style={{ padding: 8 }}
+          >
+            <Share2 size={16} color="rgba(255,255,255,0.45)" />
+          </Pressable>
+        </View>
+
+        <Trash2 size={15} color="rgba(239,68,68,0.35)" style={{ marginLeft: 4 }} />
+      </Pressable>
+    </ReanimatedSwipeable>
+  );
+}
+
+// ─── Screen ──────────────────────────────────────────────────────────────────
 
 export default function DownloadsScreen() {
   const insets = useSafeAreaInsets();
@@ -37,28 +155,43 @@ export default function DownloadsScreen() {
   const playTrack = usePlaybackController(s => s.playTrack);
   const currentTrack = usePlaybackController(s => s.currentTrack);
 
-  const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
+  const preferICloud = useStorageSettingsStore(s => s.preferICloud);
 
-  // Check if mini player is visible
+  const [exportingAll, setExportingAll] = React.useState(false);
+  const [exportDone, setExportDone] = React.useState(0);
+  const [folderModalVisible, setFolderModalVisible] = React.useState(false);
+  const [folderName, setFolderName] = React.useState('Vybe Music');
+
   const showMiniPlayer = !!currentTrack;
-
-  // Calculate bottom padding: safe area + mini player height (if visible) + extra padding
   const bottomPadding = insets.bottom + (showMiniPlayer ? MINI_PLAYER_HEIGHT : 0) + 40;
-
   const totalStorage = getTotalStorageUsed();
   const userImported = downloads.filter(d => d.isUserImported);
-  // Non-imported downloads (FreePD or other sources with direct audio URLs)
   const otherDownloads = downloads.filter(d => !d.isUserImported);
 
-  const handlePlayTrack = (track: DownloadedTrack) => {
+  const handlePlayTrack = async (track: DownloadedTrack) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (track.localFilePath) {
+      const info = await FileSystem.getInfoAsync(track.localFilePath);
+      if (!info.exists) {
+        showVybePopup({
+          title: 'File Not Found',
+          message: 'This download is missing from your device. Remove it and download again.',
+          type: 'warning',
+          actions: [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Remove', style: 'destructive', onPress: () => removeDownload(track.id) },
+          ],
+        });
+        return;
+      }
+    }
     playTrack(track, downloads);
   };
 
   const handleDeleteTrack = (track: DownloadedTrack) => {
     showVybePopup({
       title: 'Remove Download',
-      message: `Are you sure you want to remove "${track.title}" from downloads? This will delete the file from your device.`,
+      message: `Remove "${track.title}" from downloads? This will delete the file from your device.`,
       type: 'confirm',
       actions: [
         { text: 'Cancel', style: 'cancel' },
@@ -70,16 +203,62 @@ export default function DownloadsScreen() {
             await removeDownload(track.id);
           },
         },
-      ]
+      ],
     });
+  };
+
+  const handleShareTrack = async (track: DownloadedTrack) => {
+    if (!track.localFilePath) return;
+    const info = await FileSystem.getInfoAsync(track.localFilePath);
+    if (!info.exists) {
+      showVybePopup({ title: 'File Not Found', message: 'Cannot share — file is missing from device.', type: 'warning' });
+      return;
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try {
+      await Sharing.shareAsync(track.localFilePath, {
+        mimeType: track.fileFormat === 'MP3' ? 'audio/mpeg' : 'audio/mp4',
+        dialogTitle: `Share ${track.title}`,
+        UTI: track.fileFormat === 'MP3' ? 'public.mp3' : 'public.mpeg-4-audio',
+      });
+    } catch (e) {
+      console.error('[Share]', e);
+    }
+  };
+
+  const handleExportAll = () => {
+    const exportable = downloads.filter(d => !!d.localFilePath);
+    if (exportable.length === 0) return;
+    setFolderName('Vybe Music');
+    setFolderModalVisible(true);
+  };
+
+  const startExportWithFolder = async (folder: string) => {
+    const exportable = downloads.filter(d => !!d.localFilePath);
+    setFolderModalVisible(false);
+    setExportingAll(true);
+    setExportDone(0);
+    for (const track of exportable) {
+      try {
+        const info = await FileSystem.getInfoAsync(track.localFilePath);
+        if (info.exists) {
+          await Sharing.shareAsync(track.localFilePath, {
+            mimeType: track.fileFormat === 'MP3' ? 'audio/mpeg' : 'audio/mp4',
+            dialogTitle: `Save to "${folder}" — ${track.title}`,
+            UTI: track.fileFormat === 'MP3' ? 'public.mp3' : 'public.mpeg-4-audio',
+          });
+        }
+      } catch {}
+      setExportDone(n => n + 1);
+    }
+    setExportingAll(false);
   };
 
   const handleClearAll = () => {
     if (downloads.length === 0) return;
-
     showVybePopup({
       title: 'Clear All Downloads',
-      message: 'Are you sure you want to remove all downloads? This will delete all files from your device.',
+      message: 'Remove all downloads? This will delete all files from your device.',
       type: 'warning',
       actions: [
         { text: 'Cancel', style: 'cancel' },
@@ -91,204 +270,244 @@ export default function DownloadsScreen() {
             await clearAllDownloads();
           },
         },
-      ]
+      ],
     });
   };
 
-  const renderTrackItem = (track: DownloadedTrack) => (
-    <Pressable
-      key={track.id}
-      onPress={() => handlePlayTrack(track)}
-      onLongPress={() => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        setSelectedTrackId(selectedTrackId === track.id ? null : track.id);
-      }}
-      className="flex-row items-center bg-[#1A1A1A] rounded-lg p-3 mb-2"
-    >
-      {track.artwork ? (
-        <Image
-          source={{ uri: track.artwork }}
-          style={{ width: 50, height: 50, borderRadius: 6 }}
-          contentFit="cover"
-        />
-      ) : (
-        <View className="w-[50px] h-[50px] bg-[#8B5CF6]/20 rounded-md items-center justify-center">
-          <Music size={24} color="#8B5CF6" />
-        </View>
-      )}
-      <View className="flex-1 ml-3">
-        <Text className="text-white font-medium" numberOfLines={1}>
-          {track.title}
-        </Text>
-        <Text className="text-white/60 text-sm" numberOfLines={1}>
-          {track.artist}
-        </Text>
-        <View className="flex-row items-center mt-1">
-          <Text className="text-white/40 text-xs">
-            {formatFileSize(track.fileSize)}
-          </Text>
-          <Text className="text-white/30 mx-1">•</Text>
-          <Text className="text-white/40 text-xs">
-            {track.fileFormat}
-          </Text>
-          {track.isUserImported && (
-            <>
-              <Text className="text-white/30 mx-1">•</Text>
-              <View className="bg-[#8B5CF6]/20 px-1.5 py-0.5 rounded">
-                <Text className="text-[#8B5CF6] text-[10px]">Imported</Text>
-              </View>
-            </>
-          )}
-        </View>
-      </View>
-
-      {selectedTrackId === track.id ? (
-        <Pressable
-          onPress={() => handleDeleteTrack(track)}
-          className="w-10 h-10 items-center justify-center"
-        >
-          <Trash2 size={20} color="#EF4444" />
-        </Pressable>
-      ) : (
-        <View className="w-10 h-10 items-center justify-center">
-          <Play size={20} color="#8B5CF6" fill="#8B5CF6" />
-        </View>
-      )}
-    </Pressable>
-  );
-
   return (
-    <View className="flex-1 bg-[#0A0A0A]">
-      <LinearGradient
-        colors={['#1a1a2e', '#0F0F0F', '#0A0A0A']}
-        style={{ flex: 1 }}
-      >
+    <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
+      <LinearGradient colors={['#1a1a2e', '#0F0F0F', '#0A0A0A']} style={{ flex: 1 }}>
         {/* Header */}
-        <View
-          className="flex-row items-center justify-between px-4 py-3"
-          style={{ paddingTop: insets.top + 8 }}
-        >
-          <Pressable
-            onPress={() => router.back()}
-            className="w-10 h-10 items-center justify-center -ml-2"
-          >
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: insets.top + 8, paddingBottom: 12 }}>
+          <Pressable onPress={() => router.back()} style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}>
             <ChevronLeft size={28} color="#fff" />
           </Pressable>
-          <View className="flex-1 items-center">
-            <View className="flex-row items-center">
-              <Download size={20} color="#8B5CF6" />
-              <Text className="text-white text-lg font-bold ml-2">
-                Downloads
-              </Text>
-            </View>
+          <View style={{ flex: 1, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }}>
+            <Download size={20} color="#8B5CF6" />
+            <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginLeft: 8 }}>Downloads</Text>
           </View>
-          <Pressable
-            onPress={handleClearAll}
-            className="w-10 h-10 items-center justify-center"
-            disabled={downloads.length === 0}
-          >
-            <MoreVertical size={20} color={downloads.length > 0 ? '#fff' : 'rgba(255,255,255,0.3)'} />
-          </Pressable>
+          <View style={{ width: 40 }} />
         </View>
 
-        <ScrollView
-          className="flex-1"
-          contentContainerStyle={{ padding: 20, paddingBottom: bottomPadding }}
-        >
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20, paddingBottom: bottomPadding }}>
           {/* Storage Summary */}
-          <View className="bg-[#1A1A1A] rounded-xl p-4 mb-6">
-            <View className="flex-row items-center justify-between">
-              <View className="flex-row items-center">
+          <View style={{ backgroundColor: '#1A1A1A', borderRadius: 12, padding: 16, marginBottom: 20 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <HardDrive size={20} color="#8B5CF6" />
-                <Text className="text-white font-semibold ml-2">Storage Used</Text>
+                <Text style={{ color: '#fff', fontWeight: '600', marginLeft: 8 }}>Storage Used</Text>
               </View>
-              <Text className="text-[#8B5CF6] font-bold">
-                {formatFileSize(totalStorage)}
-              </Text>
+              <Text style={{ color: '#8B5CF6', fontWeight: '700' }}>{formatFileSize(totalStorage)}</Text>
             </View>
-            <View className="flex-row items-center mt-3">
-              <Text className="text-white/50 text-sm">
-                {downloads.length} {downloads.length === 1 ? 'track' : 'tracks'} available offline
+            {/* Storage location row */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                {preferICloud
+                  ? <Cloud size={14} color="#0A84FF" />
+                  : <HardDrive size={14} color="rgba(255,255,255,0.4)" />}
+                <Text style={{ color: preferICloud ? '#0A84FF' : 'rgba(255,255,255,0.4)', fontSize: 12, marginLeft: 6 }}>
+                  {preferICloud ? 'iCloud Drive' : 'This iPhone'}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => router.push('/(app)/settings' as never)}
+                hitSlop={8}
+                style={{ flexDirection: 'row', alignItems: 'center' }}
+              >
+                <Settings size={13} color="rgba(255,255,255,0.3)" />
+                <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11, marginLeft: 4 }}>Storage Settings</Text>
+              </Pressable>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
+              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13 }}>
+                {downloads.length} {downloads.length === 1 ? 'track' : 'tracks'} offline
               </Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {downloads.length > 0 && (
+                  exportingAll ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <ActivityIndicator size="small" color="#6366F1" />
+                      <Text style={{ color: '#6366F1', fontSize: 12, fontWeight: '600' }}>{exportDone}/{downloads.filter(d => !!d.localFilePath).length}</Text>
+                    </View>
+                  ) : (
+                    <Pressable
+                      onPress={handleExportAll}
+                      style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(99,102,241,0.12)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+                    >
+                      <Share2 size={13} color="#6366F1" />
+                      <Text style={{ color: '#6366F1', fontSize: 12, fontWeight: '700', marginLeft: 5 }}>Export All</Text>
+                    </Pressable>
+                  )
+                )}
+                {downloads.length > 0 && (
+                  <Pressable
+                    onPress={handleClearAll}
+                    style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(239,68,68,0.12)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+                  >
+                    <Trash2 size={13} color="#EF4444" />
+                    <Text style={{ color: '#EF4444', fontSize: 12, fontWeight: '700', marginLeft: 5 }}>Clear All</Text>
+                  </Pressable>
+                )}
+              </View>
             </View>
           </View>
 
           {/* Import Button */}
-          <Pressable
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              router.push('/(app)/import-audio' as never);
-            }}
-            className="mb-6"
-          >
+          <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/(app)/import-audio' as never); }} style={{ marginBottom: 24 }}>
             <LinearGradient
               colors={['#8B5CF6', '#7C3AED']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                padding: 16,
-                borderRadius: 12,
-              }}
+              style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 12 }}
             >
               <Upload size={24} color="#fff" />
-              <View className="flex-1 ml-3">
-                <Text className="text-white font-bold">Import Audio</Text>
-                <Text className="text-white/70 text-sm">Add files from your device</Text>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={{ color: '#fff', fontWeight: '700' }}>Import Audio</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>Add files from iCloud Drive or your device</Text>
               </View>
             </LinearGradient>
           </Pressable>
 
           {downloads.length === 0 ? (
-            // Empty State
-            <View className="items-center py-12">
-              <View className="w-20 h-20 bg-[#1A1A1A] rounded-full items-center justify-center mb-6">
+            <View style={{ alignItems: 'center', paddingVertical: 48 }}>
+              <View style={{ width: 80, height: 80, backgroundColor: '#1A1A1A', borderRadius: 40, alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
                 <FileAudio size={40} color="rgba(255,255,255,0.3)" />
               </View>
-              <Text className="text-white text-lg font-semibold mb-2">
-                No Downloads Yet
-              </Text>
-              <Text className="text-white/50 text-center px-8">
-                Import audio files or download royalty-free tracks to listen offline.
+              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '600', marginBottom: 8 }}>No Downloads Yet</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.5)', textAlign: 'center', paddingHorizontal: 32 }}>
+                Import audio files or download tracks to listen offline.
               </Text>
             </View>
           ) : (
             <>
-              {/* User Imported Section */}
               {userImported.length > 0 && (
-                <View className="mb-6">
-                  <View className="flex-row items-center mb-3">
-                    <FileAudio size={16} color="#8B5CF6" />
-                    <Text className="text-white font-semibold ml-2">
-                      User Imported
-                    </Text>
-                    <Text className="text-white/40 text-sm ml-2">
-                      ({userImported.length})
-                    </Text>
+                <View style={{ marginBottom: 24 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                    <FileAudio size={15} color="#8B5CF6" />
+                    <Text style={{ color: '#fff', fontWeight: '600', marginLeft: 6 }}>Imported</Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, marginLeft: 6 }}>({userImported.length})</Text>
                   </View>
-                  {userImported.map(renderTrackItem)}
+                  {userImported.map(track => (
+                    <TrackRow
+                      key={track.id}
+                      track={track}
+                      isActive={currentTrack?.id === track.id}
+                      onPlay={handlePlayTrack}
+                      onDelete={handleDeleteTrack}
+                      onShare={handleShareTrack}
+                    />
+                  ))}
                 </View>
               )}
 
-              {/* Downloaded Tracks Section (FreePD, etc.) */}
               {otherDownloads.length > 0 && (
                 <View>
-                  <View className="flex-row items-center mb-3">
-                    <Download size={16} color="#4CAF50" />
-                    <Text className="text-white font-semibold ml-2">
-                      Downloaded Tracks
-                    </Text>
-                    <Text className="text-white/40 text-sm ml-2">
-                      ({otherDownloads.length})
-                    </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                    <Download size={15} color="#4CAF50" />
+                    <Text style={{ color: '#fff', fontWeight: '600', marginLeft: 6 }}>Downloaded</Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, marginLeft: 6 }}>({otherDownloads.length})</Text>
                   </View>
-                  {otherDownloads.map(renderTrackItem)}
+                  {otherDownloads.map(track => (
+                    <TrackRow
+                      key={track.id}
+                      track={track}
+                      isActive={currentTrack?.id === track.id}
+                      onPlay={handlePlayTrack}
+                      onDelete={handleDeleteTrack}
+                      onShare={handleShareTrack}
+                    />
+                  ))}
                 </View>
               )}
+
+              <Text style={{ color: 'rgba(255,255,255,0.25)', fontSize: 12, textAlign: 'center', marginTop: 24 }}>
+                Swipe left on a track to delete it
+              </Text>
             </>
           )}
         </ScrollView>
+
+        {/* iCloud Folder Picker Modal */}
+        <Modal
+          visible={folderModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setFolderModalVisible(false)}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.75)' }}
+          >
+            <View style={{ width: '88%', backgroundColor: '#1C1C1E', borderRadius: 18, overflow: 'hidden' }}>
+              {/* Header */}
+              <View style={{ padding: 20, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)', alignItems: 'center' }}>
+                <Cloud size={28} color="#0A84FF" />
+                <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700', marginTop: 10 }}>Save to iCloud Drive</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, textAlign: 'center', marginTop: 6 }}>
+                  Choose a folder name. When the share sheet opens, tap "Save to Files" and navigate to your iCloud folder.
+                </Text>
+              </View>
+
+              {/* Folder input */}
+              <View style={{ padding: 20 }}>
+                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, fontWeight: '600', letterSpacing: 0.6, textTransform: 'uppercase', marginBottom: 8 }}>
+                  Folder Name
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 4 }}>
+                  <Cloud size={16} color="#0A84FF" />
+                  <TextInput
+                    value={folderName}
+                    onChangeText={setFolderName}
+                    placeholder="Vybe Music"
+                    placeholderTextColor="rgba(255,255,255,0.25)"
+                    style={{ flex: 1, color: '#fff', fontSize: 16, paddingVertical: 10, marginLeft: 10 }}
+                    autoFocus
+                    selectTextOnFocus
+                    returnKeyType="done"
+                    onSubmitEditing={() => startExportWithFolder(folderName.trim() || 'Vybe Music')}
+                  />
+                </View>
+
+                {/* Preset folders */}
+                <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12, marginTop: 14, marginBottom: 8 }}>Quick picks</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {['Vybe Music', 'Music', 'Downloads', 'My Playlist'].map(preset => (
+                    <Pressable
+                      key={preset}
+                      onPress={() => setFolderName(preset)}
+                      style={{
+                        backgroundColor: folderName === preset ? 'rgba(10,132,255,0.2)' : 'rgba(255,255,255,0.07)',
+                        borderWidth: 1,
+                        borderColor: folderName === preset ? '#0A84FF' : 'transparent',
+                        borderRadius: 8,
+                        paddingHorizontal: 12,
+                        paddingVertical: 6,
+                      }}
+                    >
+                      <Text style={{ color: folderName === preset ? '#0A84FF' : 'rgba(255,255,255,0.6)', fontSize: 13 }}>{preset}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              {/* Actions */}
+              <View style={{ flexDirection: 'row', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)' }}>
+                <Pressable
+                  onPress={() => setFolderModalVisible(false)}
+                  style={{ flex: 1, paddingVertical: 16, alignItems: 'center', borderRightWidth: 1, borderRightColor: 'rgba(255,255,255,0.08)' }}
+                >
+                  <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 16 }}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => startExportWithFolder(folderName.trim() || 'Vybe Music')}
+                  style={{ flex: 1, paddingVertical: 16, alignItems: 'center' }}
+                >
+                  <Text style={{ color: '#0A84FF', fontSize: 16, fontWeight: '700' }}>Export</Text>
+                </Pressable>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
       </LinearGradient>
     </View>
   );

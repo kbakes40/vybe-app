@@ -21,22 +21,7 @@ import { authClient } from '@/lib/auth/auth-client';
 import { useVybePopup } from '@/components/VybePopup';
 
 // Mock accounts data
-const MOCK_ACCOUNTS = [
-  {
-    id: '1',
-    name: 'Alex',
-    email: 'alex@vybe.app',
-    image: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop',
-    isCurrent: true,
-  },
-  {
-    id: '2',
-    name: 'Work Account',
-    email: 'alex.work@company.com',
-    image: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop',
-    isCurrent: false,
-  },
-];
+const MOCK_ACCOUNTS: Array<{ id: string; name: string; email: string; image: string; isCurrent: boolean }> = [];
 
 interface AccountItemProps {
   account: typeof MOCK_ACCOUNTS[0];

@@ -507,7 +507,7 @@ export default function NowPlayingScreen() {
   const scrubCombined = Gesture.Simultaneous(scrubGesture, scrubTapGesture);
 
   const panGesture = Gesture.Pan()
-    .activeOffsetY([10, Infinity])   // only activate for downward swipes
+    .activeOffsetY([10, 100000])     // only activate for downward swipes
     .failOffsetX([-15, 15])          // fail immediately on horizontal movement
     .onUpdate((e) => {
       if (e.translationY > 0) {
@@ -778,26 +778,23 @@ export default function NowPlayingScreen() {
                     {currentTrack.artist}
                   </Text>
                 </View>
-                <Pressable
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    toggleLike(currentTrack.id);
-                  }}
-                  className="p-2"
-                >
-                  <Heart
-                    size={28}
-                    color={isLiked ? '#8B5CF6' : '#fff'}
-                    fill={isLiked ? '#8B5CF6' : 'transparent'}
-                  />
-                </Pressable>
-              </View>
-
-              {isExternalPlayback ? (
-                <View className="flex-row items-center mt-4">
-                  <DownloadButton track={currentTrack} size={32} />
+                <View className="flex-row items-center gap-2">
+                  <DownloadButton track={currentTrack} size={28} />
+                  <Pressable
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      toggleLike(currentTrack.id);
+                    }}
+                    className="p-2"
+                  >
+                    <Heart
+                      size={28}
+                      color={isLiked ? '#8B5CF6' : '#fff'}
+                      fill={isLiked ? '#8B5CF6' : 'transparent'}
+                    />
+                  </Pressable>
                 </View>
-              ) : null}
+              </View>
 
               {/* Progress Bar / Scrubber */}
               <View style={{ marginTop: 24 }}>

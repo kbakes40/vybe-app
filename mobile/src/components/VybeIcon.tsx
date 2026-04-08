@@ -6,6 +6,7 @@ import Svg, { Path, Defs, LinearGradient as SvgLinearGradient, Stop } from 'reac
 interface VybeIconProps {
   size?: number;
   variant?: 'primary' | 'blue';
+  backgroundColor?: string;
 }
 
 /**
@@ -15,7 +16,7 @@ interface VybeIconProps {
  *
  * This is the single source of truth for the VYBE logo.
  */
-export function VybeIcon({ size = 36, variant = 'primary' }: VybeIconProps) {
+export function VybeIcon({ size = 36, variant = 'primary', backgroundColor }: VybeIconProps) {
   const borderRadius = size * 0.22;
 
   // Primary: Neon wave logo on dark background
@@ -29,7 +30,7 @@ export function VybeIcon({ size = 36, variant = 'primary' }: VybeIconProps) {
           width: size,
           height: size,
           borderRadius,
-          backgroundColor: '#0D0D0D',
+          backgroundColor: backgroundColor ?? '#0D0D0D',
           alignItems: 'center',
           justifyContent: 'center',
           overflow: 'hidden',

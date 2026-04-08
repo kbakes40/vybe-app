@@ -6,10 +6,11 @@ import {
   Switch,
   Dimensions,
   ScrollView,
+  Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { Image } from 'expo-image';
+import { VybeIcon } from '@/components/VybeIcon';
 import * as Haptics from 'expo-haptics';
 import Animated, {
   useSharedValue,
@@ -85,9 +86,9 @@ function MenuItem({ icon, label, badge, badgeColor = '#666', showDot, onPress }:
 export function ProfileMenuOverlay({
   visible,
   onClose,
-  userName = 'Alex',
-  userImage = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop',
-  userEmail = 'alex@vybe.app',
+  userName = '',
+  userImage = '',
+  userEmail = '',
 }: ProfileMenuOverlayProps) {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -102,26 +103,35 @@ export function ProfileMenuOverlay({
     }, 300);
   };
 
-  if (!visible) return null;
-
   return (
-    <View className="absolute inset-0 z-50">
+    <Modal
+      visible={visible}
+      transparent
+      animationType="none"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
       {/* Backdrop */}
       <Animated.View
         entering={FadeIn.duration(200)}
         exiting={FadeOut.duration(200)}
-        className="absolute inset-0"
-        style={{ backgroundColor: 'rgba(0,0,0,0.85)' }}
+        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)' }}
       >
-        <Pressable className="flex-1" onPress={onClose} />
+        <Pressable style={{ flex: 1 }} onPress={onClose} />
       </Animated.View>
 
       {/* Menu Content */}
       <Animated.View
         entering={SlideInDown.springify().damping(20)}
         exiting={SlideOutDown.springify().damping(20)}
-        className="absolute bottom-0 left-0 right-0 bg-[#121212] rounded-t-3xl"
         style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          backgroundColor: '#121212',
+          borderTopLeftRadius: 24,
+          borderTopRightRadius: 24,
           paddingBottom: insets.bottom + 20,
           maxHeight: SCREEN_HEIGHT * 0.85,
         }}
@@ -143,11 +153,7 @@ export function ProfileMenuOverlay({
         <ScrollView showsVerticalScrollIndicator={false}>
           {/* Profile Header */}
           <View className="flex-row items-center px-5 py-4">
-            <Image
-              source={{ uri: userImage }}
-              style={{ width: 80, height: 80, borderRadius: 40 }}
-              contentFit="cover"
-            />
+            <VybeIcon size={80} backgroundColor="#2D1B69" />
             <View className="flex-1 ml-4">
               <Text className="text-white text-xl font-bold">{userName}</Text>
               <Pressable
@@ -224,6 +230,6 @@ export function ProfileMenuOverlay({
           <View className="h-6" />
         </ScrollView>
       </Animated.View>
-    </View>
+    </Modal>
   );
 }

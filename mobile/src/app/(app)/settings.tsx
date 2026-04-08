@@ -5,7 +5,10 @@ import {
   ScrollView,
   Pressable,
   Switch,
+  Linking,
 } from 'react-native';
+import Slider from '@react-native-community/slider';
+import { usePlaybackSettingsStore } from '@/stores/playbackSettingsStore';
 import { VybeTextInput } from '@/components/VybeTextInput';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -46,11 +49,14 @@ import {
   Sparkles,
   RefreshCw,
   Bug,
+  Cloud,
 } from 'lucide-react-native';
 import { authClient } from '@/lib/auth/auth-client';
+import { useStorageSettingsStore } from '@/stores/storageSettingsStore';
 import { useDiscoveryStore } from '@/stores/discoveryStore';
 import { usePlaybackDebugStore } from '@/stores/playbackDebugStore';
 import { usePlaybackController } from '@/stores/playbackController';
+import { useUserSettingsStore } from '@/stores/userSettingsStore';
 import { MINI_PLAYER_HEIGHT } from './_layout';
 import { useVybePopup } from '@/components/VybePopup';
 
@@ -167,6 +173,10 @@ export default function SettingsScreen() {
   const seedTracksCount = useDiscoveryStore(s => s.seedTracks.length);
   const discoveredTracksCount = useDiscoveryStore(s => s.discoveredTracks.length);
 
+  // Storage settings
+  const preferICloud = useStorageSettingsStore(s => s.preferICloud);
+  const setPreferICloud = useStorageSettingsStore(s => s.setPreferICloud);
+
   // Debug store
   const debugModeEnabled = usePlaybackDebugStore(s => s.debugModeEnabled);
   const setDebugModeEnabled = usePlaybackDebugStore(s => s.setDebugModeEnabled);
@@ -177,28 +187,34 @@ export default function SettingsScreen() {
   // Calculate bottom padding: safe area + mini player height (if visible) + extra padding
   const bottomPadding = insets.bottom + (showMiniPlayer ? MINI_PLAYER_HEIGHT : 0) + 40;
 
-  // Account settings state
-  const [crossfade, setCrossfade] = useState(false);
-  const [gapless, setGapless] = useState(true);
-  const [normalizeVolume, setNormalizeVolume] = useState(true);
-  const [autoplay, setAutoplay] = useState(true);
-  const [dataSaver, setDataSaver] = useState(false);
-  const [cellularStreaming, setCellularStreaming] = useState(true);
-  const [pushNotifications, setPushNotifications] = useState(true);
-  const [newMusicNotifications, setNewMusicNotifications] = useState(true);
-  const [productAnnouncements, setProductAnnouncements] = useState(false);
-  const [privateSession, setPrivateSession] = useState(false);
-  const [listeningActivity, setListeningActivity] = useState(true);
-  const [explicitContent, setExplicitContent] = useState(true);
-  const [downloadCellular, setDownloadCellular] = useState(false);
+  // Crossfade settings (persisted)
+  const crossfade = usePlaybackSettingsStore(s => s.crossfadeEnabled);
+  const setCrossfadeEnabled = usePlaybackSettingsStore(s => s.setCrossfadeEnabled);
+  const crossfadeDuration = usePlaybackSettingsStore(s => s.crossfadeDuration);
+  const setCrossfadeDuration = usePlaybackSettingsStore(s => s.setCrossfadeDuration);
 
-  const handleSignOut = async () => {
-    try {
-      await authClient.signOut();
-      router.replace('/sign-in');
-    } catch (error) {
-      console.error('Sign out error:', error);
-    }
+  // Persistent user settings
+  const s = useUserSettingsStore();
+
+  const showQualityPicker = (
+    title: string,
+    current: 'Low' | 'Normal' | 'High',
+    onSelect: (v: 'Low' | 'Normal' | 'High') => void
+  ) => {
+    showVybePopup({
+      title,
+      message: 'Choose a quality level. Higher quality uses more storage and data.',
+      type: 'confirm',
+      actions: [
+        { text: 'Low', style: current === 'Low' ? 'default' : 'cancel', onPress: () => { onSelect('Low'); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } },
+        { text: 'Normal', style: current === 'Normal' ? 'default' : 'cancel', onPress: () => { onSelect('Normal'); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } },
+        { text: 'High', style: current === 'High' ? 'default' : 'cancel', onPress: () => { onSelect('High'); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } },
+      ],
+    });
+  };
+
+  const handleSignOut = () => {
+    router.replace('/sign-in');
   };
 
   const confirmSignOut = () => {
@@ -270,7 +286,7 @@ export default function SettingsScreen() {
             title="Email"
             subtitle="Manage the email linked to your account."
             showChevron
-            onPress={() => {}}
+            onPress={() => showVybePopup({ title: 'Change Email', message: 'To update your email, sign out and sign back in with your new email address.', type: 'info' })}
           />
           <SettingsDivider />
           <SettingsItem
@@ -278,7 +294,7 @@ export default function SettingsScreen() {
             title="Password"
             subtitle="Update your password to keep your account secure."
             showChevron
-            onPress={() => {}}
+            onPress={() => showVybePopup({ title: 'Password', message: 'VYBE uses passwordless sign-in via email code. No password to manage!', type: 'info' })}
           />
           <SettingsDivider />
           <SettingsItem
@@ -286,7 +302,7 @@ export default function SettingsScreen() {
             title="Connected services"
             subtitle="Manage services you've connected to VYBE."
             showChevron
-            onPress={() => {}}
+            onPress={() => router.push('/(app)/accounts' as never)}
           />
           <SettingsDivider />
           <SettingsItem
@@ -304,9 +320,9 @@ export default function SettingsScreen() {
             icon={<Volume2 size={20} color="#fff" />}
             title="Audio quality"
             subtitle="Choose how your music sounds. Higher quality uses more data."
-            value="High"
+            value={s.audioQuality}
             showChevron
-            onPress={() => {}}
+            onPress={() => showQualityPicker('Audio Quality', s.audioQuality, s.setAudioQuality)}
           />
           <SettingsDivider />
           <SettingsItem
@@ -315,24 +331,39 @@ export default function SettingsScreen() {
             subtitle="Smoothly blend songs together."
             showSwitch
             switchValue={crossfade}
-            onSwitchChange={setCrossfade}
+            onSwitchChange={setCrossfadeEnabled}
           />
+          {crossfade && (
+            <View style={{ paddingHorizontal: 20, paddingBottom: 16, backgroundColor: 'rgba(255,255,255,0.03)' }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13 }}>Duration</Text>
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>{crossfadeDuration}s</Text>
+              </View>
+              <Slider
+                minimumValue={1}
+                maximumValue={12}
+                step={1}
+                value={crossfadeDuration}
+                onValueChange={setCrossfadeDuration}
+                minimumTrackTintColor="#8B5CF6"
+                maximumTrackTintColor="rgba(255,255,255,0.15)"
+                thumbTintColor="#fff"
+                style={{ height: 36 }}
+              />
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>1s</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>12s</Text>
+              </View>
+            </View>
+          )}
           <SettingsDivider />
           <SettingsItem
             icon={<Play size={20} color="#fff" />}
             title="Gapless playback"
             subtitle="Play albums and playlists without silence between tracks."
             showSwitch
-            switchValue={gapless}
-            onSwitchChange={setGapless}
-          />
-          <SettingsDivider />
-          <SettingsItem
-            icon={<Sliders size={20} color="#fff" />}
-            title="Equalizer"
-            subtitle="Adjust the sound to your taste."
-            showChevron
-            onPress={() => {}}
+            switchValue={s.gapless}
+            onSwitchChange={s.setGapless}
           />
           <SettingsDivider />
           <SettingsItem
@@ -340,8 +371,8 @@ export default function SettingsScreen() {
             title="Normalize volume"
             subtitle="Keep volume consistent between songs."
             showSwitch
-            switchValue={normalizeVolume}
-            onSwitchChange={setNormalizeVolume}
+            switchValue={s.normalizeVolume}
+            onSwitchChange={s.setNormalizeVolume}
           />
           <SettingsDivider />
           <SettingsItem
@@ -349,8 +380,8 @@ export default function SettingsScreen() {
             title="Autoplay"
             subtitle="Keep the music going when your queue ends."
             showSwitch
-            switchValue={autoplay}
-            onSwitchChange={setAutoplay}
+            switchValue={s.autoplay}
+            onSwitchChange={s.setAutoplay}
           />
         </SettingsSection>
 
@@ -361,17 +392,17 @@ export default function SettingsScreen() {
             title="Data saver"
             subtitle="Reduce data usage while streaming."
             showSwitch
-            switchValue={dataSaver}
-            onSwitchChange={setDataSaver}
+            switchValue={s.dataSaver}
+            onSwitchChange={s.setDataSaver}
           />
           <SettingsDivider />
           <SettingsItem
             icon={<Radio size={20} color="#fff" />}
             title="Streaming quality on cellular"
             subtitle="Lower quality uses less data."
-            value="Normal"
+            value={s.cellularStreamingQuality}
             showChevron
-            onPress={() => {}}
+            onPress={() => showQualityPicker('Cellular Streaming Quality', s.cellularStreamingQuality, s.setCellularStreamingQuality)}
           />
         </SettingsSection>
 
@@ -380,10 +411,9 @@ export default function SettingsScreen() {
           <SettingsItem
             icon={<Bell size={20} color="#fff" />}
             title="Push notifications"
-            subtitle="Allow notifications from VYBE."
-            showSwitch
-            switchValue={pushNotifications}
-            onSwitchChange={setPushNotifications}
+            subtitle="Manage notification permissions in iOS Settings."
+            showChevron
+            onPress={() => Linking.openURL('app-settings:')}
           />
           <SettingsDivider />
           <SettingsItem
@@ -391,8 +421,8 @@ export default function SettingsScreen() {
             title="New music and updates"
             subtitle="Get notified about new releases and recommendations."
             showSwitch
-            switchValue={newMusicNotifications}
-            onSwitchChange={setNewMusicNotifications}
+            switchValue={s.newMusicNotifications}
+            onSwitchChange={s.setNewMusicNotifications}
           />
           <SettingsDivider />
           <SettingsItem
@@ -400,8 +430,8 @@ export default function SettingsScreen() {
             title="Product announcements"
             subtitle="Hear about new features."
             showSwitch
-            switchValue={productAnnouncements}
-            onSwitchChange={setProductAnnouncements}
+            switchValue={s.productAnnouncements}
+            onSwitchChange={s.setProductAnnouncements}
           />
         </SettingsSection>
 
@@ -412,8 +442,8 @@ export default function SettingsScreen() {
             title="Private session"
             subtitle="Listening won't affect recommendations or social features."
             showSwitch
-            switchValue={privateSession}
-            onSwitchChange={setPrivateSession}
+            switchValue={s.privateSession}
+            onSwitchChange={s.setPrivateSession}
           />
           <SettingsDivider />
           <SettingsItem
@@ -421,24 +451,8 @@ export default function SettingsScreen() {
             title="Listening activity"
             subtitle="Share what you're listening to."
             showSwitch
-            switchValue={listeningActivity}
-            onSwitchChange={setListeningActivity}
-          />
-          <SettingsDivider />
-          <SettingsItem
-            icon={<UserX size={20} color="#fff" />}
-            title="Blocked users"
-            subtitle="Manage blocked accounts."
-            showChevron
-            onPress={() => {}}
-          />
-          <SettingsDivider />
-          <SettingsItem
-            icon={<Shield size={20} color="#fff" />}
-            title="Data and privacy"
-            subtitle="Learn how we collect and use your data."
-            showChevron
-            onPress={() => {}}
+            switchValue={s.listeningActivity}
+            onSwitchChange={s.setListeningActivity}
           />
         </SettingsSection>
 
@@ -449,8 +463,8 @@ export default function SettingsScreen() {
             title="Explicit content"
             subtitle="Allow music marked explicit."
             showSwitch
-            switchValue={explicitContent}
-            onSwitchChange={setExplicitContent}
+            switchValue={s.explicitContent}
+            onSwitchChange={s.setExplicitContent}
           />
           <SettingsDivider />
           <SettingsItem
@@ -476,9 +490,9 @@ export default function SettingsScreen() {
             icon={<Download size={20} color="#fff" />}
             title="Download audio quality"
             subtitle="Choose quality for downloaded music."
-            value="High"
+            value={s.downloadQuality}
             showChevron
-            onPress={() => {}}
+            onPress={() => showQualityPicker('Download Quality', s.downloadQuality, s.setDownloadQuality)}
           />
           <SettingsDivider />
           <SettingsItem
@@ -486,8 +500,8 @@ export default function SettingsScreen() {
             title="Download over cellular"
             subtitle="Allow downloads without Wi-Fi."
             showSwitch
-            switchValue={downloadCellular}
-            onSwitchChange={setDownloadCellular}
+            switchValue={s.downloadCellular}
+            onSwitchChange={s.setDownloadCellular}
           />
           <SettingsDivider />
           <SettingsItem
@@ -495,7 +509,7 @@ export default function SettingsScreen() {
             title="Manage downloads"
             subtitle="Remove downloaded music from this device."
             showChevron
-            onPress={() => {}}
+            onPress={() => router.push('/(app)/downloads' as never)}
           />
         </SettingsSection>
 
@@ -506,6 +520,35 @@ export default function SettingsScreen() {
 
         {/* STORAGE */}
         <SettingsSection title="Storage">
+          <SettingsItem
+            icon={<Cloud size={20} color={preferICloud ? '#0A84FF' : '#fff'} />}
+            title="Save to iCloud Drive"
+            subtitle={
+              preferICloud
+                ? 'New downloads saved to iCloud Drive and available across your devices'
+                : 'New downloads saved to this device only'
+            }
+            showSwitch
+            switchValue={preferICloud}
+            onSwitchChange={(v) => {
+              setPreferICloud(v);
+              showVybePopup({
+                title: v ? 'iCloud Drive On' : 'iCloud Drive Off',
+                message: v
+                  ? 'New downloads will be saved to iCloud Drive. Note: this requires iCloud Documents to be enabled for VYBE in iOS Settings → Apple ID → iCloud.'
+                  : 'New downloads will be saved locally on this device.',
+                type: 'info',
+              });
+            }}
+          />
+          {preferICloud && (
+            <View style={{ backgroundColor: 'rgba(10,132,255,0.08)', paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)' }}>
+              <Text style={{ color: 'rgba(10,132,255,0.9)', fontSize: 12, lineHeight: 17 }}>
+                ℹ️  Full iCloud sync requires iCloud Documents access. If files aren't syncing across devices, go to iOS Settings → [Your Name] → iCloud → Apps Using iCloud and enable VYBE. Without this entitlement, files remain on-device only.
+              </Text>
+            </View>
+          )}
+          <SettingsDivider />
           <SettingsItem
             icon={<Trash2 size={20} color="#fff" />}
             title="Clear cache"
@@ -608,21 +651,21 @@ export default function SettingsScreen() {
             icon={<FileText size={20} color="#fff" />}
             title="Terms of Service"
             showChevron
-            onPress={() => {}}
+            onPress={() => Linking.openURL('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/')}
           />
           <SettingsDivider />
           <SettingsItem
             icon={<Shield size={20} color="#fff" />}
             title="Privacy Policy"
             showChevron
-            onPress={() => {}}
+            onPress={() => Linking.openURL('https://www.termsfeed.com/live/sample-privacy-policy')}
           />
           <SettingsDivider />
           <SettingsItem
             icon={<HelpCircle size={20} color="#fff" />}
             title="Contact support"
             showChevron
-            onPress={() => {}}
+            onPress={() => Linking.openURL('mailto:support@vybe.app?subject=VYBE Support')}
           />
         </SettingsSection>
 

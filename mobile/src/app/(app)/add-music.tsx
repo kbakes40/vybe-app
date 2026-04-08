@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
@@ -24,14 +24,21 @@ const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
 
 // ─── URL Parsing ──────────────────────────────────────────────────────────────
 
-type UrlPlatform = 'youtube' | 'youtube_music' | 'soundcloud' | null;
+type UrlPlatform = 'youtube' | 'youtube_music' | 'soundcloud' | 'spotify' | 'apple_music' | null;
 
 function detectPlatform(url: string): UrlPlatform {
   if (!url) return null;
   if (url.includes('music.youtube.com')) return 'youtube_music';
   if (url.includes('youtube.com/watch') || url.includes('youtu.be/')) return 'youtube';
   if (url.includes('soundcloud.com/')) return 'soundcloud';
+  if (url.includes('open.spotify.com/')) return 'spotify';
+  if (url.includes('music.apple.com/')) return 'apple_music';
   return null;
+}
+
+function extractSpotifyPlaylistId(url: string): string | null {
+  const m = url.match(/spotify\.com\/playlist\/([a-zA-Z0-9]+)/);
+  return m ? m[1] : null;
 }
 
 function extractYouTubeVideoId(url: string): string | null {
@@ -156,13 +163,37 @@ interface PlaylistTrack {
   duration: number;
 }
 
-function PasteSection() {
-  const [url, setUrl] = useState('');
+interface StreamingResult {
+  name: string;
+  artist?: string;
+  thumbnailUrl: string;
+  tracks: { videoId: string; title: string; channelName: string; thumbnailUrl: string; durationMs?: number }[];
+}
+
+function SpotifyIcon({ size = 20 }: { size?: number }) {
+  return (
+    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: '#1DB954', alignItems: 'center', justifyContent: 'center' }}>
+      <Text style={{ color: '#000', fontSize: size * 0.55, fontWeight: '900' }}>♫</Text>
+    </View>
+  );
+}
+
+function AppleMusicIcon({ size = 20 }: { size?: number }) {
+  return (
+    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: '#FC3C44', alignItems: 'center', justifyContent: 'center' }}>
+      <Text style={{ color: '#fff', fontSize: size * 0.55, fontWeight: '900' }}>♪</Text>
+    </View>
+  );
+}
+
+function PasteSection({ initialUrl }: { initialUrl?: string }) {
+  const [url, setUrl] = useState(initialUrl ?? '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ytInfo, setYtInfo] = useState<YouTubeInfo | null>(null);
   const [scInfo, setScInfo] = useState<SCImportResult['track'] | null>(null);
   const [playlistTracks, setPlaylistTracks] = useState<PlaylistTrack[]>([]);
+  const [streamingResult, setStreamingResult] = useState<StreamingResult | null>(null);
   const inputRef = useRef<TextInput>(null);
 
   const platform = detectPlatform(url);
@@ -172,6 +203,7 @@ function PasteSection() {
     setYtInfo(null);
     setScInfo(null);
     setPlaylistTracks([]);
+    setStreamingResult(null);
     setError(null);
   };
 
@@ -222,8 +254,20 @@ function PasteSection() {
         if (!resp.ok) throw new Error('Failed to import SoundCloud track');
         const json = await resp.json();
         setScInfo(json.data?.track ?? json.track);
+      } else if (platform === 'spotify') {
+        const playlistId = extractSpotifyPlaylistId(url);
+        if (!playlistId) throw new Error('Could not extract Spotify playlist ID');
+        const resp = await fetch(`${BACKEND_URL}/api/spotify/playlist/${playlistId}`);
+        if (!resp.ok) throw new Error('Failed to fetch Spotify playlist');
+        const json = await resp.json();
+        setStreamingResult(json.data);
+      } else if (platform === 'apple_music') {
+        const resp = await fetch(`${BACKEND_URL}/api/apple-music/resolve?url=${encodeURIComponent(url.trim())}`);
+        if (!resp.ok) throw new Error('Failed to fetch Apple Music content');
+        const json = await resp.json();
+        setStreamingResult(json.data);
       } else {
-        throw new Error('Paste a YouTube, YouTube Music, or SoundCloud URL');
+        throw new Error('Paste a YouTube, YouTube Music, SoundCloud, Spotify, or Apple Music URL');
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong');
@@ -264,7 +308,7 @@ function PasteSection() {
         </View>
         <View>
           <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>Paste a Link</Text>
-          <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>YouTube, YouTube Music, or SoundCloud URL</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>YouTube, SoundCloud, Spotify, or Apple Music</Text>
         </View>
       </View>
 
@@ -274,6 +318,8 @@ function PasteSection() {
           {platform === 'youtube' ? <YouTubeIcon size={16} /> :
            platform === 'youtube_music' ? <YouTubeMusicIcon size={16} /> :
            platform === 'soundcloud' ? <View style={{ marginRight: -4 }}><SoundCloudIcon size={20} /></View> :
+           platform === 'spotify' ? <SpotifyIcon size={16} /> :
+           platform === 'apple_music' ? <AppleMusicIcon size={16} /> :
            <Link2 size={14} color="rgba(255,255,255,0.3)" />}
           <TextInput
             ref={inputRef}
@@ -365,6 +411,45 @@ function PasteSection() {
             </View>
             <DownloadButton track={scTrack} size={32} />
           </View>
+        </View>
+      ) : null}
+
+      {/* Spotify / Apple Music results */}
+      {streamingResult ? (
+        <View style={{ marginHorizontal: 16, marginTop: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+            {platform === 'spotify' ? <SpotifyIcon size={28} /> : <AppleMusicIcon size={28} />}
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }} numberOfLines={1}>{streamingResult.name}</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>
+                {streamingResult.tracks.length} tracks · plays via YouTube
+              </Text>
+            </View>
+          </View>
+          {streamingResult.tracks.map((t, idx) => {
+            const track: Track & { youtubeMusicId?: string } = {
+              id: `sp-yt-${t.videoId}`,
+              title: t.title,
+              artist: t.channelName,
+              artistId: '', album: streamingResult.name, albumId: '', isLiked: false,
+              artwork: t.thumbnailUrl,
+              duration: Math.round((t.durationMs ?? 0) / 1000),
+              source: 'youtube_music',
+              audioUrl: '',
+              youtubeMusicId: t.videoId,
+            };
+            return (
+              <View key={`${t.videoId}-${idx}`} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 12, width: 20 }}>{idx + 1}</Text>
+                <Image source={{ uri: t.thumbnailUrl }} style={{ width: 44, height: 44, borderRadius: 6 }} contentFit="cover" />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{t.title}</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 1 }} numberOfLines={1}>{t.channelName}</Text>
+                </View>
+                <DownloadButton track={track} size={28} />
+              </View>
+            );
+          })}
         </View>
       ) : null}
     </View>
@@ -700,6 +785,7 @@ function SoundCloudSection() {
 export default function AddMusicScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { prefillUrl } = useLocalSearchParams<{ prefillUrl?: string }>();
 
   return (
     <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
@@ -731,7 +817,7 @@ export default function AddMusicScreen() {
         >
           {/* Paste a Link — always at top */}
           <View style={{ backgroundColor: 'rgba(99,102,241,0.08)', borderRadius: 16, marginHorizontal: 12, marginBottom: 20, paddingTop: 16, paddingBottom: 12 }}>
-            <PasteSection />
+            <PasteSection initialUrl={prefillUrl} />
           </View>
 
           {/* Divider */}
@@ -764,6 +850,46 @@ export default function AddMusicScreen() {
           {/* SoundCloud */}
           <View style={{ backgroundColor: 'rgba(255,85,0,0.05)', borderRadius: 16, marginHorizontal: 12, marginBottom: 16, paddingTop: 16, paddingBottom: 12 }}>
             <SoundCloudSection />
+          </View>
+
+          {/* Spotify */}
+          <View style={{ backgroundColor: 'rgba(29,185,84,0.06)', borderRadius: 16, marginHorizontal: 12, marginBottom: 16, paddingTop: 16, paddingBottom: 16 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 }}>
+              <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1DB954', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                <Text style={{ color: '#000', fontSize: 16, fontWeight: '900' }}>♫</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>Spotify</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>Paste a playlist link above to import</Text>
+              </View>
+            </View>
+            <View style={{ marginTop: 12, marginHorizontal: 16, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 10, padding: 12 }}>
+              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, lineHeight: 18 }}>
+                Copy any Spotify playlist URL and paste it in the{' '}
+                <Text style={{ color: '#1DB954', fontWeight: '600' }}>Paste a Link</Text>
+                {' '}section above. Tracks are found on YouTube and play in-app.
+              </Text>
+            </View>
+          </View>
+
+          {/* Apple Music */}
+          <View style={{ backgroundColor: 'rgba(252,60,68,0.06)', borderRadius: 16, marginHorizontal: 12, marginBottom: 16, paddingTop: 16, paddingBottom: 16 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 }}>
+              <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#FC3C44', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '900' }}>♪</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>Apple Music</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>Paste an album or playlist link above</Text>
+              </View>
+            </View>
+            <View style={{ marginTop: 12, marginHorizontal: 16, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 10, padding: 12 }}>
+              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, lineHeight: 18 }}>
+                Copy any Apple Music album or playlist URL and paste it in the{' '}
+                <Text style={{ color: '#FC3C44', fontWeight: '600' }}>Paste a Link</Text>
+                {' '}section above. Tracks are matched on YouTube and play in-app.
+              </Text>
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import * as SystemUI from 'expo-system-ui';
@@ -6,10 +6,10 @@ import { StatusBar } from 'expo-status-bar';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
-import { View, ActivityIndicator, Appearance } from 'react-native';
-import { useSession } from '@/lib/auth/use-session';
+import { Appearance } from 'react-native';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { VybePopupProvider } from '@/components/VybePopup';
+import { FlyAnimationOverlay } from '@/components/FlyAnimationOverlay';
 
 // Force dark mode globally
 Appearance.setColorScheme('dark');
@@ -24,41 +24,12 @@ SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
-function LoadingScreen() {
-  return (
-    <View style={{ flex: 1, backgroundColor: '#0A0A0A', alignItems: 'center', justifyContent: 'center' }}>
-      <ActivityIndicator size="large" color="#8B5CF6" />
-    </View>
-  );
-}
-
 function RootLayoutNav() {
-  const { data: session, isPending, error } = useSession();
-  const [timedOut, setTimedOut] = useState(false);
-
-  // Add timeout to prevent infinite loading
   useEffect(() => {
-    const timeout = setTimeout(() => {
-      setTimedOut(true);
-    }, 3000);
-    return () => clearTimeout(timeout);
+    SplashScreen.hideAsync();
   }, []);
 
-  // Hide splash screen when session is loaded, errored, or timed out
-  const shouldProceed = !isPending || error || timedOut;
-
-  useEffect(() => {
-    if (shouldProceed) {
-      SplashScreen.hideAsync();
-    }
-  }, [shouldProceed]);
-
-  if (!shouldProceed) {
-    return <LoadingScreen />;
-  }
-
-  // Determine if user is authenticated
-  const isAuthenticated = true; // Temporarily disabled for testing
+  const isAuthenticated = true;
 
   // CRITICAL: Render ONLY auth stack OR app stack - never both
   // This prevents swipe-back from app to auth screens
@@ -129,6 +100,7 @@ export default function RootLayout() {
             <VybePopupProvider>
               <StatusBar style="light" backgroundColor="transparent" translucent />
               <RootLayoutNav />
+              <FlyAnimationOverlay />
             </VybePopupProvider>
           </KeyboardProvider>
         </GestureHandlerRootView>

@@ -1,6 +1,6 @@
-import React, { useRef, useEffect } from 'react';
-import { View, StyleSheet } from 'react-native';
-import { Stack, usePathname } from 'expo-router';
+import React, { useRef, useEffect, useState } from 'react';
+import { View, StyleSheet, AppState, Linking, Text, Pressable } from 'react-native';
+import { Stack, usePathname, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MiniPlayer } from '@/components/MiniPlayer';
 import { usePlaybackController } from '@/stores/playbackController';
@@ -9,6 +9,9 @@ import { YouTubeWebViewPool, YouTubeWebViewPoolRef } from '@/components/YouTubeW
 import { PlaybackDebugOverlay } from '@/components/PlaybackDebugOverlay';
 import { useSignalTracker } from '@/hooks/useSignalTracker';
 import { useDiscoveryRefresh } from '@/hooks/useDiscoveryRefresh';
+import * as Clipboard from 'expo-clipboard';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming } from 'react-native-reanimated';
+import { X } from 'lucide-react-native';
 
 // Mini player dimensions - exported for use in screens
 export const MINI_PLAYER_HEIGHT = 66; // 48px artwork + 16px padding + 2px progress bar
@@ -20,6 +23,14 @@ export const TAB_BAR_BASE_HEIGHT = 50;
 export let warmSoundCloudRef: React.RefObject<SoundCloudWebViewPoolRef | null> | null = null;
 export let warmYouTubeRef: React.RefObject<YouTubeWebViewPoolRef | null> | null = null;
 
+type MusicPlatform = 'soundcloud' | 'youtube_music';
+
+function detectMusicPlatform(text: string): MusicPlatform | null {
+  if (/soundcloud\.com\/.+\/.+/.test(text)) return 'soundcloud';
+  if (text.includes('music.youtube.com/')) return 'youtube_music';
+  return null;
+}
+
 export default function AppLayout() {
   // Use the unified PlaybackController instead of the old playerStore
   const currentTrack = usePlaybackController(s => s.currentTrack);
@@ -28,6 +39,68 @@ export default function AppLayout() {
   const soundcloudPoolRef = useRef<SoundCloudWebViewPoolRef>(null);
   const youtubePoolRef = useRef<YouTubeWebViewPoolRef>(null);
   const pathname = usePathname();
+  const router = useRouter();
+
+  // Clipboard banner state
+  const [clipboardUrl, setClipboardUrl] = useState<string | null>(null);
+  const [clipboardPlatform, setClipboardPlatform] = useState<MusicPlatform | null>(null);
+  const lastSeenClip = useRef<string>('');
+  const bannerY = useSharedValue(-120);
+  const bannerStyle = useAnimatedStyle(() => ({ transform: [{ translateY: bannerY.value }] }));
+
+  const showBanner = (url: string, platform: MusicPlatform) => {
+    setClipboardUrl(url);
+    setClipboardPlatform(platform);
+    bannerY.value = withSpring(0, { damping: 18, stiffness: 200 });
+  };
+
+  const dismissBanner = () => {
+    bannerY.value = withTiming(-120, { duration: 250 });
+    setTimeout(() => { setClipboardUrl(null); setClipboardPlatform(null); }, 260);
+  };
+
+  const openFromBanner = () => {
+    if (!clipboardUrl) return;
+    dismissBanner();
+    router.push({ pathname: '/(app)/add-music', params: { prefillUrl: clipboardUrl } });
+  };
+
+  // Check clipboard for music links whenever app comes to foreground
+  useEffect(() => {
+    const checkClipboard = async () => {
+      try {
+        const text = (await Clipboard.getStringAsync()).trim();
+        if (!text || text === lastSeenClip.current) return;
+        lastSeenClip.current = text;
+        const platform = detectMusicPlatform(text);
+        if (platform) showBanner(text, platform);
+      } catch {}
+    };
+
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') checkClipboard();
+    });
+    // Check once on mount
+    checkClipboard();
+    return () => sub.remove();
+  }, []);
+
+  // Handle vibecode://import?url=... deep links
+  useEffect(() => {
+    const handleDeepLink = (url: string) => {
+      try {
+        const parsed = new URL(url);
+        const target = parsed.searchParams.get('url');
+        if (target && detectMusicPlatform(target)) {
+          router.push({ pathname: '/(app)/add-music', params: { prefillUrl: target } });
+        }
+      } catch {}
+    };
+
+    Linking.getInitialURL().then((url) => { if (url) handleDeepLink(url); });
+    const sub = Linking.addEventListener('url', ({ url }) => handleDeepLink(url));
+    return () => sub.remove();
+  }, [router]);
 
   // Discovery system hooks - track listening signals and refresh on app open
   useSignalTracker();
@@ -163,6 +236,18 @@ export default function AppLayout() {
           }}
         />
         <Stack.Screen
+          name="liked-songs"
+          options={{
+            animation: 'slide_from_right',
+          }}
+        />
+        <Stack.Screen
+          name="my-playlist/[id]"
+          options={{
+            animation: 'slide_from_right',
+          }}
+        />
+        <Stack.Screen
           name="discover-onboarding"
           options={{
             animation: 'slide_from_right',
@@ -204,6 +289,80 @@ export default function AppLayout() {
 
       {/* Playback Debug Overlay - only visible when debug mode is enabled */}
       <PlaybackDebugOverlay />
+
+      {/* Clipboard music link banner */}
+      {clipboardUrl && (
+        <Animated.View
+          style={[
+            bannerStyle,
+            {
+              position: 'absolute',
+              top: insets.top + 8,
+              left: 16,
+              right: 16,
+              backgroundColor: '#1C1C1E',
+              borderRadius: 16,
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.1)',
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingVertical: 12,
+              paddingLeft: 14,
+              paddingRight: 10,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.4,
+              shadowRadius: 12,
+            },
+          ]}
+        >
+          {/* Platform dot */}
+          <View
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 10,
+              backgroundColor: clipboardPlatform === 'soundcloud' ? '#FF5500' : '#FF0000',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginRight: 12,
+            }}
+          >
+            <Text style={{ color: '#fff', fontSize: clipboardPlatform === 'soundcloud' ? 11 : 13, fontWeight: '900' }}>
+              {clipboardPlatform === 'soundcloud' ? ')))' : '▶'}
+            </Text>
+          </View>
+
+          {/* Text */}
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }} numberOfLines={1}>
+              {clipboardPlatform === 'soundcloud' ? 'SoundCloud' : 'YouTube Music'} link detected
+            </Text>
+            <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 1 }} numberOfLines={1}>
+              {clipboardUrl}
+            </Text>
+          </View>
+
+          {/* Import button */}
+          <Pressable
+            onPress={openFromBanner}
+            style={{
+              backgroundColor: '#8B5CF6',
+              borderRadius: 8,
+              paddingHorizontal: 12,
+              paddingVertical: 7,
+              marginLeft: 8,
+            }}
+          >
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Import</Text>
+          </Pressable>
+
+          {/* Dismiss */}
+          <Pressable onPress={dismissBanner} style={{ padding: 6, marginLeft: 4 }}>
+            <X size={16} color="rgba(255,255,255,0.4)" />
+          </Pressable>
+        </Animated.View>
+      )}
     </View>
   );
 }

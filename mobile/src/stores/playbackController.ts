@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { AppState, AppStateStatus } from 'react-native';
 import { Audio, AVPlaybackStatus, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 import { Track, TrackSource, RepeatMode } from '@/types/music';
 import * as Haptics from 'expo-haptics';
@@ -50,6 +51,11 @@ let soundcloudAdapterRef: PlayerAdapter | null = null;
 
 // Track if audio session is initialized
 let audioSessionInitialized = false;
+
+// ONE PLAYER RULE: monotonically increasing ID for each playTrack call.
+// Each call captures its own ID; before starting audio it checks if it's
+// still the latest request. If not, it bails out immediately.
+let playRequestCounter = 0;
 
 // ── Crossfade state ───────────────────────────────────────────────────────────
 let crossfadeSound: Audio.Sound | null = null;   // next track being faded in
@@ -468,6 +474,10 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
+    // Claim this play slot — any in-flight playTrack call with an older ID will abort
+    const myRequestId = ++playRequestCounter;
+    const isStillCurrent = () => myRequestId === playRequestCounter;
+
     const newQueue = queue ?? [track];
     const index = newQueue.findIndex(t => t.id === track.id);
     const source = track.source || 'vybe';
@@ -481,8 +491,14 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     // (this may deactivate the iOS audio session)
     await stopAllSources();
 
+    // Another playTrack was called while we were stopping — bail out
+    if (!isStillCurrent()) return;
+
     // Re-activate audio session after stopping (unloadAsync deactivates it on iOS)
     await initializeAudioSession();
+
+    // Bail again after async session init
+    if (!isStillCurrent()) { await stopVybeAudio(); return; }
 
     // Update state immediately for instant UI feedback
     const trackIndex = index >= 0 ? index : 0;
@@ -548,6 +564,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
             }
           }
         );
+        if (!isStillCurrent()) { sound.stopAsync().catch(() => {}); sound.unloadAsync().catch(() => {}); return; }
         if (status.isLoaded) { vybeSound = sound; set({ playbackState: 'playing' }); }
         else { set({ playbackState: 'error', error: 'Failed to load audio' }); }
       } catch (error) {
@@ -608,6 +625,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         });
 
         await sound.loadAsync({ uri: audioUrl }, { shouldPlay: false, volume: get().volume });
+        if (!isStillCurrent()) { sound.stopAsync().catch(() => {}); sound.unloadAsync().catch(() => {}); vybeSound = null; return; }
         await sound.playAsync();
         set({ playbackState: 'playing' });
       } catch (error) {
@@ -655,6 +673,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         vybeSound = sound;
         sound.setOnPlaybackStatusUpdate(makeSCStatusCallback(sound));
         await sound.loadAsync({ uri: lqUrl }, { shouldPlay: false, volume: get().volume });
+        if (!isStillCurrent()) { sound.stopAsync().catch(() => {}); sound.unloadAsync().catch(() => {}); vybeSound = null; return; }
         await sound.playAsync();
         set({ playbackState: 'playing' });
 
@@ -795,6 +814,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
           );
 
           // Verify sound loaded successfully before setting as playing
+          if (!isStillCurrent()) { sound.stopAsync().catch(() => {}); sound.unloadAsync().catch(() => {}); return; }
           if (status.isLoaded) {
             vybeSound = sound;
             console.log('[PlaybackController] Audio loaded successfully, duration:', status.durationMillis);
@@ -1146,6 +1166,44 @@ export const isPlaying = () => usePlaybackController.getState().playbackState ==
 
 // Export helper for getting current track
 export const getCurrentTrack = () => usePlaybackController.getState().currentTrack;
+
+// ── AppState handler: keep audio alive across background/foreground transitions ─
+AppState.addEventListener('change', async (nextState: AppStateStatus) => {
+  if (nextState === 'background') {
+    // Re-apply audio mode so iOS keeps the session active while suspended.
+    // This is the critical call that prevents iOS from killing the audio session.
+    try {
+      await Audio.setAudioModeAsync({
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: true,
+        shouldDuckAndroid: true,
+        allowsRecordingIOS: false,
+        interruptionModeIOS: InterruptionModeIOS.DoNotMix,
+        interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
+      });
+    } catch {}
+  } else if (nextState === 'active') {
+    // App came back to foreground — reset flag so session re-inits cleanly.
+    audioSessionInitialized = false;
+    await initializeAudioSession();
+
+    // Restart the Live Activity interval (it stops when JS is suspended).
+    const { currentTrack, playbackState } = usePlaybackController.getState();
+    if (currentTrack && playbackState !== 'idle' && playbackState !== 'error') {
+      startNowPlayingInterval();
+
+      // Re-push Now Playing info to lock screen (iOS clears it while suspended).
+      updateNowPlaying({
+        trackTitle: currentTrack.title,
+        artistName: currentTrack.artist,
+        artworkUrl: currentTrack.artwork ?? '',
+        duration: usePlaybackController.getState().duration || 0,
+        currentTime: usePlaybackController.getState().progress,
+        isPlaying: playbackState === 'playing',
+      });
+    }
+  }
+});
 
 // Export helper to stop VYBE audio (for AudioSessionManager)
 export const stopVybeNativeAudio = stopVybeAudio;
