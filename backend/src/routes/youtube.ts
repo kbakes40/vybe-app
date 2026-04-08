@@ -7,6 +7,11 @@ const youtubeRouter = new Hono();
 const VIDEO_ID_RE = /^[a-zA-Z0-9_-]{6,32}$/;
 const ytDlp = new YTDlpWrap();
 
+// Download yt-dlp binary if not present
+YTDlpWrap.downloadFromGithub().catch(() => {
+  // Binary may already exist, ignore errors
+});
+
 // Cache resolved CDN URLs so repeated range requests don't re-run yt-dlp
 // YouTube CDN URLs expire after ~6 hours, so cache for 4 hours to be safe
 const urlCache = new Map<string, { url: string; expires: number }>();
