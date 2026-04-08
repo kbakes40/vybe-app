@@ -38,14 +38,16 @@ function setCachedUrl(videoId: string, url: string): void {
 async function resolveAudioUrl(videoId: string): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
+  const args = [
+    `https://www.youtube.com/watch?v=${videoId}`,
+    "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio",
+    "--get-url",
+    "--no-playlist",
+    "--quiet",
+  ];
+  console.log("[yt-dlp] running:", YTDLP_BINARY_PATH, args.join(" "));
   try {
-    const output = await ytDlp.execPromise([
-      `https://www.youtube.com/watch?v=${videoId}`,
-      "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio",
-      "--get-url",
-      "--no-playlist",
-      "--quiet",
-    ], {}, controller.signal);
+    const output = await ytDlp.execPromise(args, {}, controller.signal);
     clearTimeout(timer);
     const url = output.trim().split("\n")[0];
     console.log('[yt-dlp output]', url);
@@ -53,6 +55,9 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
     return url;
   } catch (e: any) {
     clearTimeout(timer);
+    console.error("[yt-dlp] error message:", e.message);
+    console.error("[yt-dlp] error stderr:", e.stderr);
+    console.error("[yt-dlp] error stdout:", e.stdout);
     throw new Error(`yt-dlp failed: ${e.message}`);
   }
 }
