@@ -10,6 +10,8 @@ const VIDEO_ID_RE = /^[a-zA-Z0-9_-]{6,32}$/;
 const YTDLP_BINARY_PATH = path.join(os.tmpdir(), "yt-dlp");
 const ytDlp = new YTDlpWrap(YTDLP_BINARY_PATH);
 
+const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), "youtube-cookies.txt");
+
 // Download the standalone yt-dlp binary on startup.
 // We fetch yt-dlp_linux directly so it doesn't require python3 at runtime.
 (async () => {
@@ -17,19 +19,37 @@ const ytDlp = new YTDlpWrap(YTDLP_BINARY_PATH);
     const fs = await import("fs");
     if (fs.existsSync(YTDLP_BINARY_PATH)) {
       console.log("[yt-dlp] binary already present at", YTDLP_BINARY_PATH);
-      return;
+    } else {
+      console.log("[yt-dlp] downloading standalone binary...");
+      const url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const buf = await res.arrayBuffer();
+      fs.writeFileSync(YTDLP_BINARY_PATH, Buffer.from(buf), { mode: 0o755 });
+      console.log("[yt-dlp] binary downloaded to", YTDLP_BINARY_PATH);
     }
-    console.log("[yt-dlp] downloading standalone binary...");
-    const url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const buf = await res.arrayBuffer();
-    fs.writeFileSync(YTDLP_BINARY_PATH, Buffer.from(buf), { mode: 0o755 });
-    console.log("[yt-dlp] binary downloaded to", YTDLP_BINARY_PATH);
+
+    // Write YouTube cookies from env var if provided.
+    // Set YOUTUBE_COOKIES in Railway as a base64-encoded Netscape cookie file.
+    const cookiesB64 = process.env.YOUTUBE_COOKIES;
+    if (cookiesB64) {
+      fs.writeFileSync(YTDLP_COOKIES_PATH, Buffer.from(cookiesB64, "base64").toString("utf-8"));
+      console.log("[yt-dlp] cookies written to", YTDLP_COOKIES_PATH);
+    } else {
+      console.warn("[yt-dlp] YOUTUBE_COOKIES not set — YouTube may block requests");
+    }
   } catch (e: any) {
-    console.error("[yt-dlp] failed to download binary:", e.message);
+    console.error("[yt-dlp] startup error:", e.message);
   }
 })();
+
+// Returns cookie args if the cookie file was written, otherwise empty array
+function cookieArgs(): string[] {
+  try {
+    const fs = require("fs");
+    return fs.existsSync(YTDLP_COOKIES_PATH) ? ["--cookies", YTDLP_COOKIES_PATH] : [];
+  } catch { return []; }
+}
 
 // Cache resolved CDN URLs so repeated range requests don't re-run yt-dlp
 // YouTube CDN URLs expire after ~6 hours, so cache for 4 hours to be safe
@@ -62,6 +82,7 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
     "--quiet",
     "--extractor-args", "youtube:player_client=ios",
     "--js-runtimes", "node",
+    ...cookieArgs(),
   ];
   console.log("[yt-dlp] running:", YTDLP_BINARY_PATH, args.join(" "));
   try {
@@ -220,6 +241,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
         "--print", "after_move:filepath",
         "--extractor-args", "youtube:player_client=ios",
         "--js-runtimes", "node",
+        ...cookieArgs(),
       ], {}, controller.signal);
       clearTimeout(timer);
       const finalPath = output.trim().split("\n").pop()?.trim() ?? "";
@@ -347,6 +369,7 @@ async function searchYouTubeYtDlp(query: string, maxResults: number): Promise<Ar
       "--dump-json", "--flat-playlist", "--quiet", "--no-warnings",
       "--extractor-args", "youtube:player_client=ios",
       "--js-runtimes", "node",
+      ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
   } catch (e: any) {
@@ -401,6 +424,7 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
     "--no-warnings",
     "--extractor-args", "youtube:player_client=ios",
     "--js-runtimes", "node",
+    ...cookieArgs(),
   ]);
   const lines = output.trim().split("\n");
   if (lines.length < 3) throw new Error(`yt-dlp info returned insufficient output`);
@@ -442,6 +466,7 @@ async function getPlaylistTracks(listId: string): Promise<Array<{ videoId: strin
       "--quiet",
       "--extractor-args", "youtube:player_client=ios",
       "--js-runtimes", "node",
+      ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
   } catch (e: any) {
