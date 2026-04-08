@@ -58,6 +58,14 @@ app.use("*", async (c, next) => {
   await next();
 });
 
+// Debug: log what the proxy receives so we can see if PKCE is coming through
+app.get("/api/auth/expo-authorization-proxy", (c) => {
+  const authorizationURL = c.req.query("authorizationURL");
+  console.log("[PROXY] authorizationURL received:", authorizationURL?.substring(0, 300));
+  console.log("[PROXY] has PKCE:", authorizationURL?.includes("code_challenge_method"));
+  return auth.handler(c.req.raw);
+});
+
 // Mount auth handler
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
