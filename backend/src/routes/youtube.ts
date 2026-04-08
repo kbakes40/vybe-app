@@ -102,7 +102,7 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
     "--get-url",
     "--no-playlist",
     "--quiet",
-    "--extractor-args", "youtube:player_client=ios",
+    "--extractor-args", "youtube:player_client=tv_embedded",
   ];
   console.log("[yt-dlp] running:", YTDLP_BINARY_PATH, args.join(" "));
   try {
@@ -259,7 +259,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
         "--no-warnings",
         "--no-part",
         "--print", "after_move:filepath",
-        "--extractor-args", "youtube:player_client=ios",
+        "--extractor-args", "youtube:player_client=tv_embedded",
         "--js-runtimes", "node",
         ...cookieArgs(),
       ], {}, controller.signal);
@@ -387,7 +387,7 @@ async function searchYouTubeYtDlp(query: string, maxResults: number): Promise<Ar
     output = await ytDlp.execPromise([
       `ytsearch${fetchCount}:${query}`,
       "--dump-json", "--flat-playlist", "--quiet", "--no-warnings",
-      "--extractor-args", "youtube:player_client=ios",
+      "--extractor-args", "youtube:player_client=tv_embedded",
       "--js-runtimes", "node",
       ...cookieArgs(),
     ], {}, controller.signal);
@@ -442,7 +442,7 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
     "--no-playlist",
     "--quiet",
     "--no-warnings",
-    "--extractor-args", "youtube:player_client=ios",
+    "--extractor-args", "youtube:player_client=tv_embedded",
   ]);
   const lines = output.trim().split("\n");
   if (lines.length < 3) throw new Error(`yt-dlp info returned insufficient output`);
@@ -482,7 +482,7 @@ async function getPlaylistTracks(listId: string): Promise<Array<{ videoId: strin
       "--dump-json",
       "--no-warnings",
       "--quiet",
-      "--extractor-args", "youtube:player_client=ios",
+      "--extractor-args", "youtube:player_client=tv_embedded",
       "--js-runtimes", "node",
       ...cookieArgs(),
     ], {}, controller.signal);
