@@ -11,6 +11,8 @@ import { discoverRouter } from "./routes/discover";
 import { freepdRouter } from "./routes/freepd";
 import { musicgenRouter } from "./routes/musicgen";
 import { youtubeRouter } from "./routes/youtube";
+import { spotifyRouter } from "./routes/spotify";
+import { appleMusicRouter } from "./routes/appleMusic";
 import { logger } from "hono/logger";
 
 // Type the Hono app with user/session variables
@@ -28,6 +30,7 @@ const allowed = [
   /^https:\/\/[a-z0-9-]+\.dev\.vibecode\.run$/,
   /^https:\/\/[a-z0-9-]+\.vibecode\.run$/,
   /^https:\/\/[a-z0-9-]+\.vibecodeapp\.com$/,
+  /^https:\/\/[a-z0-9-]+\.up\.railway\.app$/,
 ];
 
 app.use(
@@ -77,6 +80,8 @@ app.route("/api/discover", discoverRouter);
 app.route("/api/freepd", freepdRouter);
 app.route("/api/musicgen", musicgenRouter);
 app.route("/api/youtube", youtubeRouter);
+app.route("/api/spotify", spotifyRouter);
+app.route("/api/apple-music", appleMusicRouter);
 
 const port = Number(process.env.PORT) || 3000;
 
