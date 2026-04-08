@@ -103,6 +103,8 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
     "--no-playlist",
     "--quiet",
     "--extractor-args", "youtube:player_client=tv_embedded",
+    "--js-runtimes", "node",
+    ...cookieArgs(),
   ];
   console.log("[yt-dlp] running:", YTDLP_BINARY_PATH, args.join(" "));
   try {
