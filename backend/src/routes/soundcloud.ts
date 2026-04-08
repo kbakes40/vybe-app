@@ -3,8 +3,11 @@ import { stream } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import YTDlpWrap from "yt-dlp-wrap";
+import path from "path";
+import os from "os";
 
-const ytDlp = new YTDlpWrap();
+const YTDLP_BINARY_PATH = path.join(os.tmpdir(), "yt-dlp");
+const ytDlp = new YTDlpWrap(YTDLP_BINARY_PATH);
 const SC_URL_RE = /^https:\/\/(soundcloud\.com|on\.soundcloud\.com)\/.+/;
 
 // SoundCloud oEmbed response type

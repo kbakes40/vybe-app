@@ -1,15 +1,18 @@
 import { Hono } from "hono";
 import YTDlpWrap from "yt-dlp-wrap";
+import path from "path";
+import os from "os";
 import { getQuotaStats, getSearchCacheSize, purgeExpiredSearchCache, fetchNewReleases, fetchCuratedPlaylists, searchYouTube } from "../services/youtubeService";
 
 const youtubeRouter = new Hono();
 
 const VIDEO_ID_RE = /^[a-zA-Z0-9_-]{6,32}$/;
-const ytDlp = new YTDlpWrap();
+const YTDLP_BINARY_PATH = path.join(os.tmpdir(), "yt-dlp");
+const ytDlp = new YTDlpWrap(YTDLP_BINARY_PATH);
 
-// Download yt-dlp binary if not present
-YTDlpWrap.downloadFromGithub().catch(() => {
-  // Binary may already exist, ignore errors
+// Download yt-dlp binary on startup
+YTDlpWrap.downloadFromGithub(YTDLP_BINARY_PATH).catch((e) => {
+  console.error("[yt-dlp] Failed to download binary:", e.message);
 });
 
 // Cache resolved CDN URLs so repeated range requests don't re-run yt-dlp
