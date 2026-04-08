@@ -10,8 +10,8 @@ const envSchema = z.object({
   NODE_ENV: z.string().optional(),
   BACKEND_URL: z.url("BACKEND_URL must be a valid URL").default("http://localhost:3000"), // Set via the Vibecode enviroment at run-time
 
-  // Database
-  DATABASE_URL: z.string().default("file:./dev.db"),
+  // Database - either TURSO_URL+TURSO_AUTH_TOKEN or DATABASE_URL must be set
+  DATABASE_URL: z.string().optional(),
   TURSO_URL: z.string().optional(),
   TURSO_AUTH_TOKEN: z.string().optional(),
 
@@ -28,6 +28,16 @@ const envSchema = z.object({
 function validateEnv() {
   try {
     const parsed = envSchema.parse(process.env);
+
+    // Validate database config: need either Turso OR local SQLite
+    const hasTurso = parsed.TURSO_URL && parsed.TURSO_AUTH_TOKEN;
+    const hasLocalDb = parsed.DATABASE_URL;
+
+    if (!hasTurso && !hasLocalDb) {
+      // Default to local SQLite for development
+      (parsed as any).DATABASE_URL = "file:./dev.db";
+    }
+
     console.log("✅ Environment variables validated successfully");
     return parsed;
   } catch (error) {
