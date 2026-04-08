@@ -5,20 +5,18 @@ import { getQuotaStats, getSearchCacheSize, purgeExpiredSearchCache, fetchNewRel
 const youtubeRouter = new Hono();
 
 const VIDEO_ID_RE = /^[a-zA-Z0-9_-]{6,32}$/;
-const YTDLP = process.env.YTDLP_PATH || (process.platform === 'darwin' ? '/opt/homebrew/bin/yt-dlp' : '/usr/local/bin/yt-dlp');
+const YTDLP = process.env.YTDLP_PATH || (process.platform === 'darwin' ? '/opt/homebrew/bin/yt-dlp' : 'yt-dlp');
 
 // Check if yt-dlp is available at startup
 let ytdlpAvailable = false;
 try {
-  const { existsSync } = require('fs');
-  ytdlpAvailable = existsSync(YTDLP);
-  if (!ytdlpAvailable) {
-    console.warn(`[YouTube] yt-dlp not found at ${YTDLP} - audio streaming will not work`);
-  } else {
-    console.log(`[YouTube] yt-dlp found at ${YTDLP}`);
-  }
+  const { execSync } = require('child_process');
+  // Try to run yt-dlp --version to check availability
+  execSync(`${YTDLP} --version`, { stdio: 'ignore' });
+  ytdlpAvailable = true;
+  console.log(`[YouTube] yt-dlp available at ${YTDLP}`);
 } catch {
-  console.warn('[YouTube] Could not check yt-dlp availability');
+  console.warn(`[YouTube] yt-dlp not found (${YTDLP}) - audio streaming will not work`);
 }
 
 // Cache resolved CDN URLs so repeated range requests don't re-run yt-dlp
