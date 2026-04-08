@@ -2,7 +2,7 @@
 nixPkgs = ["ffmpeg"]
 
 [phases.install]
-cmds = ["bun install"]
+cmds = ["bun add yt-dlp-wrap", "bun install"]
 
 [start]
 cmd = "bun run start"
