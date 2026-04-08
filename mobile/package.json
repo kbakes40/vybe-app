@@ -69,7 +69,6 @@
     "expo-document-picker": "~13.1.5",
     "expo-file-system": "~18.1.8",
     "expo-font": "~13.3.2",
-    "expo-glass-effect": "^0.1.6",
     "expo-haptics": "~14.1.4",
     "expo-image": "~2.1.6",
     "expo-image-manipulator": "~13.1.5",
