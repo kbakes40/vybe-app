@@ -7,16 +7,21 @@ const youtubeRouter = new Hono();
 const VIDEO_ID_RE = /^[a-zA-Z0-9_-]{6,32}$/;
 const YTDLP = process.env.YTDLP_PATH || (process.platform === 'darwin' ? '/opt/homebrew/bin/yt-dlp' : 'yt-dlp');
 
-// Check if yt-dlp is available at startup
-let ytdlpAvailable = false;
-try {
-  const { execSync } = require('child_process');
-  // Try to run yt-dlp --version to check availability
-  execSync(`${YTDLP} --version`, { stdio: 'ignore' });
-  ytdlpAvailable = true;
-  console.log(`[YouTube] yt-dlp available at ${YTDLP}`);
-} catch {
-  console.warn(`[YouTube] yt-dlp not found (${YTDLP}) - audio streaming will not work`);
+// Lazily checked on first use — never runs at module load time so Railway import never crashes
+let ytdlpAvailable: boolean | null = null;
+
+function checkYtdlpAvailable(): boolean {
+  if (ytdlpAvailable !== null) return ytdlpAvailable;
+  try {
+    const { execSync } = require('child_process');
+    execSync(`${YTDLP} --version`, { stdio: 'ignore', timeout: 5000 });
+    ytdlpAvailable = true;
+    console.log(`[YouTube] yt-dlp available at ${YTDLP}`);
+  } catch {
+    ytdlpAvailable = false;
+    console.warn(`[YouTube] yt-dlp not found (${YTDLP}) - audio streaming will not work`);
+  }
+  return ytdlpAvailable;
 }
 
 // Cache resolved CDN URLs so repeated range requests don't re-run yt-dlp
@@ -41,7 +46,7 @@ function setCachedUrl(videoId: string, url: string): void {
  */
 function resolveAudioUrl(videoId: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    if (!ytdlpAvailable) {
+    if (!checkYtdlpAvailable()) {
       reject(new Error('yt-dlp is not available on this server'));
       return;
     }
