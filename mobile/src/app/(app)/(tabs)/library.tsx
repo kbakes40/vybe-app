@@ -162,6 +162,7 @@ const userPlaylists = useUserPlaylistStore(s => s.playlists);
     const selected = allAvailableTracks.filter(t => selectedTrackIds.has(t.id));
     const newId = `pl-${Date.now()}`;
     createPlaylist(name, selected, newId);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setShowCreatePlaylist(false);
     setPlaylistName('');
@@ -467,41 +468,49 @@ const userPlaylists = useUserPlaylistStore(s => s.playlists);
 
         {/* User-created playlists */}
         {userPlaylists.map(playlist => (
-          <ReanimatedSwipeable
-            key={playlist.id}
-            friction={2}
-            rightThreshold={40}
-            renderRightActions={(progress) => (
-              <PlaylistDeleteAction
-                progress={progress}
-                onPress={() => {
-                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-                  deletePlaylist(playlist.id);
-                }}
-              />
-            )}
-          >
-            <Pressable
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                router.push(`/(app)/my-playlist/${playlist.id}` as never);
-              }}
-              style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12, backgroundColor: pressed ? 'rgba(255,255,255,0.04)' : '#0A0A0A', width: '100%' })}
+          <View key={playlist.id} style={{ width: '100%' }}>
+            <ReanimatedSwipeable
+              friction={2}
+              rightThreshold={40}
+              overshootRight={false}
+              renderRightActions={(progress) => (
+                <PlaylistDeleteAction
+                  progress={progress}
+                  onPress={() => {
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                    deletePlaylist(playlist.id);
+                  }}
+                />
+              )}
             >
-              <View style={{ width: 56, height: 56, borderRadius: 4, backgroundColor: '#282828', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-                {playlist.artwork ? (
-                  <Image source={{ uri: playlist.artwork }} style={{ width: 56, height: 56 }} contentFit="cover" />
-                ) : (
-                  <ListMusic size={24} color="rgba(255,255,255,0.4)" />
-                )}
-              </View>
-              <View style={{ flex: 1, marginLeft: 16 }}>
-                <Text style={{ color: '#fff', fontWeight: '500', fontSize: 15 }}>{playlist.name}</Text>
-                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 2 }}>Playlist · {playlist.tracks.length} songs</Text>
-              </View>
-              <ChevronRight size={18} color="rgba(255,255,255,0.3)" />
-            </Pressable>
-          </ReanimatedSwipeable>
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  router.push(`/(app)/my-playlist/${playlist.id}` as never);
+                }}
+                style={({ pressed }) => ({
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingHorizontal: 20,
+                  paddingVertical: 12,
+                  backgroundColor: pressed ? 'rgba(255,255,255,0.04)' : '#0A0A0A',
+                })}
+              >
+                <View style={{ width: 56, height: 56, borderRadius: 6, backgroundColor: '#282828', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                  {playlist.artwork ? (
+                    <Image source={{ uri: playlist.artwork }} style={{ width: 56, height: 56 }} contentFit="cover" />
+                  ) : (
+                    <ListMusic size={24} color="rgba(255,255,255,0.4)" />
+                  )}
+                </View>
+                <View style={{ flex: 1, marginLeft: 16 }}>
+                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }}>{playlist.name}</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 2 }}>Playlist · {playlist.tracks.length} songs</Text>
+                </View>
+                <ChevronRight size={18} color="rgba(255,255,255,0.3)" />
+              </Pressable>
+            </ReanimatedSwipeable>
+          </View>
         ))}
 
         {/* Empty state for playlists */}
@@ -552,7 +561,7 @@ const userPlaylists = useUserPlaylistStore(s => s.playlists);
               key={filter.key}
               onPress={() => setActiveFilter(activeFilter === filter.key ? null : filter.key)}
               style={{
-                backgroundColor: activeFilter === filter.key ? '#4F6CF5' : '#232323',
+                backgroundColor: activeFilter === filter.key ? '#6366F1' : '#232323',
                 paddingHorizontal: 14,
                 paddingVertical: 8,
                 borderRadius: 20,
