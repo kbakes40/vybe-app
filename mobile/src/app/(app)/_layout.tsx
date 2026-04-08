@@ -10,8 +10,13 @@ import { PlaybackDebugOverlay } from '@/components/PlaybackDebugOverlay';
 import { useSignalTracker } from '@/hooks/useSignalTracker';
 import { useDiscoveryRefresh } from '@/hooks/useDiscoveryRefresh';
 import * as Clipboard from 'expo-clipboard';
+import { MMKV } from 'react-native-mmkv';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming } from 'react-native-reanimated';
 import { X } from 'lucide-react-native';
+
+// Persists the last clipboard URL seen across app restarts
+// so the iOS paste dialog only fires once per unique URL
+const clipboardStorage = new MMKV({ id: 'vybe-clipboard-v1' });
 
 // Mini player dimensions - exported for use in screens
 export const MINI_PLAYER_HEIGHT = 66; // 48px artwork + 16px padding + 2px progress bar
@@ -23,11 +28,16 @@ export const TAB_BAR_BASE_HEIGHT = 50;
 export let warmSoundCloudRef: React.RefObject<SoundCloudWebViewPoolRef | null> | null = null;
 export let warmYouTubeRef: React.RefObject<YouTubeWebViewPoolRef | null> | null = null;
 
-type MusicPlatform = 'soundcloud' | 'youtube_music';
+type MusicPlatform = 'soundcloud' | 'youtube_music' | 'youtube' | 'spotify' | 'apple_music';
 
 function detectMusicPlatform(text: string): MusicPlatform | null {
-  if (/soundcloud\.com\/.+\/.+/.test(text)) return 'soundcloud';
-  if (text.includes('music.youtube.com/')) return 'youtube_music';
+  const t = text.trim();
+  if (!t.startsWith('http')) return null;
+  if (t.includes('music.youtube.com/')) return 'youtube_music';
+  if (t.includes('youtube.com/watch') || t.includes('youtu.be/') || t.includes('youtube.com/playlist')) return 'youtube';
+  if (/soundcloud\.com\/.+\/.+/.test(t)) return 'soundcloud';
+  if (t.includes('open.spotify.com/')) return 'spotify';
+  if (t.includes('music.apple.com/')) return 'apple_music';
   return null;
 }
 
@@ -44,7 +54,7 @@ export default function AppLayout() {
   // Clipboard banner state
   const [clipboardUrl, setClipboardUrl] = useState<string | null>(null);
   const [clipboardPlatform, setClipboardPlatform] = useState<MusicPlatform | null>(null);
-  const lastSeenClip = useRef<string>('');
+  const lastSeenClip = useRef<string>(clipboardStorage.getString('lastUrl') ?? '');
   const bannerY = useSharedValue(-120);
   const bannerStyle = useAnimatedStyle(() => ({ transform: [{ translateY: bannerY.value }] }));
 
@@ -72,6 +82,7 @@ export default function AppLayout() {
         const text = (await Clipboard.getStringAsync()).trim();
         if (!text || text === lastSeenClip.current) return;
         lastSeenClip.current = text;
+        clipboardStorage.set('lastUrl', text);
         const platform = detectMusicPlatform(text);
         if (platform) showBanner(text, platform);
       } catch {}
@@ -322,21 +333,21 @@ export default function AppLayout() {
               width: 36,
               height: 36,
               borderRadius: 10,
-              backgroundColor: clipboardPlatform === 'soundcloud' ? '#FF5500' : '#FF0000',
+              backgroundColor: clipboardPlatform === 'soundcloud' ? '#FF5500' : clipboardPlatform === 'spotify' ? '#1DB954' : clipboardPlatform === 'apple_music' ? '#FC3C44' : '#FF0000',
               alignItems: 'center',
               justifyContent: 'center',
               marginRight: 12,
             }}
           >
-            <Text style={{ color: '#fff', fontSize: clipboardPlatform === 'soundcloud' ? 11 : 13, fontWeight: '900' }}>
-              {clipboardPlatform === 'soundcloud' ? ')))' : '▶'}
+            <Text style={{ color: clipboardPlatform === 'spotify' ? '#000' : '#fff', fontSize: clipboardPlatform === 'soundcloud' ? 11 : 13, fontWeight: '900' }}>
+              {clipboardPlatform === 'soundcloud' ? ')))' : clipboardPlatform === 'spotify' ? '♫' : '▶'}
             </Text>
           </View>
 
           {/* Text */}
           <View style={{ flex: 1 }}>
             <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }} numberOfLines={1}>
-              {clipboardPlatform === 'soundcloud' ? 'SoundCloud' : 'YouTube Music'} link detected
+              {clipboardPlatform === 'soundcloud' ? 'SoundCloud' : clipboardPlatform === 'youtube_music' ? 'YouTube Music' : clipboardPlatform === 'spotify' ? 'Spotify' : clipboardPlatform === 'apple_music' ? 'Apple Music' : 'YouTube'} link detected
             </Text>
             <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 1 }} numberOfLines={1}>
               {clipboardUrl}
