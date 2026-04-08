@@ -60,16 +60,24 @@ app.use("*", async (c, next) => {
 
 // Intercept expo-authorization-proxy BEFORE Better Auth handles it.
 // Better Auth forces PKCE (code_challenge_method=S256) into the Google URL.
-// Google rejects PKCE from iOS native clients — strip those params here.
+// Google rejects PKCE — strip those params, then let Better Auth handle the
+// rest (oauthState cookie setup, etc.) with the cleaned URL.
 app.get("/api/auth/expo-authorization-proxy", (c) => {
   const authorizationURL = c.req.query("authorizationURL");
   if (authorizationURL) {
     try {
-      const url = new URL(authorizationURL);
-      if (url.hostname.includes("accounts.google.com")) {
-        url.searchParams.delete("code_challenge");
-        url.searchParams.delete("code_challenge_method");
-        return c.redirect(url.toString(), 302);
+      const googleUrl = new URL(authorizationURL);
+      if (googleUrl.hostname.includes("accounts.google.com")) {
+        googleUrl.searchParams.delete("code_challenge");
+        googleUrl.searchParams.delete("code_challenge_method");
+        // Rebuild the request with the stripped URL, pass to Better Auth
+        const reqUrl = new URL(c.req.url);
+        reqUrl.searchParams.set("authorizationURL", googleUrl.toString());
+        const newReq = new Request(reqUrl.toString(), {
+          method: c.req.method,
+          headers: c.req.raw.headers,
+        });
+        return auth.handler(newReq);
       }
     } catch {
       // fall through
