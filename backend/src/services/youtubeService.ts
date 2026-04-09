@@ -463,7 +463,22 @@ export interface CuratedPlaylistResult {
 
 let curatedPlaylistsCache: { results: CuratedPlaylistResult[]; expiresAt: number } | null = null;
 
-const YTDLP_BIN = '/opt/homebrew/bin/yt-dlp';
+import path from 'path';
+import os from 'os';
+
+// Use the same binary path as youtube.ts route (downloaded on startup)
+const YTDLP_BIN = process.platform === 'darwin'
+  ? '/opt/homebrew/bin/yt-dlp'
+  : path.join(os.tmpdir(), 'yt-dlp');
+
+const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), 'youtube-cookies.txt');
+
+function cookieArgs(): string[] {
+  try {
+    const fs = require('fs');
+    return fs.existsSync(YTDLP_COOKIES_PATH) ? ['--cookies', YTDLP_COOKIES_PATH] : [];
+  } catch { return []; }
+}
 
 /**
  * Fetch tracks from a YouTube Music playlist via yt-dlp — no API key needed.
@@ -476,6 +491,8 @@ function fetchPlaylistTracksViaYTDLP(playlistId: string): Promise<PlaylistTrack[
       : `https://music.youtube.com/playlist?list=${playlistId}`;
     const proc = spawn(YTDLP_BIN, [
       url, '--flat-playlist', '--dump-json', '--no-warnings', '--quiet',
+      '--extractor-args', 'youtube:player_client=ios',
+      ...cookieArgs(),
     ]);
     const timeout = setTimeout(() => { proc.kill('SIGKILL'); resolve([]); }, 30_000);
     let out = '';
