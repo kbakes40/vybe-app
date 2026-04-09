@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import {
   Compass,
@@ -20,14 +21,15 @@ import {
   Settings,
   Youtube,
   Cloud,
+  Moon,
+  Brain,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import { DiscoverCard } from '@/components/DiscoverCard';
-import {
-  useDiscoverFeedStore,
-  DiscoverSection,
-} from '@/stores/discoverFeedStore';
+import { useDiscoverFeedStore } from '@/stores/discoverFeedStore';
+import { useDownloadsStore } from '@/stores/downloadsStore';
+import { usePlaybackController } from '@/stores/playbackController';
 
 /**
  * Discover Tab Screen
@@ -40,6 +42,10 @@ import {
 export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+
+  // Downloads for local playlist sections
+  const downloads = useDownloadsStore((s) => s.downloads);
+  const playTrack = usePlaybackController((s) => s.playTrack);
 
   // Store selectors
   const sections = useDiscoverFeedStore((s) => s.sections);
@@ -241,6 +247,64 @@ export default function DiscoverScreen() {
             </Pressable>
           </Animated.View>
         ) : null}
+
+        {/* Late Night Mix — from saved tracks */}
+        <Animated.View entering={FadeInDown.delay(0).springify()} className="mt-6">
+          <View className="flex-row items-center px-5 mb-2">
+            <Moon size={20} color="#8B5CF6" />
+            <Text className="text-white text-xl font-bold ml-2">Late Night</Text>
+          </View>
+          <Text className="text-white/50 text-sm px-5 mb-4">
+            Ambient, downtempo & experimental for the late hours
+          </Text>
+          {downloads.length === 0 ? (
+            <View className="mx-5 bg-white/5 rounded-xl p-4 items-center">
+              <Text className="text-white/40 text-sm">Save songs to fill this playlist</Text>
+            </View>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }} style={{ flexGrow: 0 }}>
+              {[...downloads].sort((a, b) => a.importedAt - b.importedAt).map((track) => (
+                <Pressable key={track.id} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, [...downloads].sort((a, b) => a.importedAt - b.importedAt)); }} className="mr-4">
+                  <View className="relative">
+                    <Image source={{ uri: track.artwork ?? undefined }} style={{ width: 140, height: 140, borderRadius: 8 }} contentFit="cover" />
+                    <LinearGradient colors={['transparent', 'rgba(139,92,246,0.6)']} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60, borderBottomLeftRadius: 8, borderBottomRightRadius: 8 }} />
+                  </View>
+                  <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>{track.title}</Text>
+                  <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 140 }}>{track.artist}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          )}
+        </Animated.View>
+
+        {/* Focus Flow — from saved tracks */}
+        <Animated.View entering={FadeInDown.delay(100).springify()} className="mt-6">
+          <View className="flex-row items-center px-5 mb-2">
+            <Brain size={20} color="#10B981" />
+            <Text className="text-white text-xl font-bold ml-2">Focus Flow</Text>
+          </View>
+          <Text className="text-white/50 text-sm px-5 mb-4">
+            Lo-fi, ambient & instrumental for deep concentration
+          </Text>
+          {downloads.length === 0 ? (
+            <View className="mx-5 bg-white/5 rounded-xl p-4 items-center">
+              <Text className="text-white/40 text-sm">Save songs to fill this playlist</Text>
+            </View>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }} style={{ flexGrow: 0 }}>
+              {[...downloads].sort((a, b) => b.importedAt - a.importedAt).map((track) => (
+                <Pressable key={track.id} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, [...downloads].sort((a, b) => b.importedAt - a.importedAt)); }} className="mr-4">
+                  <View className="relative">
+                    <Image source={{ uri: track.artwork ?? undefined }} style={{ width: 140, height: 140, borderRadius: 8 }} contentFit="cover" />
+                    <LinearGradient colors={['transparent', 'rgba(16,185,129,0.5)']} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60, borderBottomLeftRadius: 8, borderBottomRightRadius: 8 }} />
+                  </View>
+                  <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>{track.title}</Text>
+                  <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 140 }}>{track.artist}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          )}
+        </Animated.View>
 
         {/* Feed sections */}
         {sections.map((section, sectionIndex) => (
