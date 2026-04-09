@@ -763,12 +763,12 @@ export default function HomeScreen() {
           <DailyMixHeroCard
             title={madeForYou?.title ?? 'Daily Mix 1'}
             artistNames={heroArtists || 'Flume, ODESZA, Tycho'}
-            artworks={(() => {
-              const pool = allDownloads.length > 0
-                ? allDownloads.map(d => d.artwork).filter(Boolean) as string[]
-                : quickPicks.map(t => t.artwork).filter(Boolean) as string[];
-              return pool;
-            })()}
+            artworks={
+              allDownloads
+                .filter(d => d.source === 'soundcloud')
+                .map(d => d.artwork)
+                .filter(Boolean) as string[]
+            }
             onPress={() => { if (quickPicks.length > 0) playTrack(quickPicks[0], quickPicks); }}
           />
         </View>
