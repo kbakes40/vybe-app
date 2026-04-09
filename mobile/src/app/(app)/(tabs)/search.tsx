@@ -149,12 +149,6 @@ export default function SearchScreen() {
   const [spotifyLoading, setSpotifyLoading] = useState(false);
   const [spotifyError, setSpotifyError] = useState<string | null>(null);
 
-  // Live search results (YouTube Music + SoundCloud) for typed queries
-  const [liveYtmTracks, setLiveYtmTracks] = useState<Track[]>([]);
-  const [liveScTracks, setLiveScTracks] = useState<Track[]>([]);
-  const [liveSearchLoading, setLiveSearchLoading] = useState(false);
-  const liveSearchRef = useRef<string>('');
-
   // Tracks which genre's requests are "current" — stale callbacks are ignored
   const activeGenreRef = useRef<string | null>(lastSelectedGenre);
 
@@ -192,49 +186,6 @@ export default function SearchScreen() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Debounced live search — fires 600ms after user stops typing
-  useEffect(() => {
-    const q = searchQuery.trim();
-    if (!q || extractSpotifyPlaylistId(q)) {
-      setLiveYtmTracks([]);
-      setLiveScTracks([]);
-      setLiveSearchLoading(false);
-      return;
-    }
-
-    setLiveSearchLoading(true);
-    liveSearchRef.current = q;
-
-    const timer = setTimeout(async () => {
-      if (liveSearchRef.current !== q) return;
-      try {
-        const [ytmRes, scRes] = await Promise.allSettled([
-          withTimeout(api.get<PlaylistTrack[]>(`/api/youtube/search?q=${encodeURIComponent(q)}&maxResults=8`), 20000),
-          withTimeout(api.get<SCTrack[]>(`/api/soundcloud/search?q=${encodeURIComponent(q)}&maxResults=6`), 20000),
-        ]);
-        if (liveSearchRef.current !== q) return;
-
-        if (ytmRes.status === 'fulfilled' && ytmRes.value) {
-          setLiveYtmTracks((ytmRes.value).map(t => ({
-            id: `ytm-${t.videoId}`, title: t.title, artist: t.channelName,
-            artwork: t.thumbnailUrl, source: 'youtube_music' as const,
-            youtubeMusicId: t.videoId, audioUrl: '', artistId: '', album: '', albumId: '', isLiked: false, duration: 0,
-          })));
-        }
-        if (scRes.status === 'fulfilled' && scRes.value) {
-          setLiveScTracks((scRes.value).map(t => ({
-            id: `sc-${t.trackId}`, title: t.title, artist: t.artist,
-            artwork: t.artwork, source: 'soundcloud' as const,
-            soundcloudUrl: t.soundcloudUrl, audioUrl: '', artistId: '', album: '', albumId: '', isLiked: false, duration: t.duration,
-          })));
-        }
-      } catch {}
-      if (liveSearchRef.current === q) setLiveSearchLoading(false);
-    }, 600);
-
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
 
   const allSearchableTracks = [...tracks, ...downloads];
 
@@ -514,52 +465,40 @@ export default function SearchScreen() {
           </View>
         ) : searchQuery ? (
           <View>
-            {/* Downloaded matches */}
-            {filteredDownloads.length > 0 ? (
-              <View style={{ marginBottom: 8 }}>
-                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', paddingHorizontal: 20, marginBottom: 12 }}>Downloaded</Text>
-                {filteredDownloads.map(track => (
-                  <TrackCard key={track.id} track={track} queue={filteredDownloads} />
-                ))}
-              </View>
-            ) : null}
-
-            {/* Artist matches */}
-            {filteredArtists.length > 0 ? (
-              <View style={{ marginBottom: 24 }}>
-                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', paddingHorizontal: 20, marginBottom: 12 }}>Artists</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }} style={{ flexGrow: 0 }}>
-                  {filteredArtists.map(artist => (
-                    <ArtistCard key={artist.id} artist={artist} onPress={() => router.push(`/(app)/artist/${artist.id}` as never)} size="small" />
-                  ))}
-                </ScrollView>
-              </View>
-            ) : null}
-
-            {/* Live YouTube Music results */}
-            <SectionRow
-              label="YouTube Music"
-              icon={<View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: '#FF0000', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#fff', fontSize: 10 }}>♪</Text></View>}
-              loading={liveSearchLoading}
-              tracks={liveYtmTracks}
-              onPlay={track => playTrack(track, liveYtmTracks)}
-            />
-
-            {/* Live SoundCloud results */}
-            <SectionRow
-              label="SoundCloud"
-              icon={<View style={{ width: 18, height: 14, borderRadius: 3, backgroundColor: '#FF5500', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#fff', fontSize: 8, fontWeight: '900', letterSpacing: -0.5 }}>)))</Text></View>}
-              loading={liveSearchLoading}
-              tracks={liveScTracks}
-              onPlay={track => playTrack(track, liveScTracks)}
-            />
-
-            {/* No results at all */}
-            {!liveSearchLoading && liveYtmTracks.length === 0 && liveScTracks.length === 0 && filteredDownloads.length === 0 && filteredArtists.length === 0 ? (
-              <View style={{ alignItems: 'center', justifyContent: 'center', paddingTop: 60 }}>
+            {filteredDownloads.length > 0 || filteredTracks.length > 0 || filteredArtists.length > 0 ? (
+              <>
+                {filteredDownloads.length > 0 ? (
+                  <View style={{ marginBottom: 8 }}>
+                    <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', paddingHorizontal: 20, marginBottom: 12 }}>Downloaded</Text>
+                    {filteredDownloads.map(track => (
+                      <TrackCard key={track.id} track={track} queue={filteredDownloads} />
+                    ))}
+                  </View>
+                ) : null}
+                {filteredArtists.length > 0 ? (
+                  <View style={{ marginBottom: 24 }}>
+                    <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', paddingHorizontal: 20, marginBottom: 12 }}>Artists</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }} style={{ flexGrow: 0 }}>
+                      {filteredArtists.map(artist => (
+                        <ArtistCard key={artist.id} artist={artist} onPress={() => router.push(`/(app)/artist/${artist.id}` as never)} size="small" />
+                      ))}
+                    </ScrollView>
+                  </View>
+                ) : null}
+                {filteredTracks.length > 0 ? (
+                  <View>
+                    <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', paddingHorizontal: 20, marginBottom: 12 }}>Songs</Text>
+                    {filteredTracks.slice(0, 10).map(track => (
+                      <TrackCard key={track.id} track={track} queue={filteredTracks} />
+                    ))}
+                  </View>
+                ) : null}
+              </>
+            ) : (
+              <View style={{ alignItems: 'center', justifyContent: 'center', paddingTop: 80 }}>
                 <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 18 }}>No results for "{searchQuery}"</Text>
               </View>
-            ) : null}
+            )}
           </View>
         ) : selectedGenre ? (
           <View style={{ paddingHorizontal: 20 }}>

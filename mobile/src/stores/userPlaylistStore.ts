@@ -20,7 +20,7 @@ export interface UserPlaylist {
 
 interface UserPlaylistState {
   playlists: UserPlaylist[];
-  createPlaylist: (name: string, tracks: Track[], id?: string) => void;
+  createPlaylist: (name: string, tracks: Track[]) => void;
   deletePlaylist: (id: string) => void;
   addTracksToPlaylist: (id: string, tracks: Track[]) => void;
   removeTrackFromPlaylist: (playlistId: string, trackId: string) => void;
@@ -31,12 +31,12 @@ export const useUserPlaylistStore = create<UserPlaylistState>()(
     (set) => ({
       playlists: [],
 
-      createPlaylist: (name, tracks, id) =>
+      createPlaylist: (name, tracks) =>
         set((state) => ({
           playlists: [
             ...state.playlists,
             {
-              id: id ?? `pl-${Date.now()}`,
+              id: `pl-${Date.now()}`,
               name,
               tracks,
               createdAt: Date.now(),

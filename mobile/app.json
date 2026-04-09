@@ -9,12 +9,12 @@
     "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.vibecode.app",
+      "bundleIdentifier": "com.vibecode.vybe",
       "appleTeamId": "FCXP585VH2"
     },
     "android": {
       "edgeToEdgeEnabled": true,
-      "package": "com.vibecode.app"
+      "package": "com.vibecode.vybe"
     },
     "plugins": [
       "expo-router"

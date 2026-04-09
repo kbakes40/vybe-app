@@ -9,11 +9,10 @@ const youtubeRouter = new Hono();
 const VIDEO_ID_RE = /^[a-zA-Z0-9_-]{6,32}$/;
 const YTDLP_BINARY_PATH = path.join(os.tmpdir(), "yt-dlp");
 const ytDlp = new YTDlpWrap(YTDLP_BINARY_PATH);
-
 const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), "youtube-cookies.txt");
 
 // Download the standalone yt-dlp binary on startup.
-// We fetch yt-dlp_linux directly so it doesn't require python3 at runtime.
+// yt-dlp_linux is self-contained — no python3 required at runtime.
 (async () => {
   try {
     const fs = await import("fs");
@@ -28,37 +27,12 @@ const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), "youtube-cookies.txt");
       fs.writeFileSync(YTDLP_BINARY_PATH, Buffer.from(buf), { mode: 0o755 });
       console.log("[yt-dlp] binary downloaded to", YTDLP_BINARY_PATH);
     }
-
-    // Write YouTube cookies from env var if provided.
-    // Set YOUTUBE_COOKIES in Railway as a base64-encoded Netscape cookie file.
     const cookiesB64 = process.env.YOUTUBE_COOKIES;
     if (cookiesB64) {
       fs.writeFileSync(YTDLP_COOKIES_PATH, Buffer.from(cookiesB64, "base64").toString("utf-8"));
       console.log("[yt-dlp] cookies written to", YTDLP_COOKIES_PATH);
     } else {
       console.warn("[yt-dlp] YOUTUBE_COOKIES not set — YouTube may block requests");
-    }
-
-    // yt-dlp's web client needs a JS runtime to solve YouTube's n-challenge.
-    // Railway only provides 'bun', not 'node', so create a /tmp/node → bun symlink.
-    const { execSync } = require("child_process");
-    try {
-      execSync("node --version 2>/dev/null", { stdio: "ignore" });
-      console.log("[yt-dlp] node already available for JS challenge solving");
-    } catch {
-      try {
-        const bunPath = execSync("which bun 2>/dev/null", { encoding: "utf-8" }).trim();
-        if (bunPath) {
-          fs.writeFileSync("/tmp/node", `#!/bin/sh\nexec "${bunPath}" "$@"\n`);
-          fs.chmodSync("/tmp/node", 0o755);
-          if (!process.env.PATH?.startsWith("/tmp:")) {
-            process.env.PATH = `/tmp:${process.env.PATH}`;
-          }
-          console.log("[yt-dlp] created /tmp/node → bun shim for JS challenge solving");
-        }
-      } catch (shimErr: any) {
-        console.warn("[yt-dlp] could not create node shim:", shimErr.message);
-      }
     }
   } catch (e: any) {
     console.error("[yt-dlp] startup error:", e.message);
@@ -96,29 +70,23 @@ function setCachedUrl(videoId: string, url: string): void {
 async function resolveAudioUrl(videoId: string): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
-  const args = [
-    `https://www.youtube.com/watch?v=${videoId}`,
-    "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio",
-    "--get-url",
-    "--no-playlist",
-    "--quiet",
-    "--extractor-args", "youtube:player_client=tv_embedded",
-    "--js-runtimes", "node",
-    ...cookieArgs(),
-  ];
-  console.log("[yt-dlp] running:", YTDLP_BINARY_PATH, args.join(" "));
   try {
-    const output = await ytDlp.execPromise(args, {}, controller.signal);
+    const output = await ytDlp.execPromise([
+      `https://www.youtube.com/watch?v=${videoId}`,
+      "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio",
+      "--get-url",
+      "--no-playlist",
+      "--quiet",
+      "--extractor-args", "youtube:player_client=ios",
+      ...cookieArgs(),
+    ], {}, controller.signal);
     clearTimeout(timer);
     const url = output.trim().split("\n")[0];
-    console.log('[yt-dlp output]', url);
     if (!url.startsWith("http")) throw new Error(`yt-dlp returned invalid URL`);
     return url;
   } catch (e: any) {
     clearTimeout(timer);
-    console.error("[yt-dlp] error message:", e.message);
-    console.error("[yt-dlp] error stderr:", e.stderr);
-    console.error("[yt-dlp] error stdout:", e.stdout);
+    console.error("[yt-dlp] resolveAudioUrl error:", e.message);
     throw new Error(`yt-dlp failed: ${e.message}`);
   }
 }
@@ -261,8 +229,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
         "--no-warnings",
         "--no-part",
         "--print", "after_move:filepath",
-        "--extractor-args", "youtube:player_client=tv_embedded",
-        "--js-runtimes", "node",
+        "--extractor-args", "youtube:player_client=ios",
         ...cookieArgs(),
       ], {}, controller.signal);
       clearTimeout(timer);
@@ -389,9 +356,6 @@ async function searchYouTubeYtDlp(query: string, maxResults: number): Promise<Ar
     output = await ytDlp.execPromise([
       `ytsearch${fetchCount}:${query}`,
       "--dump-json", "--flat-playlist", "--quiet", "--no-warnings",
-      "--extractor-args", "youtube:player_client=tv_embedded",
-      "--js-runtimes", "node",
-      ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
   } catch (e: any) {
@@ -444,7 +408,6 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
     "--no-playlist",
     "--quiet",
     "--no-warnings",
-    "--extractor-args", "youtube:player_client=tv_embedded",
   ]);
   const lines = output.trim().split("\n");
   if (lines.length < 3) throw new Error(`yt-dlp info returned insufficient output`);
@@ -484,9 +447,6 @@ async function getPlaylistTracks(listId: string): Promise<Array<{ videoId: strin
       "--dump-json",
       "--no-warnings",
       "--quiet",
-      "--extractor-args", "youtube:player_client=tv_embedded",
-      "--js-runtimes", "node",
-      ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
   } catch (e: any) {

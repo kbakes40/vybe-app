@@ -195,7 +195,6 @@ function PasteSection({ initialUrl }: { initialUrl?: string }) {
   const [playlistTracks, setPlaylistTracks] = useState<PlaylistTrack[]>([]);
   const [streamingResult, setStreamingResult] = useState<StreamingResult | null>(null);
   const inputRef = useRef<TextInput>(null);
-  const didAutoLookup = useRef(false);
 
   const platform = detectPlatform(url);
   const isPlaylist = !!url && isPlaylistUrl(url);
@@ -276,14 +275,6 @@ function PasteSection({ initialUrl }: { initialUrl?: string }) {
       setLoading(false);
     }
   }, [url, platform, isPlaylist]);
-
-  // Auto-lookup when screen is opened with a pre-filled URL (from clipboard banner)
-  useEffect(() => {
-    if (initialUrl && !didAutoLookup.current && detectPlatform(initialUrl)) {
-      didAutoLookup.current = true;
-      handleLookup();
-    }
-  }, [handleLookup, initialUrl]);
 
   const ytVideoId = url ? extractYouTubeVideoId(url) : null;
 
