@@ -442,24 +442,55 @@ export default function LibraryScreen() {
           </LinearGradient>
         </Pressable>
 
-        {/* Playlists */}
+        {/* Playlists — artist-style rows with square artwork */}
         {playlists.map(playlist => (
           <Pressable
             key={playlist.id}
-            onPress={() => router.push(`/(app)/playlist/${playlist.id}` as never)}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              router.push(`/(app)/playlist/${playlist.id}` as never);
+            }}
             className="flex-row items-center px-5 py-3"
           >
-            <Image
-              source={{ uri: playlist.artwork }}
-              style={{ width: 56, height: 56, borderRadius: 4 }}
-              contentFit="cover"
-            />
-            <View className="flex-1 ml-4">
-              <Text className="text-white font-medium">{playlist.title}</Text>
-              <Text className="text-white/60 text-sm">
-                Playlist · {playlist.creator}
-              </Text>
+            <View
+              style={{
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.3,
+                shadowRadius: 8,
+                elevation: 6,
+              }}
+            >
+              <Image
+                source={{ uri: playlist.artwork }}
+                style={{ width: 60, height: 60, borderRadius: 6 }}
+                contentFit="cover"
+              />
             </View>
+            <View className="flex-1 ml-4">
+              <Text className="text-white font-semibold text-[15px]" numberOfLines={1}>
+                {playlist.title}
+              </Text>
+              <View className="flex-row items-center mt-0.5">
+                <View
+                  style={{
+                    backgroundColor: '#8B5CF6',
+                    paddingHorizontal: 5,
+                    paddingVertical: 1,
+                    borderRadius: 3,
+                    marginRight: 6,
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700', letterSpacing: 0.5 }}>
+                    PLAYLIST
+                  </Text>
+                </View>
+                <Text className="text-white/50 text-sm" numberOfLines={1}>
+                  {playlist.trackCount} songs · {playlist.creator}
+                </Text>
+              </View>
+            </View>
+            <ChevronRight size={20} color="rgba(255,255,255,0.3)" />
           </Pressable>
         ))}
       </View>

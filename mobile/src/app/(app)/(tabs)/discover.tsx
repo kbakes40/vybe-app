@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import {
   Compass,
@@ -20,14 +21,133 @@ import {
   Settings,
   Youtube,
   Cloud,
+  Moon,
+  Brain,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+  withSequence,
+  Easing,
+  interpolate,
+  runOnJS,
+} from 'react-native-reanimated';
 import { DiscoverCard } from '@/components/DiscoverCard';
-import {
-  useDiscoverFeedStore,
-  DiscoverSection,
-} from '@/stores/discoverFeedStore';
+import { useDiscoverFeedStore, DiscoverItem } from '@/stores/discoverFeedStore';
+import { useDownloadsStore } from '@/stores/downloadsStore';
+import { usePlaybackController } from '@/stores/playbackController';
+import { Track } from '@/types/music';
+
+// ─── Vybe Beats Card ─────────────────────────────────────────────────────────
+const BEATS_GRID = 200;
+const BEATS_TILE = (BEATS_GRID - 2) / 2;
+
+function BeatsFlipTile({ uri, size }: { uri: string; size: number }) {
+  const flip = useSharedValue(0);
+  const [displayed, setDisplayed] = useState(uri);
+
+  useEffect(() => {
+    if (uri === displayed) return;
+    flip.value = withSequence(
+      withTiming(1, { duration: 220, easing: Easing.in(Easing.ease) }, (done) => {
+        if (done) runOnJS(setDisplayed)(uri);
+      }),
+      withTiming(0, { duration: 220, easing: Easing.out(Easing.ease) }),
+    );
+  }, [uri]);
+
+  const animStyle = useAnimatedStyle(() => ({
+    transform: [{ perspective: 600 }, { rotateY: `${interpolate(flip.value, [0, 1], [0, 90])}deg` }],
+  }));
+
+  return (
+    <Animated.View style={[{ width: size, height: size }, animStyle]}>
+      <Image source={{ uri: displayed }} style={{ width: size, height: size }} contentFit="cover" cachePolicy="memory-disk" />
+    </Animated.View>
+  );
+}
+
+function VybeBeatsCard({ items, onPress }: { items: DiscoverItem[]; onPress: () => void }) {
+  const cardScale = useSharedValue(1);
+  const cardAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: cardScale.value }] }));
+
+  const artworks = items.slice(0, 4).map(i => i.thumbnailUrl).filter(Boolean);
+  const [slots, setSlots] = useState<string[]>(() => {
+    const init = artworks.slice(0, 4);
+    while (init.length < 4) init.push(init[init.length - 1] ?? '');
+    return init;
+  });
+  const slotAge = useRef<number[]>([3, 2, 1, 0]);
+  const prevNewest = useRef('');
+
+  useEffect(() => {
+    const newest = artworks[0];
+    if (!newest || newest === prevNewest.current) return;
+    prevNewest.current = newest;
+    setSlots(prev => {
+      if (prev.includes(newest)) return prev;
+      const maxAge = Math.max(...slotAge.current);
+      const idx = slotAge.current.indexOf(maxAge);
+      slotAge.current = slotAge.current.map((a, i) => i === idx ? 0 : a + 1);
+      const next = [...prev]; next[idx] = newest; return next;
+    });
+  }, [artworks[0]]);
+
+  const subtitle = items.length > 0
+    ? [...new Set(items.slice(0, 4).map(i => i.creatorName))].slice(0, 3).join(', ')
+    : 'Your curated picks';
+
+  return (
+    <Animated.View style={[{ marginHorizontal: 20 }, cardAnimStyle]}>
+      <Pressable
+        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); onPress(); }}
+        onPressIn={() => { cardScale.value = withSpring(0.97); }}
+        onPressOut={() => { cardScale.value = withSpring(1); }}
+      >
+        <LinearGradient
+          colors={['#0B1A2E', '#061020', '#040C18']}
+          start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+          style={{ borderRadius: 18, overflow: 'hidden' }}
+        >
+          <View style={{ flexDirection: 'row', minHeight: BEATS_GRID }}>
+            <View style={{ flex: 1, paddingLeft: 16, paddingVertical: 20, paddingRight: 12, justifyContent: 'space-between' }}>
+              <View>
+                <View style={{ backgroundColor: '#2563EB', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start', marginBottom: 10 }}>
+                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 1.2 }}>CURATED</Text>
+                </View>
+                <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', lineHeight: 26 }} numberOfLines={2}>Vybe Beats</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.42)', fontSize: 12, marginTop: 5 }} numberOfLines={1}>{subtitle}</Text>
+              </View>
+              <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
+                <Sparkles size={20} color="#0A0A0A" />
+              </View>
+            </View>
+            <View style={{ width: BEATS_GRID, height: BEATS_GRID }}>
+              <View style={{ flex: 1, flexDirection: 'column' }}>
+                <View style={{ flex: 1, flexDirection: 'row' }}>
+                  <BeatsFlipTile uri={slots[0]} size={BEATS_TILE} />
+                  <View style={{ width: 2, backgroundColor: '#040C18' }} />
+                  <BeatsFlipTile uri={slots[1]} size={BEATS_TILE} />
+                </View>
+                <View style={{ height: 2, backgroundColor: '#040C18' }} />
+                <View style={{ flex: 1, flexDirection: 'row' }}>
+                  <BeatsFlipTile uri={slots[2]} size={BEATS_TILE} />
+                  <View style={{ width: 2, backgroundColor: '#040C18' }} />
+                  <BeatsFlipTile uri={slots[3]} size={BEATS_TILE} />
+                </View>
+              </View>
+            </View>
+          </View>
+        </LinearGradient>
+      </Pressable>
+    </Animated.View>
+  );
+}
 
 /**
  * Discover Tab Screen
@@ -40,6 +160,10 @@ import {
 export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+
+  // Downloads for local playlist sections
+  const downloads = useDownloadsStore((s) => s.downloads);
+  const playTrack = usePlaybackController((s) => s.playTrack);
 
   // Store selectors
   const sections = useDiscoverFeedStore((s) => s.sections);
@@ -241,6 +365,91 @@ export default function DiscoverScreen() {
             </Pressable>
           </Animated.View>
         ) : null}
+
+        {/* Vybe Beats — curated from preferences */}
+        {sections.length > 0 && (() => {
+          const allItems = sections.flatMap(s => s.items);
+          const tracks: Track[] = allItems.map(item => ({
+            id: item.id,
+            title: item.title,
+            artist: item.creatorName,
+            artistId: '',
+            album: '',
+            albumId: '',
+            artwork: item.thumbnailUrl,
+            duration: 0,
+            isLiked: false,
+            source: item.sourcePlatform === 'YOUTUBE' ? 'youtube' : 'soundcloud',
+            youtubeId: item.sourcePlatform === 'YOUTUBE' ? item.id : undefined,
+            soundcloudUrl: item.sourcePlatform === 'SOUNDCLOUD' ? item.externalUrl : undefined,
+          }));
+          return (
+            <Animated.View entering={FadeInDown.delay(0).springify()} className="mt-4">
+              <VybeBeatsCard
+                items={allItems}
+                onPress={() => { if (tracks.length > 0) playTrack(tracks[0], tracks); }}
+              />
+            </Animated.View>
+          );
+        })()}
+
+        {/* Late Night Mix — from saved tracks */}
+        <Animated.View entering={FadeInDown.delay(0).springify()} className="mt-6">
+          <View className="flex-row items-center px-5 mb-2">
+            <Moon size={20} color="#8B5CF6" />
+            <Text className="text-white text-xl font-bold ml-2">Late Night</Text>
+          </View>
+          <Text className="text-white/50 text-sm px-5 mb-4">
+            Ambient, downtempo & experimental for the late hours
+          </Text>
+          {downloads.length === 0 ? (
+            <View className="mx-5 bg-white/5 rounded-xl p-4 items-center">
+              <Text className="text-white/40 text-sm">Save songs to fill this playlist</Text>
+            </View>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }} style={{ flexGrow: 0 }}>
+              {[...downloads].sort((a, b) => a.importedAt - b.importedAt).map((track) => (
+                <Pressable key={track.id} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, [...downloads].sort((a, b) => a.importedAt - b.importedAt)); }} className="mr-4">
+                  <View className="relative">
+                    <Image source={{ uri: track.artwork ?? undefined }} style={{ width: 140, height: 140, borderRadius: 8 }} contentFit="cover" />
+                    <LinearGradient colors={['transparent', 'rgba(139,92,246,0.6)']} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60, borderBottomLeftRadius: 8, borderBottomRightRadius: 8 }} />
+                  </View>
+                  <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>{track.title}</Text>
+                  <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 140 }}>{track.artist}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          )}
+        </Animated.View>
+
+        {/* Focus Flow — from saved tracks */}
+        <Animated.View entering={FadeInDown.delay(100).springify()} className="mt-6">
+          <View className="flex-row items-center px-5 mb-2">
+            <Brain size={20} color="#10B981" />
+            <Text className="text-white text-xl font-bold ml-2">Focus Flow</Text>
+          </View>
+          <Text className="text-white/50 text-sm px-5 mb-4">
+            Lo-fi, ambient & instrumental for deep concentration
+          </Text>
+          {downloads.length === 0 ? (
+            <View className="mx-5 bg-white/5 rounded-xl p-4 items-center">
+              <Text className="text-white/40 text-sm">Save songs to fill this playlist</Text>
+            </View>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }} style={{ flexGrow: 0 }}>
+              {[...downloads].sort((a, b) => b.importedAt - a.importedAt).map((track) => (
+                <Pressable key={track.id} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, [...downloads].sort((a, b) => b.importedAt - a.importedAt)); }} className="mr-4">
+                  <View className="relative">
+                    <Image source={{ uri: track.artwork ?? undefined }} style={{ width: 140, height: 140, borderRadius: 8 }} contentFit="cover" />
+                    <LinearGradient colors={['transparent', 'rgba(16,185,129,0.5)']} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60, borderBottomLeftRadius: 8, borderBottomRightRadius: 8 }} />
+                  </View>
+                  <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>{track.title}</Text>
+                  <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 140 }}>{track.artist}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          )}
+        </Animated.View>
 
         {/* Feed sections */}
         {sections.map((section, sectionIndex) => (
