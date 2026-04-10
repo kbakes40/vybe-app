@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { View, Text, ScrollView, Pressable, Dimensions, ActivityIndicator, RefreshControl, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -17,6 +17,7 @@ import Animated, {
   interpolate,
   Extrapolation,
   SharedValue,
+  runOnJS,
 } from 'react-native-reanimated';
 import { PlaylistCard } from '@/components/PlaylistCard';
 import { AlbumCard } from '@/components/AlbumCard';
@@ -87,40 +88,6 @@ function SourceIcon({ source }: { source: string | undefined }) {
 
 // ─── Daily Mix Hero Card ──────────────────────────────────────────────────────
 
-// Latitude-ring sphere — uniform tile coverage for a full globe (~184 tiles)
-const SPHERE_R = 86;
-const BASE_ART_SIZE = 22;
-const TILE_SPACING = 28; // arc distance between tile centres (world units)
-
-const SPHERE_POINTS: { x: number; y: number; z: number }[] = (() => {
-  const pts: { x: number; y: number; z: number }[] = [];
-  const numRings = 12; // polar rings from top to bottom
-
-  for (let ri = 0; ri <= numRings; ri++) {
-    const theta = (ri / numRings) * Math.PI; // 0 = top pole, π = bottom pole
-    const sinT = Math.sin(theta);
-    const cosT = Math.cos(theta);
-    const ringRadius = SPHERE_R * sinT;
-
-    // Poles get 1 tile; other rings packed to fill circumference
-    const n = (ri === 0 || ri === numRings)
-      ? 1
-      : Math.max(1, Math.round(2 * Math.PI * ringRadius / TILE_SPACING));
-
-    for (let j = 0; j < n; j++) {
-      const phiOffset = ri % 2 === 0 ? 0 : Math.PI / n; // stagger rings so tiles interleave
-      const phi = (2 * Math.PI * j / n) + phiOffset;
-      pts.push({
-        x: SPHERE_R * sinT * Math.cos(phi),
-        y: SPHERE_R * cosT * 0.88, // slightly flattened to fit card height
-        z: SPHERE_R * sinT * Math.sin(phi),
-      });
-    }
-  }
-
-  return pts.sort((a, b) => a.z - b.z); // initial back-to-front order
-})();
-
 interface DailyMixHeroCardProps {
   title: string;
   artistNames: string;
@@ -128,17 +95,65 @@ interface DailyMixHeroCardProps {
   onPress: () => void;
 }
 
+const GRID_SIZE = 200;
+const TILE = (GRID_SIZE - 2) / 2;
+
+function FlipTile({ uri, size }: { uri: string; size: number }) {
+  const flip = useSharedValue(0);
+  const [displayed, setDisplayed] = useState(uri);
+
+  useEffect(() => {
+    if (uri === displayed) return;
+    flip.value = withSequence(
+      withTiming(1, { duration: 220, easing: Easing.in(Easing.ease) }, (done) => {
+        if (done) runOnJS(setDisplayed)(uri);
+      }),
+      withTiming(0, { duration: 220, easing: Easing.out(Easing.ease) }),
+    );
+  }, [uri]);
+
+  const animStyle = useAnimatedStyle(() => ({
+    transform: [
+      { perspective: 600 },
+      { rotateY: `${interpolate(flip.value, [0, 1], [0, 90])}deg` },
+    ],
+  }));
+
+  return (
+    <Animated.View style={[{ width: size, height: size }, animStyle]}>
+      <Image source={{ uri: displayed }} style={{ width: size, height: size }} contentFit="cover" cachePolicy="memory-disk" />
+    </Animated.View>
+  );
+}
+
 function DailyMixHeroCard({ title, artistNames, artworks, onPress }: DailyMixHeroCardProps) {
   const cardScale = useSharedValue(1);
   const cardAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: cardScale.value }] }));
 
-  const sphereW = 230;
-  const sphereH = 220;
-  const cx = sphereW / 2;
-  const cy = sphereH / 2;
+  const [slots, setSlots] = useState<string[]>(() => {
+    const init = artworks.slice(0, 4);
+    while (init.length < 4) init.push(init[init.length - 1] ?? '');
+    return init;
+  });
+  const slotAge = useRef<number[]>([3, 2, 1, 0]);
+  const ageCounter = useRef(4);
+  const prevNewest = useRef<string>('');
 
-  // Card background colour used for edge vignette
-  const BG = '#0D0722';
+  useEffect(() => {
+    const newest = artworks[0];
+    if (!newest || newest === prevNewest.current) return;
+    prevNewest.current = newest;
+    setSlots(prev => {
+      if (prev.includes(newest)) return prev;
+      const maxAge = Math.max(...slotAge.current);
+      const oldestIdx = slotAge.current.indexOf(maxAge);
+      slotAge.current = slotAge.current.map((a, i) => i === oldestIdx ? 0 : a + 1);
+      ageCounter.current += 1;
+      const next = [...prev];
+      next[oldestIdx] = newest;
+      return next;
+    });
+  }, [artworks[0]]);
 
   return (
     <Animated.View style={[{ marginHorizontal: 20 }, cardAnimStyle]}>
@@ -150,57 +165,38 @@ function DailyMixHeroCard({ title, artistNames, artworks, onPress }: DailyMixHer
         <LinearGradient
           colors={['#1A0836', '#0F0428', '#0D0722']}
           start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-          style={{ borderRadius: 18, overflow: 'hidden', minHeight: 180 }}
+          style={{ borderRadius: 18, overflow: 'hidden' }}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: 16, paddingVertical: 14, paddingRight: 0 }}>
-            {/* Left: badge + title + play */}
-            <View style={{ flex: 1, paddingRight: 8 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 7 }}>
-                <View style={{ backgroundColor: '#7C3AED', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
+          <View style={{ flexDirection: 'row', minHeight: GRID_SIZE }}>
+            {/* Left: badge + title + artists + play */}
+            <View style={{ flex: 1, paddingLeft: 16, paddingVertical: 20, paddingRight: 12, justifyContent: 'space-between' }}>
+              <View>
+                <View style={{ backgroundColor: '#7C3AED', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start', marginBottom: 10 }}>
                   <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 1.2 }}>NEW</Text>
                 </View>
+                <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', lineHeight: 26 }} numberOfLines={2}>{title}</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.42)', fontSize: 12, marginTop: 5 }} numberOfLines={1}>{artistNames}</Text>
               </View>
-              <Text style={{ color: '#fff', fontSize: 20, fontWeight: '800', lineHeight: 24 }} numberOfLines={2}>{title}</Text>
-              <Text style={{ color: 'rgba(255,255,255,0.42)', fontSize: 12, marginTop: 4 }} numberOfLines={1}>{artistNames}</Text>
-              <View style={{ marginTop: 14 }}>
-                <View style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
-                  <Play size={20} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 2 }} />
-                </View>
+              <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
+                <Play size={20} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 2 }} />
               </View>
             </View>
 
-            {/* Right: sphere clipped to a circle — no square artifact */}
-            <View style={{
-              width: sphereW,
-              height: sphereH,
-              borderRadius: sphereW / 2,
-              overflow: 'hidden',
-              backgroundColor: 'transparent',
-            }}>
-              {artworks.length > 0 && SPHERE_POINTS.map((pt, i) => {
-                const depth = (pt.z + SPHERE_R) / (2 * SPHERE_R);
-                const size = BASE_ART_SIZE * (0.70 + 0.30 * depth);
-                const opacity = 0.35 + 0.65 * depth;
-                const artwork = artworks[i % artworks.length];
-                if (!artwork) return null;
-                return (
-                  <Image
-                    key={i}
-                    source={{ uri: artwork }}
-                    style={{
-                      position: 'absolute',
-                      left: cx + pt.x - size / 2,
-                      top: cy + pt.y - size / 2,
-                      width: size,
-                      height: size,
-                      borderRadius: 3,
-                      opacity,
-                      zIndex: Math.round(pt.z),
-                    }}
-                    contentFit="cover"
-                  />
-                );
-              })}
+            {/* Right: 2×2 square grid */}
+            <View style={{ width: GRID_SIZE, height: GRID_SIZE }}>
+              <View style={{ flex: 1, flexDirection: 'column' }}>
+                <View style={{ flex: 1, flexDirection: 'row' }}>
+                  <FlipTile uri={slots[0]} size={TILE} />
+                  <View style={{ width: 2, backgroundColor: '#0D0722' }} />
+                  <FlipTile uri={slots[1]} size={TILE} />
+                </View>
+                <View style={{ height: 2, backgroundColor: '#0D0722' }} />
+                <View style={{ flex: 1, flexDirection: 'row' }}>
+                  <FlipTile uri={slots[2]} size={TILE} />
+                  <View style={{ width: 2, backgroundColor: '#0D0722' }} />
+                  <FlipTile uri={slots[3]} size={TILE} />
+                </View>
+              </View>
             </View>
           </View>
         </LinearGradient>
