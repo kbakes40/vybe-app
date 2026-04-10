@@ -764,21 +764,36 @@ export default function HomeScreen() {
             title={madeForYou?.title ?? 'Vybe Mix'}
             artistNames={heroArtists || 'Flume, ODESZA, Tycho'}
             artworks={(() => {
-              // SoundCloud only — square artwork fits the tile grid
+              // Prefer SoundCloud — square artwork fits the tile grid
               const seen = new Set<string>();
               const pool: string[] = [];
               for (const t of recentTracks) {
                 if (t.source === 'soundcloud' && t.artwork && !seen.has(t.artwork)) {
-                  seen.add(t.artwork);
-                  pool.push(t.artwork);
+                  seen.add(t.artwork); pool.push(t.artwork);
                   if (pool.length === 4) break;
                 }
               }
               if (pool.length < 4) {
                 for (const d of allDownloads) {
                   if (d.source === 'soundcloud' && d.artwork && !seen.has(d.artwork)) {
-                    seen.add(d.artwork);
-                    pool.push(d.artwork);
+                    seen.add(d.artwork); pool.push(d.artwork);
+                    if (pool.length === 4) break;
+                  }
+                }
+              }
+              // Fall back to any source if not enough SoundCloud art
+              if (pool.length < 4) {
+                for (const t of recentTracks) {
+                  if (t.artwork && !seen.has(t.artwork)) {
+                    seen.add(t.artwork); pool.push(t.artwork);
+                    if (pool.length === 4) break;
+                  }
+                }
+              }
+              if (pool.length < 4) {
+                for (const d of allDownloads) {
+                  if (d.artwork && !seen.has(d.artwork)) {
+                    seen.add(d.artwork); pool.push(d.artwork);
                     if (pool.length === 4) break;
                   }
                 }
