@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -25,11 +25,129 @@ import {
   Brain,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+  withSequence,
+  Easing,
+  interpolate,
+  runOnJS,
+} from 'react-native-reanimated';
 import { DiscoverCard } from '@/components/DiscoverCard';
-import { useDiscoverFeedStore } from '@/stores/discoverFeedStore';
+import { useDiscoverFeedStore, DiscoverItem } from '@/stores/discoverFeedStore';
 import { useDownloadsStore } from '@/stores/downloadsStore';
 import { usePlaybackController } from '@/stores/playbackController';
+import { Track } from '@/types/music';
+
+// ─── Vybe Beats Card ─────────────────────────────────────────────────────────
+const BEATS_GRID = 200;
+const BEATS_TILE = (BEATS_GRID - 2) / 2;
+
+function BeatsFlipTile({ uri, size }: { uri: string; size: number }) {
+  const flip = useSharedValue(0);
+  const [displayed, setDisplayed] = useState(uri);
+
+  useEffect(() => {
+    if (uri === displayed) return;
+    flip.value = withSequence(
+      withTiming(1, { duration: 220, easing: Easing.in(Easing.ease) }, (done) => {
+        if (done) runOnJS(setDisplayed)(uri);
+      }),
+      withTiming(0, { duration: 220, easing: Easing.out(Easing.ease) }),
+    );
+  }, [uri]);
+
+  const animStyle = useAnimatedStyle(() => ({
+    transform: [{ perspective: 600 }, { rotateY: `${interpolate(flip.value, [0, 1], [0, 90])}deg` }],
+  }));
+
+  return (
+    <Animated.View style={[{ width: size, height: size }, animStyle]}>
+      <Image source={{ uri: displayed }} style={{ width: size, height: size }} contentFit="cover" cachePolicy="memory-disk" />
+    </Animated.View>
+  );
+}
+
+function VybeBeatsCard({ items, onPress }: { items: DiscoverItem[]; onPress: () => void }) {
+  const cardScale = useSharedValue(1);
+  const cardAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: cardScale.value }] }));
+
+  const artworks = items.slice(0, 4).map(i => i.thumbnailUrl).filter(Boolean);
+  const [slots, setSlots] = useState<string[]>(() => {
+    const init = artworks.slice(0, 4);
+    while (init.length < 4) init.push(init[init.length - 1] ?? '');
+    return init;
+  });
+  const slotAge = useRef<number[]>([3, 2, 1, 0]);
+  const prevNewest = useRef('');
+
+  useEffect(() => {
+    const newest = artworks[0];
+    if (!newest || newest === prevNewest.current) return;
+    prevNewest.current = newest;
+    setSlots(prev => {
+      if (prev.includes(newest)) return prev;
+      const maxAge = Math.max(...slotAge.current);
+      const idx = slotAge.current.indexOf(maxAge);
+      slotAge.current = slotAge.current.map((a, i) => i === idx ? 0 : a + 1);
+      const next = [...prev]; next[idx] = newest; return next;
+    });
+  }, [artworks[0]]);
+
+  const subtitle = items.length > 0
+    ? [...new Set(items.slice(0, 4).map(i => i.creatorName))].slice(0, 3).join(', ')
+    : 'Your curated picks';
+
+  return (
+    <Animated.View style={[{ marginHorizontal: 20 }, cardAnimStyle]}>
+      <Pressable
+        onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); onPress(); }}
+        onPressIn={() => { cardScale.value = withSpring(0.97); }}
+        onPressOut={() => { cardScale.value = withSpring(1); }}
+      >
+        <LinearGradient
+          colors={['#0B1A2E', '#061020', '#040C18']}
+          start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+          style={{ borderRadius: 18, overflow: 'hidden' }}
+        >
+          <View style={{ flexDirection: 'row', minHeight: BEATS_GRID }}>
+            <View style={{ flex: 1, paddingLeft: 16, paddingVertical: 20, paddingRight: 12, justifyContent: 'space-between' }}>
+              <View>
+                <View style={{ backgroundColor: '#2563EB', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start', marginBottom: 10 }}>
+                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 1.2 }}>CURATED</Text>
+                </View>
+                <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', lineHeight: 26 }} numberOfLines={2}>Vybe Beats</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.42)', fontSize: 12, marginTop: 5 }} numberOfLines={1}>{subtitle}</Text>
+              </View>
+              <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
+                <Sparkles size={20} color="#0A0A0A" />
+              </View>
+            </View>
+            <View style={{ width: BEATS_GRID, height: BEATS_GRID }}>
+              <View style={{ flex: 1, flexDirection: 'column' }}>
+                <View style={{ flex: 1, flexDirection: 'row' }}>
+                  <BeatsFlipTile uri={slots[0]} size={BEATS_TILE} />
+                  <View style={{ width: 2, backgroundColor: '#040C18' }} />
+                  <BeatsFlipTile uri={slots[1]} size={BEATS_TILE} />
+                </View>
+                <View style={{ height: 2, backgroundColor: '#040C18' }} />
+                <View style={{ flex: 1, flexDirection: 'row' }}>
+                  <BeatsFlipTile uri={slots[2]} size={BEATS_TILE} />
+                  <View style={{ width: 2, backgroundColor: '#040C18' }} />
+                  <BeatsFlipTile uri={slots[3]} size={BEATS_TILE} />
+                </View>
+              </View>
+            </View>
+          </View>
+        </LinearGradient>
+      </Pressable>
+    </Animated.View>
+  );
+}
 
 /**
  * Discover Tab Screen
@@ -247,6 +365,33 @@ export default function DiscoverScreen() {
             </Pressable>
           </Animated.View>
         ) : null}
+
+        {/* Vybe Beats — curated from preferences */}
+        {sections.length > 0 && (() => {
+          const allItems = sections.flatMap(s => s.items);
+          const tracks: Track[] = allItems.map(item => ({
+            id: item.id,
+            title: item.title,
+            artist: item.creatorName,
+            artistId: '',
+            album: '',
+            albumId: '',
+            artwork: item.thumbnailUrl,
+            duration: 0,
+            isLiked: false,
+            source: item.sourcePlatform === 'YOUTUBE' ? 'youtube' : 'soundcloud',
+            youtubeId: item.sourcePlatform === 'YOUTUBE' ? item.id : undefined,
+            soundcloudUrl: item.sourcePlatform === 'SOUNDCLOUD' ? item.externalUrl : undefined,
+          }));
+          return (
+            <Animated.View entering={FadeInDown.delay(0).springify()} className="mt-4">
+              <VybeBeatsCard
+                items={allItems}
+                onPress={() => { if (tracks.length > 0) playTrack(tracks[0], tracks); }}
+              />
+            </Animated.View>
+          );
+        })()}
 
         {/* Late Night Mix — from saved tracks */}
         <Animated.View entering={FadeInDown.delay(0).springify()} className="mt-6">
