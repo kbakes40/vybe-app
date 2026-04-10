@@ -761,7 +761,7 @@ export default function HomeScreen() {
         {/* ── Daily Mix Hero Card ── */}
         <View className="mt-5">
           <DailyMixHeroCard
-            title={madeForYou?.title ?? 'Daily Mix 1'}
+            title={madeForYou?.title ?? 'Vybe Mix'}
             artistNames={heroArtists || 'Flume, ODESZA, Tycho'}
             artworks={(() => {
               // SoundCloud only — square artwork fits the tile grid
