@@ -73,7 +73,7 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
   try {
     const output = await ytDlp.execPromise([
       `https://www.youtube.com/watch?v=${videoId}`,
-      "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio",
+      "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio[acodec^=mp4a]/bestaudio[ext!=webm][ext!=opus][acodec!=opus]",
       "--get-url",
       "--no-playlist",
       "--quiet",
@@ -223,7 +223,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
     try {
       const output = await ytDlp.execPromise([
         `https://www.youtube.com/watch?v=${videoId}`,
-        "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio",
+        "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio[acodec^=mp4a]/bestaudio[ext!=webm][ext!=opus][acodec!=opus]",
         "--no-playlist",
         "-o", tmpTemplate,
         "--no-warnings",
