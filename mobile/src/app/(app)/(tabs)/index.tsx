@@ -455,8 +455,6 @@ export default function HomeScreen() {
   const playTrack = usePlaybackController(s => s.playTrack);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [mixes, setMixes] = useState<MixDefinition[]>([]);
-  const [lateNightTracks, setLateNightTracks] = useState<RelatedTrack[]>([]);
-  const [focusTracks, setFocusTracks] = useState<RelatedTrack[]>([]);
   const [curatedPlaylists, setCuratedPlaylists] = useState<CuratedPlaylist[]>([]);
   const [spotifyPlaylists, setSpotifyPlaylists] = useState<SpotifyPlaylist[]>([]);
   const [ytmTracks, setYtmTracks] = useState<PlaylistTrack[]>([]);
@@ -577,23 +575,8 @@ export default function HomeScreen() {
 
   const fetchMixes = async () => {
     setIsLoadingMixes(true);
-    const tracksToPreload: RelatedTrack[] = [];
 
     try {
-      // Fetch Late Night mix tracks
-      const lateNightResponse = await api.get<{ mix: MixDefinition; sampleTracks: RelatedTrack[] }>('/api/soundcloud/mixes/late-night');
-      if (lateNightResponse?.sampleTracks) {
-        setLateNightTracks(lateNightResponse.sampleTracks);
-        tracksToPreload.push(...lateNightResponse.sampleTracks);
-      }
-
-      // Fetch Focus mix tracks
-      const focusResponse = await api.get<{ mix: MixDefinition; sampleTracks: RelatedTrack[] }>('/api/soundcloud/mixes/focus');
-      if (focusResponse?.sampleTracks) {
-        setFocusTracks(focusResponse.sampleTracks);
-        tracksToPreload.push(...focusResponse.sampleTracks);
-      }
-
       // Fetch all mixes
       const mixesResponse = await api.get<MixDefinition[]>('/api/soundcloud/mixes');
       if (mixesResponse) {
@@ -1642,135 +1625,63 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
-        {/* Late Night Mix */}
-        {lateNightTracks.length > 0 && (
-          <View className="mt-8">
-            <View className="flex-row items-center px-5 mb-4">
-              <Moon size={20} color="#8B5CF6" />
-              <Text className="text-white text-xl font-bold ml-2">Late Night</Text>
+        {/* Late Night Mix — from downloads */}
+        <View className="mt-8">
+          <View className="flex-row items-center px-5 mb-2">
+            <Moon size={20} color="#8B5CF6" />
+            <Text className="text-white text-xl font-bold ml-2">Late Night</Text>
+          </View>
+          <Text className="text-white/50 text-sm px-5 mb-4">
+            Ambient, downtempo & experimental for the late hours
+          </Text>
+          {allDownloads.length === 0 ? (
+            <View className="mx-5 bg-white/5 rounded-xl p-4 items-center">
+              <Text className="text-white/40 text-sm">Save songs to fill this playlist</Text>
             </View>
-            <Text className="text-white/50 text-sm px-5 mb-4">
-              Ambient, downtempo & experimental for the late hours
-            </Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingHorizontal: 20 }}
-              style={{ flexGrow: 0 }}
-            >
-              {lateNightTracks.map(track => (
-                <Pressable
-                  key={track.id}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    playTrack(track, lateNightTracks);
-                  }}
-                  className="mr-4"
-                >
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }} style={{ flexGrow: 0 }}>
+              {[...allDownloads].sort((a, b) => a.importedAt - b.importedAt).map((track) => (
+                <Pressable key={track.id} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, [...allDownloads].sort((a, b) => a.importedAt - b.importedAt)); }} className="mr-4">
                   <View className="relative">
-                    <Image
-                      source={{ uri: track.artwork }}
-                      style={{ width: 140, height: 140, borderRadius: 8 }}
-                      contentFit="cover"
-                    />
-                    <LinearGradient
-                      colors={['transparent', 'rgba(139,92,246,0.6)']}
-                      style={{
-                        position: 'absolute',
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        height: 60,
-                        borderBottomLeftRadius: 8,
-                        borderBottomRightRadius: 8,
-                      }}
-                    />
-                    {track.isUnderground && (
-                      <View className="absolute top-2 right-2 bg-[#8B5CF6]/80 rounded px-1.5 py-0.5">
-                        <Text className="text-white text-[9px] font-medium">Underground</Text>
-                      </View>
-                    )}
-                    <View className="absolute top-2 left-2 flex-row items-center bg-black/70 rounded px-1.5 py-0.5">
-                      <Cloud size={10} color="#FF5500" />
-                      <Text className="text-[#FF5500] text-[9px] font-medium ml-1">SC</Text>
-                    </View>
+                    <Image source={{ uri: track.artwork ?? undefined }} style={{ width: 140, height: 140, borderRadius: 8 }} contentFit="cover" />
+                    <LinearGradient colors={['transparent', 'rgba(139,92,246,0.6)']} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60, borderBottomLeftRadius: 8, borderBottomRightRadius: 8 }} />
                   </View>
-                  <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>
-                    {track.title}
-                  </Text>
-                  <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 140 }}>
-                    {track.artist}
-                  </Text>
+                  <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>{track.title}</Text>
+                  <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 140 }}>{track.artist}</Text>
                 </Pressable>
               ))}
             </ScrollView>
-          </View>
-        )}
+          )}
+        </View>
 
-        {/* Focus Mix */}
-        {focusTracks.length > 0 && (
-          <View className="mt-8">
-            <View className="flex-row items-center px-5 mb-4">
-              <Brain size={20} color="#10B981" />
-              <Text className="text-white text-xl font-bold ml-2">Focus Flow</Text>
+        {/* Focus Flow — from downloads */}
+        <View className="mt-8">
+          <View className="flex-row items-center px-5 mb-2">
+            <Brain size={20} color="#10B981" />
+            <Text className="text-white text-xl font-bold ml-2">Focus Flow</Text>
+          </View>
+          <Text className="text-white/50 text-sm px-5 mb-4">
+            Lo-fi, ambient & instrumental for deep concentration
+          </Text>
+          {allDownloads.length === 0 ? (
+            <View className="mx-5 bg-white/5 rounded-xl p-4 items-center">
+              <Text className="text-white/40 text-sm">Save songs to fill this playlist</Text>
             </View>
-            <Text className="text-white/50 text-sm px-5 mb-4">
-              Lo-fi, ambient & instrumental for deep concentration
-            </Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingHorizontal: 20 }}
-              style={{ flexGrow: 0 }}
-            >
-              {focusTracks.map(track => (
-                <Pressable
-                  key={track.id}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    playTrack(track, focusTracks);
-                  }}
-                  className="mr-4"
-                >
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }} style={{ flexGrow: 0 }}>
+              {[...allDownloads].sort((a, b) => b.importedAt - a.importedAt).map((track) => (
+                <Pressable key={track.id} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, [...allDownloads].sort((a, b) => b.importedAt - a.importedAt)); }} className="mr-4">
                   <View className="relative">
-                    <Image
-                      source={{ uri: track.artwork }}
-                      style={{ width: 140, height: 140, borderRadius: 8 }}
-                      contentFit="cover"
-                    />
-                    <LinearGradient
-                      colors={['transparent', 'rgba(16,185,129,0.5)']}
-                      style={{
-                        position: 'absolute',
-                        bottom: 0,
-                        left: 0,
-                        right: 0,
-                        height: 60,
-                        borderBottomLeftRadius: 8,
-                        borderBottomRightRadius: 8,
-                      }}
-                    />
-                    {track.isUnderground && (
-                      <View className="absolute top-2 right-2 bg-[#10B981]/80 rounded px-1.5 py-0.5">
-                        <Text className="text-white text-[9px] font-medium">Underground</Text>
-                      </View>
-                    )}
-                    <View className="absolute top-2 left-2 flex-row items-center bg-black/70 rounded px-1.5 py-0.5">
-                      <Cloud size={10} color="#FF5500" />
-                      <Text className="text-[#FF5500] text-[9px] font-medium ml-1">SC</Text>
-                    </View>
+                    <Image source={{ uri: track.artwork ?? undefined }} style={{ width: 140, height: 140, borderRadius: 8 }} contentFit="cover" />
+                    <LinearGradient colors={['transparent', 'rgba(16,185,129,0.5)']} style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 60, borderBottomLeftRadius: 8, borderBottomRightRadius: 8 }} />
                   </View>
-                  <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>
-                    {track.title}
-                  </Text>
-                  <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 140 }}>
-                    {track.artist}
-                  </Text>
+                  <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>{track.title}</Text>
+                  <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 140 }}>{track.artist}</Text>
                 </Pressable>
               ))}
             </ScrollView>
-          </View>
-        )}
+          )}
+        </View>
 
       </ScrollView>
 
