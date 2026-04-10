@@ -226,7 +226,7 @@ export default function DiscoverOnboardingScreen() {
         {/* Content */}
         <ScrollView
           className="flex-1"
-          contentContainerStyle={{ paddingBottom: 120 }}
+          contentContainerStyle={{ paddingBottom: 220 }}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
@@ -361,7 +361,7 @@ export default function DiscoverOnboardingScreen() {
 
         {/* Bottom action */}
         <View
-          style={{ paddingBottom: insets.bottom + 16 }}
+          style={{ paddingBottom: insets.bottom + 90 }}
           className="px-5 pt-4 bg-[#0A0A0A]"
         >
           {currentStep === 'artists' ? (
