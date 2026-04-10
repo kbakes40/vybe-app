@@ -763,12 +763,28 @@ export default function HomeScreen() {
           <DailyMixHeroCard
             title={madeForYou?.title ?? 'Daily Mix 1'}
             artistNames={heroArtists || 'Flume, ODESZA, Tycho'}
-            artworks={
-              allDownloads
-                .filter(d => d.source === 'soundcloud')
-                .map(d => d.artwork)
-                .filter(Boolean) as string[]
-            }
+            artworks={(() => {
+              // SoundCloud only — square artwork fits the tile grid
+              const seen = new Set<string>();
+              const pool: string[] = [];
+              for (const t of recentTracks) {
+                if (t.source === 'soundcloud' && t.artwork && !seen.has(t.artwork)) {
+                  seen.add(t.artwork);
+                  pool.push(t.artwork);
+                  if (pool.length === 4) break;
+                }
+              }
+              if (pool.length < 4) {
+                for (const d of allDownloads) {
+                  if (d.source === 'soundcloud' && d.artwork && !seen.has(d.artwork)) {
+                    seen.add(d.artwork);
+                    pool.push(d.artwork);
+                    if (pool.length === 4) break;
+                  }
+                }
+              }
+              return pool;
+            })()}
             onPress={() => { if (quickPicks.length > 0) playTrack(quickPicks[0], quickPicks); }}
           />
         </View>
