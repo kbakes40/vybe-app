@@ -40,5 +40,21 @@ yarn-error.*
 /ios
 /android
 
+# Keep the handful of iOS native files we've hand-edited so they're not
+# wiped by `expo prebuild` or re-generated pods. The !-rules negate the
+# /ios rule above for these specific paths only:
+#   - Info.plist     → "Vybe" display name
+#   - entitlements   → Sign In with Apple capability
+#   - project.pbxproj → com.vibecode.vybe bundle ID, team ID, sandboxing off
+#   - Podfile        → fmt/Skia/Hermes build workarounds
+!/ios/
+!/ios/vibecode/
+!/ios/vibecode/Info.plist
+!/ios/vibecode/vibecode.entitlements
+!/ios/vibecode.xcodeproj/
+!/ios/vibecode.xcodeproj/project.pbxproj
+!/ios/Podfile
+!/ios/Podfile.lock
+
 # Expo log
 expo.log
