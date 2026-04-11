@@ -214,12 +214,19 @@ youtubeRouter.get("/download/:videoId", async (c) => {
   const tmpBase = `/tmp/yt_${videoId}_${Date.now()}`;
   const tmpTemplate = `${tmpBase}.%(ext)s`;
 
-  const result = await (async (): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
+  // Try multiple player_clients in order — YouTube's bot detection blocks
+  // individual clients intermittently, so if ios fails we fall through to
+  // tv_embedded → web → android. This dramatically improves download
+  // reliability when a single client is being blocked.
+  const PLAYER_CLIENTS = ["ios", "tv_embedded", "web", "android"] as const;
+
+  const tryClient = async (client: string): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
+    // Clean up any partial files from a previous attempt so the --print
+    // output only reports the file this attempt created.
+    Bun.spawn(["sh", "-c", `rm -f ${tmpBase}.* 2>/dev/null`]);
+
     const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-      Bun.spawn(["sh", "-c", `rm -f ${tmpBase}.* 2>/dev/null`]);
-    }, 60_000);
+    const timer = setTimeout(() => controller.abort(), 60_000);
     try {
       const output = await ytDlp.execPromise([
         `https://www.youtube.com/watch?v=${videoId}`,
@@ -229,7 +236,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
         "--no-warnings",
         "--no-part",
         "--print", "after_move:filepath",
-        "--extractor-args", "youtube:player_client=ios",
+        "--extractor-args", `youtube:player_client=${client}`,
         ...cookieArgs(),
       ], {}, controller.signal);
       clearTimeout(timer);
@@ -238,17 +245,45 @@ youtubeRouter.get("/download/:videoId", async (c) => {
       return { ok: false, reason: "yt-dlp produced no output file" };
     } catch (e: any) {
       clearTimeout(timer);
-      Bun.spawn(["sh", "-c", `rm -f ${tmpBase}.* 2>/dev/null`]);
       const msg: string = e.message ?? "";
       if (msg.includes("aborted")) return { ok: false, reason: "Download timed out" };
       const errLine = msg.split("\n").find((l: string) => l.includes("ERROR:")) ?? "";
       const reason = errLine.replace(/^ERROR:\s*\[youtube\]\s*[\w-]+:\s*/, "").trim() || msg.slice(0, 200);
       return { ok: false, reason };
     }
-  })();
+  };
+
+  let result: { ok: true; path: string } | { ok: false; reason: string } = {
+    ok: false,
+    reason: "no player clients tried",
+  };
+  const attempts: string[] = [];
+  for (const client of PLAYER_CLIENTS) {
+    const attempt = await tryClient(client);
+    if (attempt.ok) {
+      result = attempt;
+      if (attempts.length > 0) {
+        console.log(`[YouTube] download ${videoId}: succeeded with ${client} after ${attempts.join(", ")} failed`);
+      }
+      break;
+    }
+    attempts.push(`${client} (${attempt.reason.slice(0, 60)})`);
+    result = attempt;
+    // Don't bother trying other clients for errors that are permanent
+    // for this video (private / unavailable / copyright removed).
+    const r = attempt.reason.toLowerCase();
+    if (r.includes("private") || r.includes("copyright") || r.includes("removed") || r.includes("unavailable")) {
+      break;
+    }
+  }
+
+  // Final cleanup in case we bailed out mid-attempt.
+  if (!result.ok) {
+    Bun.spawn(["sh", "-c", `rm -f ${tmpBase}.* 2>/dev/null`]);
+  }
 
   if (!result.ok) {
-    console.error(`[YouTube] download failed for ${videoId}: ${result.reason}`);
+    console.error(`[YouTube] download failed for ${videoId} after trying ${attempts.length} clients: ${result.reason}`);
     const r = result.reason.toLowerCase();
     let userMsg = "This track couldn't be downloaded right now";
     if (r.includes("unavailable")) userMsg = "Video is unavailable";
@@ -256,6 +291,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
     else if (r.includes("private")) userMsg = "This video is private";
     else if (r.includes("timed out")) userMsg = "Download timed out — try again";
     else if (r.includes("copyright") || r.includes("removed")) userMsg = "Video removed due to copyright";
+    else if (r.includes("format") || r.includes("no video")) userMsg = "No compatible audio format found";
     return c.json({ error: userMsg }, 502);
   }
 
