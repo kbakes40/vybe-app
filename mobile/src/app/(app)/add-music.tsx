@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Keyboard,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -507,6 +508,7 @@ function SearchSection({ platform, label, placeholder, accentColor, Icon, subtit
 
   const handleSearch = async () => {
     if (!query.trim()) return;
+    Keyboard.dismiss();
     clearUrlResults();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
@@ -694,6 +696,7 @@ function SoundCloudSection() {
 
   const handleSearch = () => {
     if (!query.trim()) return;
+    Keyboard.dismiss();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setActiveQuery(query.trim());
   };

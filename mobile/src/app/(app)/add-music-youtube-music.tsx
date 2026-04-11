@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, Pressable, TextInput, ScrollView,
-  ActivityIndicator, KeyboardAvoidingView, Platform,
+  ActivityIndicator, KeyboardAvoidingView, Platform, Keyboard,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -343,6 +343,7 @@ function SearchSection() {
 
   const handleSearch = async () => {
     if (!query.trim()) return;
+    Keyboard.dismiss();
     clearUrlResults();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (queryIsUrl) {
