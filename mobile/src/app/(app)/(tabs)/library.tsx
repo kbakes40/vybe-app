@@ -1,14 +1,19 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, Pressable } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, Text, ScrollView, Pressable, Modal, Dimensions, TextInput, KeyboardAvoidingView, Platform, Keyboard } from 'react-native';
+import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
+import Animated, { SharedValue, useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
+import { ProfileAvatar } from '@/components/ProfileAvatar';
 import {
   Heart,
   Plus,
   ChevronRight,
+  ChevronDown,
+  Check,
   Music2,
   User,
   Disc,
@@ -18,13 +23,67 @@ import {
   Upload,
   FileAudio,
   Sparkles,
+  X,
+  ListMusic,
+  Trash2,
+  Play,
 } from 'lucide-react-native';
-import { playlists, albums, artists, getLikedTracks, tracks } from '@/data/mockData';
+import { playlists, artists, getLikedTracks, tracks } from '@/data/mockData';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useDownloadsStore, formatFileSize } from '@/stores/downloadsStore';
 import { useSoundCloudPreloadStore } from '@/stores/soundcloudPreloadStore';
+import { useUserPlaylistStore } from '@/stores/userPlaylistStore';
+import { Track } from '@/types/music';
 
-type FilterType = 'playlists' | 'artists' | 'albums' | 'downloaded' | 'saved_external' | 'vybe_originals';
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const ITEM_WIDTH = (SCREEN_WIDTH - 32 - 36) / 4;
+const ARTIST_COL_WIDTH = (SCREEN_WIDTH - 48) / 2;
+
+// Module-level cache so photos survive re-renders
+const artistImgCache = new Map<string, string>();
+
+function useArtistImage(artistName: string, fallback: string): string {
+  const key = artistName.toLowerCase();
+  const [img, setImg] = useState<string>(artistImgCache.get(key) ?? fallback);
+  useEffect(() => {
+    if (artistImgCache.has(key)) return;
+    fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(artistName)}`)
+      .then(r => r.json())
+      .then(data => {
+        const found = data.originalimage?.source ?? data.thumbnail?.source ?? '';
+        if (found) { artistImgCache.set(key, found); setImg(found); return; }
+        return fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(artistName)}&entity=song&limit=1`)
+          .then(r => r.json())
+          .then(d => {
+            const art = d.results?.[0]?.artworkUrl100 ?? '';
+            if (art) {
+              const scaled = art.replace(/\d+x\d+bb\.jpg/, '600x600bb.jpg');
+              artistImgCache.set(key, scaled); setImg(scaled);
+            } else { artistImgCache.set(key, fallback); }
+          });
+      }).catch(() => {});
+  }, [key]);
+  return img;
+}
+
+const ARTIST_CARD_SIZE = Math.floor((SCREEN_WIDTH - 48) / 2);
+
+function ArtistCard({ artist, onPress }: { artist: { id: string; name: string; image: string }; onPress: () => void }) {
+  const photo = useArtistImage(artist.name, artist.image);
+  return (
+    <Pressable onPress={onPress} style={{ width: ARTIST_CARD_SIZE, alignItems: 'center' }}>
+      <Image
+        source={{ uri: photo }}
+        style={{ width: ARTIST_CARD_SIZE, height: ARTIST_CARD_SIZE, borderRadius: ARTIST_CARD_SIZE / 2 }}
+        contentFit="cover"
+      />
+      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', marginTop: 8, textAlign: 'center' }} numberOfLines={1}>{artist.name}</Text>
+      <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, marginTop: 2 }}>Artist</Text>
+    </Pressable>
+  );
+}
+
+type FilterType = 'playlists' | 'artists' | 'albums' | 'downloaded' | 'vybe_originals';
 
 // YouTube icon component
 function YouTubeIcon({ size = 14 }: { size?: number }) {
@@ -104,50 +163,49 @@ function SoundCloudIcon({ size = 14 }: { size?: number }) {
   );
 }
 
+function PlaylistDeleteAction({ progress, onPress }: { progress: SharedValue<number>; onPress: () => void }) {
+  const style = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 0.5, 1], [0, 0.8, 1], Extrapolation.CLAMP),
+    transform: [{ translateX: interpolate(progress.value, [0, 1], [16, 0], Extrapolation.CLAMP) }],
+  }));
+  return (
+    <Animated.View style={[style, { width: 80, justifyContent: 'center', alignItems: 'center' }]}>
+      <Pressable
+        onPress={onPress}
+        style={{ width: 68, height: '100%', backgroundColor: '#EF4444', borderRadius: 10, alignItems: 'center', justifyContent: 'center' }}
+      >
+        <Trash2 size={22} color="#fff" />
+        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700', marginTop: 3 }}>Delete</Text>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
 export default function LibraryScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState<FilterType | null>(null);
+  const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
+  const [playlistName, setPlaylistName] = useState('');
+  const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set());
+  const [trackSearchQuery, setTrackSearchQuery] = useState('');
   const likedTracks = usePlaybackController(s => s.likedTracks);
   const playTrack = usePlaybackController(s => s.playTrack);
   const downloads = useDownloadsStore(s => s.downloads);
   const preloadBatch = useSoundCloudPreloadStore(s => s.preloadBatch);
+  const userPlaylists = useUserPlaylistStore(s => s.playlists);
+  const createPlaylist = useUserPlaylistStore(s => s.createPlaylist);
+  const deletePlaylist = useUserPlaylistStore(s => s.deletePlaylist);
 
   const filters: { key: FilterType; label: string }[] = [
     { key: 'playlists', label: 'Playlists' },
     { key: 'albums', label: 'Albums' },
     { key: 'artists', label: 'Artists' },
     { key: 'downloaded', label: 'Downloaded' },
-    { key: 'saved_external', label: 'Saved External' },
-    { key: 'vybe_originals', label: 'VYBE Originals' },
   ];
 
-  const likedSongs = getLikedTracks();
-
-  // Get external tracks that are liked (saved to library)
-  const savedExternalTracks = tracks.filter(
-    t => (t.source === 'youtube' || t.source === 'youtube_music' || t.source === 'soundcloud') && likedTracks.has(t.id)
-  );
-
-  // Preload SoundCloud tracks when saved_external filter is active
-  useEffect(() => {
-    if (activeFilter === 'saved_external') {
-      const soundcloudTracks = savedExternalTracks
-        .filter(t => t.source === 'soundcloud' && t.soundcloudUrl)
-        .map(t => ({
-          id: t.id,
-          soundcloudUrl: t.soundcloudUrl!,
-          artwork: t.artwork,
-          title: t.title,
-          artist: t.artist,
-          duration: t.duration,
-        }));
-
-      if (soundcloudTracks.length > 0) {
-        preloadBatch(soundcloudTracks);
-      }
-    }
-  }, [activeFilter, savedExternalTracks, preloadBatch]);
+  // All liked tracks — union of static isLiked flag and dynamically liked tracks from playback controller
+  const likedSongs = tracks.filter(t => likedTracks.has(t.id) || t.isLiked);
 
   // Use actual downloads from store
   const downloadedTracks = downloads;
@@ -156,6 +214,49 @@ export default function LibraryScreen() {
     if (likedSongs.length > 0) {
       playTrack(likedSongs[0], likedSongs);
     }
+  };
+
+  // All tracks available for playlist building
+  const allAvailableTracks: Track[] = [
+    ...downloads,
+    ...tracks.filter(t => likedTracks.has(t.id) || t.isLiked),
+  ].filter((t, i, arr) => arr.findIndex(x => x.id === t.id) === i);
+
+  const toggleTrackSelection = (id: string) => {
+    setSelectedTrackIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const handleCreatePlaylist = () => {
+    Keyboard.dismiss();
+    const name = playlistName.trim() || 'My Playlist';
+    const selected = allAvailableTracks.filter(t => selectedTrackIds.has(t.id));
+
+    // Close the modal and clear state FIRST so the UI is responsive even if
+    // createPlaylist is slow or throws asynchronously.
+    setShowCreatePlaylist(false);
+    setPlaylistName('');
+    setSelectedTrackIds(new Set());
+    setTrackSearchQuery('');
+
+    try {
+      createPlaylist(name, selected);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (err) {
+      console.error('[Library] createPlaylist failed:', err);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    }
+  };
+
+  const handleCloseCreatePlaylist = () => {
+    Keyboard.dismiss();
+    setShowCreatePlaylist(false);
+    setPlaylistName('');
+    setSelectedTrackIds(new Set());
+    setTrackSearchQuery('');
   };
 
   const getSourceIcon = (source: string) => {
@@ -192,54 +293,169 @@ export default function LibraryScreen() {
     }
   }, [activeFilter, router]);
 
+
+
+  // Album expand state
+  const [expandedAlbum, setExpandedAlbum] = useState<string | null>(null);
+
+  // Build album groups from downloaded tracks
+  const libraryAlbums = React.useMemo(() => {
+    const map = new Map<string, { key: string; name: string; artist: string; artwork: string; tracks: typeof downloads }>();
+    downloads.forEach(t => {
+      const albumName = t.album || t.artist || 'Unknown';
+      const key = albumName.toLowerCase();
+      if (!map.has(key)) {
+        map.set(key, { key, name: albumName, artist: t.artist || '', artwork: t.artwork || '', tracks: [] });
+      }
+      const entry = map.get(key)!;
+      entry.tracks.push(t);
+      if (t.artwork && !entry.artwork) entry.artwork = t.artwork;
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [downloads]);
+
+  // Build unique artist list from downloaded tracks
+  const libraryArtists = React.useMemo(() => {
+    const map = new Map<string, { name: string; artworks: string[] }>();
+    downloads.forEach(t => {
+      if (!t.artist) return;
+      const key = t.artist.toLowerCase();
+      if (!map.has(key)) map.set(key, { name: t.artist, artworks: [] });
+      if (t.artwork && !map.get(key)!.artworks.includes(t.artwork)) {
+        map.get(key)!.artworks.push(t.artwork);
+      }
+    });
+    // Fall back to mock artists if no downloads
+    if (map.size === 0) {
+      artists.forEach(a => map.set(a.name.toLowerCase(), { name: a.name, artworks: [a.image] }));
+    }
+    return Array.from(map.values());
+  }, [downloads]);
+
   const renderContent = () => {
     if (activeFilter === 'artists') {
+      if (libraryArtists.length === 0) {
+        return (
+          <View style={{ alignItems: 'center', justifyContent: 'center', paddingTop: 80 }}>
+            <User size={48} color="rgba(255,255,255,0.2)" />
+            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 15, marginTop: 16, textAlign: 'center' }}>
+              Download tracks to see{'\n'}artists here
+            </Text>
+          </View>
+        );
+      }
+      const colWidth = Math.floor((SCREEN_WIDTH - 48) / 2);
+      const leftArtists = libraryArtists.filter((_, i) => i % 2 === 0);
+      const rightArtists = libraryArtists.filter((_, i) => i % 2 === 1);
+      const renderArtistItem = (artist: typeof libraryArtists[0]) => (
+        <Pressable
+          key={artist.name}
+          onPress={() => router.push({ pathname: '/(app)/artist-profile', params: { name: artist.name, artworks: artist.artworks.join('|||') } } as never)}
+          style={{ width: colWidth, alignItems: 'center', marginBottom: 24 }}
+        >
+          <Image
+            source={{ uri: artist.artworks[0] ?? '' }}
+            style={{ width: colWidth, height: colWidth, borderRadius: colWidth / 2 }}
+            contentFit="cover"
+          />
+          <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', marginTop: 8, textAlign: 'center' }} numberOfLines={1}>{artist.name}</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, marginTop: 2 }}>Artist</Text>
+        </Pressable>
+      );
       return (
-        <View>
-          {artists.slice(0, 8).map(artist => (
-            <Pressable
-              key={artist.id}
-              onPress={() => router.push(`/(app)/artist/${artist.id}` as never)}
-              className="flex-row items-center px-5 py-3"
-            >
-              <Image
-                source={{ uri: artist.image }}
-                style={{ width: 56, height: 56, borderRadius: 28 }}
-                contentFit="cover"
-              />
-              <View className="flex-1 ml-4">
-                <Text className="text-white font-medium">{artist.name}</Text>
-                <Text className="text-white/60 text-sm">Artist</Text>
-              </View>
-              <ChevronRight size={20} color="rgba(255,255,255,0.4)" />
-            </Pressable>
-          ))}
+        <View style={{ flexDirection: 'row', paddingLeft: 16, paddingRight: 16 }}>
+          <View style={{ width: colWidth }}>
+            {leftArtists.map(renderArtistItem)}
+          </View>
+          <View style={{ width: colWidth, marginLeft: 16 }}>
+            {rightArtists.map(renderArtistItem)}
+          </View>
         </View>
       );
     }
 
     if (activeFilter === 'albums') {
+      if (libraryAlbums.length === 0) {
+        return (
+          <View style={{ alignItems: 'center', justifyContent: 'center', paddingTop: 80 }}>
+            <Disc size={48} color="rgba(255,255,255,0.2)" />
+            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 15, marginTop: 16, textAlign: 'center' }}>
+              Download tracks to see{'\n'}albums here
+            </Text>
+          </View>
+        );
+      }
       return (
-        <View>
-          {albums.map(album => (
-            <Pressable
-              key={album.id}
-              onPress={() => router.push(`/(app)/album/${album.id}` as never)}
-              className="flex-row items-center px-5 py-3"
-            >
-              <Image
-                source={{ uri: album.artwork }}
-                style={{ width: 56, height: 56, borderRadius: 4 }}
-                contentFit="cover"
-              />
-              <View className="flex-1 ml-4">
-                <Text className="text-white font-medium">{album.title}</Text>
-                <Text className="text-white/60 text-sm">
-                  {album.artist} · Album
-                </Text>
-              </View>
-              <ChevronRight size={20} color="rgba(255,255,255,0.4)" />
-            </Pressable>
+        <View style={{ paddingHorizontal: 16 }}>
+          <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, marginBottom: 16 }}>
+            {libraryAlbums.length} {libraryAlbums.length === 1 ? 'album' : 'albums'}
+          </Text>
+          {libraryAlbums.map(album => (
+            <View key={album.key}>
+              {/* Album row */}
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setExpandedAlbum(expandedAlbum === album.key ? null : album.key);
+                }}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }}
+              >
+                {album.artwork ? (
+                  <Image source={{ uri: album.artwork }} style={{ width: 56, height: 56, borderRadius: 6 }} contentFit="cover" />
+                ) : (
+                  <View style={{ width: 56, height: 56, borderRadius: 6, backgroundColor: 'rgba(139,92,246,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Disc size={24} color="#8B5CF6" />
+                  </View>
+                )}
+                <View style={{ flex: 1, marginLeft: 14 }}>
+                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }} numberOfLines={1}>{album.name}</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 2 }}>
+                    {album.artist} · {album.tracks.length} {album.tracks.length === 1 ? 'song' : 'songs'}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    playTrack(album.tracks[0], album.tracks);
+                  }}
+                  style={{ padding: 8 }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1DB954', alignItems: 'center', justifyContent: 'center' }}>
+                    <Text style={{ color: '#000', fontSize: 14, marginLeft: 2 }}>▶</Text>
+                  </View>
+                </Pressable>
+                <ChevronDown
+                  size={18}
+                  color="rgba(255,255,255,0.4)"
+                  style={{ marginLeft: 4, transform: [{ rotate: expandedAlbum === album.key ? '180deg' : '0deg' }] }}
+                />
+              </Pressable>
+
+              {/* Expanded track list */}
+              {expandedAlbum === album.key && (
+                <View style={{ paddingLeft: 70, paddingBottom: 8 }}>
+                  {album.tracks.map((track, i) => (
+                    <Pressable
+                      key={track.id}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        playTrack(track, album.tracks);
+                      }}
+                      style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}
+                    >
+                      <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, width: 22 }}>{i + 1}</Text>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: '#fff', fontSize: 14, fontWeight: '500' }} numberOfLines={1}>{track.title}</Text>
+                        <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12, marginTop: 1 }} numberOfLines={1}>{track.artist}</Text>
+                      </View>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+              {/* Divider */}
+              <View style={{ height: 0.5, backgroundColor: 'rgba(255,255,255,0.07)', marginVertical: 2 }} />
+            </View>
           ))}
         </View>
       );
@@ -329,55 +545,6 @@ export default function LibraryScreen() {
       );
     }
 
-    if (activeFilter === 'saved_external') {
-      return (
-        <View className="px-5">
-          {savedExternalTracks.length === 0 ? (
-            <View className="items-center justify-center py-20">
-              <View className="w-16 h-16 bg-[#8B5CF6]/20 rounded-full items-center justify-center mb-4">
-                <Bookmark size={32} color="#8B5CF6" />
-              </View>
-              <Text className="text-white font-semibold text-lg">No saved external tracks</Text>
-              <Text className="text-white/50 text-sm mt-2 text-center px-8">
-                Save tracks from YouTube, YouTube Music, and SoundCloud to access them here.
-              </Text>
-            </View>
-          ) : (
-            <>
-              <Text className="text-white/50 text-xs mb-4">
-                External tracks are bookmarks. Tap to open in their source app.
-              </Text>
-              {savedExternalTracks.map(track => (
-                <Pressable
-                  key={track.id}
-                  onPress={() => playTrack(track, savedExternalTracks)}
-                  className="flex-row items-center py-3"
-                >
-                  <Image
-                    source={{ uri: track.artwork }}
-                    style={{ width: 56, height: 56, borderRadius: 4 }}
-                    contentFit="cover"
-                  />
-                  <View className="flex-1 ml-4">
-                    <Text className="text-white font-medium" numberOfLines={1}>{track.title}</Text>
-                    <View className="flex-row items-center mt-0.5">
-                      {getSourceIcon(track.source || '')}
-                      <Text className="text-white/50 text-sm ml-1.5">
-                        {getSourceLabel(track.source || '')}
-                      </Text>
-                      <Text className="text-white/30 mx-1">·</Text>
-                      <Text className="text-white/50 text-sm">{track.artist}</Text>
-                    </View>
-                  </View>
-                  <ChevronRight size={20} color="rgba(255,255,255,0.4)" />
-                </Pressable>
-              ))}
-            </>
-          )}
-        </View>
-      );
-    }
-
     if (activeFilter === 'vybe_originals') {
       // Navigation handled in useEffect above
       return null;
@@ -386,113 +553,124 @@ export default function LibraryScreen() {
     // Default: Playlists or no filter
     return (
       <View>
-        {/* VYBE Originals Card */}
-        <Pressable
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            router.push('/(app)/vybe-originals' as never);
-          }}
-          className="mx-5 mb-4 overflow-hidden rounded-lg"
-        >
-          <LinearGradient
-            colors={['#7C3AED', '#5B21B6', '#4C1D95']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              padding: 14,
-            }}
-          >
-            <View className="w-14 h-14 bg-white/20 rounded-lg items-center justify-center">
-              <Sparkles size={28} color="#fff" />
-            </View>
-            <View className="flex-1 ml-3">
-              <Text className="text-white font-bold text-base">VYBE Originals</Text>
-              <Text className="text-white/80 text-sm">AI-Generated Music</Text>
-            </View>
-            <ChevronRight size={22} color="rgba(255,255,255,0.7)" />
-          </LinearGradient>
-        </Pressable>
-
-        {/* Liked Songs */}
-        <Pressable
-          onPress={handlePlayLiked}
-          className="mx-5 mb-4 overflow-hidden rounded-lg"
-        >
-          <LinearGradient
-            colors={['#4B2AA3', '#2D1B69']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              padding: 12,
-            }}
-          >
-            <View className="w-14 h-14 items-center justify-center">
-              <Heart size={28} color="#fff" fill="#fff" />
-            </View>
-            <View className="flex-1 ml-3">
-              <Text className="text-white font-bold text-base">Liked Songs</Text>
-              <Text className="text-white/70 text-sm">
-                {likedTracks.size} songs
-              </Text>
-            </View>
-          </LinearGradient>
-        </Pressable>
-
-        {/* Playlists — artist-style rows with square artwork */}
-        {playlists.map(playlist => (
+        {/* Liked Songs — styled to match the playlist/album rows */}
+        <View style={{ paddingHorizontal: 16 }}>
           <Pressable
-            key={playlist.id}
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              router.push(`/(app)/playlist/${playlist.id}` as never);
+              router.push('/(app)/liked-songs' as never);
             }}
-            className="flex-row items-center px-5 py-3"
+            style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }}
           >
-            <View
-              style={{
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.3,
-                shadowRadius: 8,
-                elevation: 6,
-              }}
+            <LinearGradient
+              colors={['#4B2AA3', '#2D1B69']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={{ width: 56, height: 56, borderRadius: 6, alignItems: 'center', justifyContent: 'center' }}
             >
-              <Image
-                source={{ uri: playlist.artwork }}
-                style={{ width: 60, height: 60, borderRadius: 6 }}
-                contentFit="cover"
-              />
-            </View>
-            <View className="flex-1 ml-4">
-              <Text className="text-white font-semibold text-[15px]" numberOfLines={1}>
-                {playlist.title}
+              <Heart size={24} color="#fff" fill="#fff" />
+            </LinearGradient>
+            <View style={{ flex: 1, marginLeft: 14 }}>
+              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }} numberOfLines={1}>Liked Songs</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 2 }}>
+                Playlist · {likedTracks.size} {likedTracks.size === 1 ? 'song' : 'songs'}
               </Text>
-              <View className="flex-row items-center mt-0.5">
-                <View
-                  style={{
-                    backgroundColor: '#8B5CF6',
-                    paddingHorizontal: 5,
-                    paddingVertical: 1,
-                    borderRadius: 3,
-                    marginRight: 6,
-                  }}
-                >
-                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700', letterSpacing: 0.5 }}>
-                    PLAYLIST
-                  </Text>
-                </View>
-                <Text className="text-white/50 text-sm" numberOfLines={1}>
-                  {playlist.trackCount} songs · {playlist.creator}
-                </Text>
-              </View>
             </View>
-            <ChevronRight size={20} color="rgba(255,255,255,0.3)" />
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation();
+                if (likedSongs.length > 0) {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  playTrack(likedSongs[0], likedSongs);
+                }
+              }}
+              hitSlop={8}
+              style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#22C55E', alignItems: 'center', justifyContent: 'center', marginRight: 6 }}
+            >
+              <Play size={16} color="#fff" fill="#fff" style={{ marginLeft: 2 }} />
+            </Pressable>
+            <ChevronRight size={18} color="rgba(255,255,255,0.3)" />
           </Pressable>
-        ))}
+          <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.05)' }} />
+        </View>
+
+        {/* User-created playlists — styled to match the Albums row layout */}
+        <View style={{ paddingHorizontal: 16 }}>
+          {userPlaylists.map(playlist => (
+            <ReanimatedSwipeable
+              key={playlist.id}
+              friction={2}
+              rightThreshold={40}
+              renderRightActions={(progress) => (
+                <PlaylistDeleteAction
+                  progress={progress}
+                  onPress={() => {
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                    deletePlaylist(playlist.id);
+                  }}
+                />
+              )}
+            >
+              <View>
+                <Pressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    router.push(`/(app)/my-playlist/${playlist.id}` as never);
+                  }}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }}
+                >
+                  {playlist.artwork ? (
+                    <Image source={{ uri: playlist.artwork }} style={{ width: 56, height: 56, borderRadius: 6 }} contentFit="cover" />
+                  ) : (
+                    <View style={{ width: 56, height: 56, borderRadius: 6, backgroundColor: 'rgba(139,92,246,0.2)', alignItems: 'center', justifyContent: 'center' }}>
+                      <ListMusic size={24} color="#8B5CF6" />
+                    </View>
+                  )}
+                  <View style={{ flex: 1, marginLeft: 14 }}>
+                    <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }} numberOfLines={1}>{playlist.name}</Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 2 }}>
+                      Playlist · {playlist.tracks.length} {playlist.tracks.length === 1 ? 'song' : 'songs'}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      if (playlist.tracks.length > 0) {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                        playTrack(playlist.tracks[0], playlist.tracks);
+                      }
+                    }}
+                    style={{ padding: 8 }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#1DB954', alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ color: '#000', fontSize: 14, marginLeft: 2 }}>▶</Text>
+                    </View>
+                  </Pressable>
+                  <ChevronRight size={18} color="rgba(255,255,255,0.4)" style={{ marginLeft: 4 }} />
+                </Pressable>
+                {/* Divider */}
+                <View style={{ height: 0.5, backgroundColor: 'rgba(255,255,255,0.07)', marginVertical: 2 }} />
+              </View>
+            </ReanimatedSwipeable>
+          ))}
+        </View>
+
+        {/* Empty state for playlists */}
+        {userPlaylists.length === 0 && (
+          <Pressable
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setShowCreatePlaylist(true); }}
+            style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, marginTop: 4 }}
+          >
+            <View style={{ width: 56, height: 56, borderRadius: 4, backgroundColor: '#282828', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderStyle: 'dashed' }}>
+              <Plus size={22} color="rgba(255,255,255,0.4)" />
+            </View>
+            <View style={{ flex: 1, marginLeft: 16 }}>
+              <Text style={{ color: '#fff', fontWeight: '500' }}>Create a playlist</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>Add your downloads and saved tracks</Text>
+            </View>
+          </Pressable>
+        )}
       </View>
     );
   };
@@ -502,22 +680,19 @@ export default function LibraryScreen() {
       {/* Header */}
       <View className="px-4 py-3" style={{ paddingTop: insets.top + 12 }}>
         <View className="flex-row items-center justify-between mb-4">
-          <View className="flex-row items-center">
-            <Image
-              source={{ uri: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&h=100&fit=crop' }}
-              style={{ width: 32, height: 32, borderRadius: 16 }}
-              contentFit="cover"
-            />
-            <Text className="text-white text-[22px] font-bold ml-3">
-              Your Library
-            </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <ProfileAvatar size={32} />
+            <Text className="text-white text-[22px] font-bold ml-3">Your Library</Text>
           </View>
-          <Pressable className="p-2">
+          <Pressable
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setShowCreatePlaylist(true); }}
+            className="p-2"
+          >
             <Plus size={26} color="#fff" />
           </Pressable>
         </View>
 
-        {/* Filter chips - Spotify style */}
+        {/* Filter chips */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -527,9 +702,7 @@ export default function LibraryScreen() {
           {filters.map(filter => (
             <Pressable
               key={filter.key}
-              onPress={() =>
-                setActiveFilter(activeFilter === filter.key ? null : filter.key)
-              }
+              onPress={() => setActiveFilter(activeFilter === filter.key ? null : filter.key)}
               style={{
                 backgroundColor: activeFilter === filter.key ? '#1DB954' : '#232323',
                 paddingHorizontal: 14,
@@ -538,13 +711,7 @@ export default function LibraryScreen() {
                 marginLeft: 8,
               }}
             >
-              <Text
-                style={{
-                  color: activeFilter === filter.key ? '#000' : '#fff',
-                  fontSize: 13,
-                  fontWeight: '500',
-                }}
-              >
+              <Text style={{ color: activeFilter === filter.key ? '#000' : '#fff', fontSize: 13, fontWeight: '500' }}>
                 {filter.label}
               </Text>
             </Pressable>
@@ -559,6 +726,141 @@ export default function LibraryScreen() {
       >
         {renderContent()}
       </ScrollView>
+
+
+      {/* Create Playlist Modal — full screen */}
+      <Modal
+        visible={showCreatePlaylist}
+        transparent={false}
+        animationType="slide"
+        onRequestClose={() => setShowCreatePlaylist(false)}
+        statusBarTranslucent
+      >
+        <KeyboardAvoidingView
+          style={{ flex: 1, backgroundColor: '#0A0A0A' }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          {/* Header */}
+          <View style={{ paddingTop: insets.top + 12, paddingHorizontal: 20, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.07)' }}>
+            <Pressable
+              onPress={handleCloseCreatePlaylist}
+              style={{ marginRight: 16 }}
+              hitSlop={12}
+            >
+              <X size={24} color="rgba(255,255,255,0.7)" />
+            </Pressable>
+            <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', flex: 1 }}>New Playlist</Text>
+            <Pressable
+              onPress={handleCreatePlaylist}
+              hitSlop={8}
+              style={{ backgroundColor: '#8B5CF6', borderRadius: 20, paddingHorizontal: 18, paddingVertical: 8 }}
+            >
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>
+                Create{selectedTrackIds.size > 0 ? ` (${selectedTrackIds.size})` : ''}
+              </Text>
+            </Pressable>
+          </View>
+
+          {/* Name input */}
+          <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12 }}>
+            <TextInput
+              value={playlistName}
+              onChangeText={setPlaylistName}
+              placeholder="Playlist name"
+              placeholderTextColor="rgba(255,255,255,0.3)"
+              style={{ backgroundColor: '#1A1A1A', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 13, color: '#fff', fontSize: 16 }}
+              returnKeyType="done"
+            />
+          </View>
+
+          {/* Track search bar */}
+          <View style={{ paddingHorizontal: 20, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.07)' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A1A', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 11 }}>
+              <Music2 size={16} color="rgba(255,255,255,0.4)" />
+              <TextInput
+                value={trackSearchQuery}
+                onChangeText={setTrackSearchQuery}
+                placeholder="Search tracks"
+                placeholderTextColor="rgba(255,255,255,0.3)"
+                style={{ flex: 1, color: '#fff', fontSize: 15, marginLeft: 10 }}
+                returnKeyType="search"
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+              {trackSearchQuery.length > 0 && (
+                <Pressable onPress={() => setTrackSearchQuery('')}>
+                  <X size={16} color="rgba(255,255,255,0.4)" />
+                </Pressable>
+              )}
+            </View>
+          </View>
+
+          {/* Section label */}
+          <View style={{ paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12, fontWeight: '600', letterSpacing: 0.8 }}>
+              {allAvailableTracks.length === 0 ? 'NO TRACKS AVAILABLE' : `ADD TRACKS · ${selectedTrackIds.size} SELECTED`}
+            </Text>
+          </View>
+
+          {/* Track list */}
+          {(() => {
+            const q = trackSearchQuery.toLowerCase();
+            const visibleTracks = q
+              ? allAvailableTracks.filter(t =>
+                  t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q)
+                )
+              : allAvailableTracks;
+            return visibleTracks.length === 0 && trackSearchQuery ? (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 15 }}>No results for "{trackSearchQuery}"</Text>
+              </View>
+            ) : null;
+          })()}
+          {allAvailableTracks.length === 0 ? (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <Music2 size={48} color="rgba(255,255,255,0.15)" />
+              <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 15, marginTop: 16, fontWeight: '500' }}>
+                No tracks available yet
+              </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.25)', fontSize: 13, marginTop: 6, textAlign: 'center', paddingHorizontal: 40 }}>
+                Download songs or like tracks to add them to a playlist
+              </Text>
+            </View>
+          ) : (
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={{ paddingBottom: insets.bottom + 16 }}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {allAvailableTracks.filter(t => {
+                const q = trackSearchQuery.toLowerCase();
+                return !q || t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q);
+              }).map(track => {
+                const selected = selectedTrackIds.has(track.id);
+                return (
+                  <Pressable
+                    key={track.id}
+                    onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); toggleTrackSelection(track.id); }}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12, backgroundColor: selected ? 'rgba(139,92,246,0.1)' : 'transparent' }}
+                  >
+                    <View style={{ width: 52, height: 52, borderRadius: 6, overflow: 'hidden', backgroundColor: '#1A1A1A', marginRight: 14 }}>
+                      {track.artwork ? <Image source={{ uri: track.artwork }} style={{ width: 52, height: 52 }} contentFit="cover" /> : null}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: '#fff', fontSize: 15, fontWeight: '500' }} numberOfLines={1}>{track.title}</Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginTop: 2 }} numberOfLines={1}>{track.artist}</Text>
+                    </View>
+                    <View style={{ width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: selected ? '#8B5CF6' : 'rgba(255,255,255,0.2)', backgroundColor: selected ? '#8B5CF6' : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 12 }}>
+                      {selected ? <Check size={14} color="#fff" /> : null}
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          )}
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
