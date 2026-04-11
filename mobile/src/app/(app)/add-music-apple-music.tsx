@@ -9,10 +9,21 @@ import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
-import { X, Link2, Play } from 'lucide-react-native';
+import { X, Link2, Play, Search } from 'lucide-react-native';
+import { useQuery } from '@tanstack/react-query';
 import { DownloadButton } from '@/components/DownloadButton';
 import { Track } from '@/types/music';
 import { usePlaybackController } from '@/stores/playbackController';
+
+interface AppleMusicSearchResult {
+  id: string;
+  title: string;
+  artist: string;
+  album: string;
+  artwork: string;
+  durationMs: number;
+  videoId: string;
+}
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
 
@@ -49,28 +60,63 @@ export default function AddMusicAppleMusicScreen() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AppleMusicResult | null>(null);
 
-  const isValid = isValidAppleMusicUrl(url);
+  // Search state — hits /api/apple-music/search which uses iTunes Search API
+  // as the metadata source and pre-resolves each track to a YouTube video ID.
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeSearchQuery, setActiveSearchQuery] = useState('');
 
-  const handlePaste = async () => {
-    try {
-      const text = await Clipboard.getStringAsync();
-      if (text?.includes('music.apple.com')) {
-        setUrl(text.trim());
-        setResult(null);
-        setError(null);
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-    } catch {}
+  const {
+    data: searchData,
+    isFetching: isSearching,
+    isError: isSearchError,
+  } = useQuery({
+    queryKey: ['apple-music-search', activeSearchQuery],
+    queryFn: async () => {
+      const resp = await fetch(
+        `${BACKEND_URL}/api/apple-music/search?q=${encodeURIComponent(activeSearchQuery)}&limit=10`,
+      );
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const json = await resp.json();
+      return (json.data ?? []) as AppleMusicSearchResult[];
+    },
+    staleTime: 0,
+    retry: 1,
+    enabled: !!activeSearchQuery,
+  });
+
+  const handleSearch = () => {
+    if (!searchQuery.trim()) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setActiveSearchQuery(searchQuery.trim());
   };
 
-  const handleLoad = async () => {
-    if (!isValid) return;
+  const searchResultTracks: Track[] = (searchData ?? []).map(r => ({
+    id: `am-yt-${r.videoId}`,
+    title: r.title,
+    artist: r.artist,
+    artistId: '',
+    album: r.album,
+    albumId: '',
+    artwork: r.artwork,
+    duration: Math.round(r.durationMs / 1000),
+    isLiked: false,
+    source: 'youtube_music' as const,
+    audioUrl: '',
+    youtubeMusicId: r.videoId,
+    youtubeMusicUrl: `https://music.youtube.com/watch?v=${r.videoId}`,
+  }));
+
+  const isValid = isValidAppleMusicUrl(url);
+
+  const handleLoad = async (overrideUrl?: string) => {
+    const target = (overrideUrl ?? url).trim();
+    if (!isValidAppleMusicUrl(target)) return;
     setLoading(true);
     setError(null);
     setResult(null);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      const resp = await fetch(`${BACKEND_URL}/api/apple-music/resolve?url=${encodeURIComponent(url)}`);
+      const resp = await fetch(`${BACKEND_URL}/api/apple-music/resolve?url=${encodeURIComponent(target)}`);
       if (!resp.ok) throw new Error('Failed to fetch Apple Music content');
       const json = await resp.json();
       if (!json.data || json.data.tracks.length === 0) throw new Error('No tracks found');
@@ -80,6 +126,21 @@ export default function AddMusicAppleMusicScreen() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handlePaste = async () => {
+    try {
+      const text = await Clipboard.getStringAsync();
+      if (text?.includes('music.apple.com')) {
+        const trimmed = text.trim();
+        setUrl(trimmed);
+        setResult(null);
+        setError(null);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        // Auto-trigger the load with the pasted URL directly.
+        handleLoad(trimmed);
+      }
+    } catch {}
   };
 
   const playlistTracks: Track[] = (result?.tracks ?? []).map(t => ({
@@ -167,6 +228,78 @@ export default function AddMusicAppleMusicScreen() {
             )}
 
             {error && <Text style={{ color: '#EF4444', fontSize: 13, marginTop: 10 }}>{error}</Text>}
+          </View>
+
+          {/* Search — same pattern as YouTube / YouTube Music / SoundCloud / Spotify */}
+          <View style={{ backgroundColor: 'rgba(252,60,68,0.08)', borderRadius: 16, padding: 16, marginBottom: 16 }}>
+            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 12 }}>Search Apple Music</Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12, height: 44 }}>
+                <Search size={14} color="rgba(255,255,255,0.3)" />
+                <TextInput
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  onSubmitEditing={handleSearch}
+                  returnKeyType="search"
+                  placeholder="Search songs, artists..."
+                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={{ flex: 1, color: '#fff', fontSize: 13, marginLeft: 8 }}
+                />
+                {searchQuery.length > 0 && (
+                  <Pressable onPress={() => { setSearchQuery(''); setActiveSearchQuery(''); }} hitSlop={8}>
+                    <X size={14} color="rgba(255,255,255,0.4)" />
+                  </Pressable>
+                )}
+              </View>
+              <Pressable
+                onPress={handleSearch}
+                style={{ backgroundColor: '#FC3C44', borderRadius: 12, height: 44, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13 }}>Find</Text>
+              </Pressable>
+            </View>
+
+            {activeSearchQuery ? (
+              <View style={{ marginTop: 14 }}>
+                <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 10 }}>
+                  {`Results for "${activeSearchQuery}"`}
+                </Text>
+                {isSearching ? (
+                  <View style={{ alignItems: 'center', marginVertical: 16 }}>
+                    <ActivityIndicator size="small" color="#FC3C44" />
+                  </View>
+                ) : isSearchError ? (
+                  <Text style={{ color: '#EF4444', fontSize: 12, textAlign: 'center', marginVertical: 12 }}>Search failed — check your connection</Text>
+                ) : (searchData ?? []).length > 0 ? (
+                  (searchData ?? []).map((item, i) => {
+                    const track = searchResultTracks[i];
+                    return (
+                      <Pressable
+                        key={item.id}
+                        onPress={() => {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          playTrack(track, searchResultTracks);
+                        }}
+                        style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}
+                      >
+                        <Image source={{ uri: item.artwork }} style={{ width: 48, height: 48, borderRadius: 6 }} contentFit="cover" />
+                        <View style={{ flex: 1, marginLeft: 10 }}>
+                          <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{item.title}</Text>
+                          <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 1 }} numberOfLines={1}>{item.artist}</Text>
+                        </View>
+                        <View onStartShouldSetResponder={() => true}>
+                          <DownloadButton track={track} size={28} />
+                        </View>
+                      </Pressable>
+                    );
+                  })
+                ) : (
+                  <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, textAlign: 'center', marginVertical: 16 }}>No results found</Text>
+                )}
+              </View>
+            ) : null}
           </View>
 
           {/* Hint */}

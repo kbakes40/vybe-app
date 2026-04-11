@@ -158,12 +158,10 @@ export default function OnboardingScreen() {
       console.log('Could not save preferences:', error);
     } finally {
       setIsLoading(false);
-      // Show upgrade screen if user hasn't seen it, otherwise go to home
-      if (!hasSeenPrompt) {
-        router.replace('/(app)/upgrade');
-      } else {
-        router.replace('/(app)/(tabs)');
-      }
+      // After onboarding, always show the paywall / "Your Plan" screen so
+      // new users see the subscription options before they land on the
+      // tabs. Users can dismiss it to continue on the free plan.
+      router.replace('/(app)/your-plan');
     }
   };
 

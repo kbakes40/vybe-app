@@ -9,6 +9,7 @@ import * as Haptics from 'expo-haptics';
 import { tracks } from '@/data/mockData';
 import { usePlaybackController } from '@/stores/playbackController';
 import { TrackCard } from '@/components/TrackCard';
+import { usePlaylistHeroColors } from '@/lib/usePlaylistHeroColors';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -42,6 +43,10 @@ export default function LikedSongsScreen() {
 
   const totalMinutes = Math.floor(likedSongs.reduce((acc, t) => acc + t.duration, 0) / 60);
 
+  // Pull the palette from the most-recently-liked song's artwork so the
+  // Liked Songs hero feels tied to the user's actual library.
+  const heroColors = usePlaylistHeroColors(likedSongs[0]?.artwork);
+
   return (
     <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
       <ScrollView
@@ -49,9 +54,11 @@ export default function LikedSongsScreen() {
         contentContainerStyle={{ paddingBottom: 140 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header gradient */}
+        {/* Header gradient — dominant color from the latest liked song's
+            artwork → black. */}
         <LinearGradient
-          colors={['#4B2AA3', '#2D1B69', '#0A0A0A']}
+          colors={heroColors.gradient as unknown as readonly [string, string, ...string[]]}
+          locations={heroColors.locations as unknown as readonly [number, number, ...number[]]}
           style={{ paddingTop: insets.top + 8, paddingBottom: 24 }}
         >
           {/* Back button */}

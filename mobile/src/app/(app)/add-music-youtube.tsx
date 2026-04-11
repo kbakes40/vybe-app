@@ -12,6 +12,8 @@ import * as Clipboard from 'expo-clipboard';
 import { X, Link2, Search } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import { DownloadButton } from '@/components/DownloadButton';
+import { LoadingRing } from '@/components/LoadingRing';
+import { usePlaybackController } from '@/stores/playbackController';
 import { Track } from '@/types/music';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
@@ -62,7 +64,7 @@ interface SearchResult { videoId: string; title: string; channelName: string; th
 
 // ── Track card ────────────────────────────────────────────────────────────────
 
-function TrackRow({ videoId, title, channelName, thumbnailUrl }: SearchResult) {
+function TrackRow({ videoId, title, channelName, thumbnailUrl, onPlay }: SearchResult & { onPlay: (track: Track) => void }) {
   const track: Track & { youtubeId?: string } = {
     id: `yt-${videoId}`,
     title,
@@ -78,14 +80,19 @@ function TrackRow({ videoId, title, channelName, thumbnailUrl }: SearchResult) {
     youtubeId: videoId,
   };
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, paddingHorizontal: 16 }}>
+    <Pressable
+      onPress={() => onPlay(track)}
+      style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, paddingHorizontal: 16 }}
+    >
       <Image source={{ uri: thumbnailUrl }} style={{ width: 52, height: 52, borderRadius: 6 }} contentFit="cover" />
       <View style={{ flex: 1, marginLeft: 12 }}>
         <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }} numberOfLines={1}>{title}</Text>
         <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{channelName}</Text>
       </View>
-      <DownloadButton track={track} size={28} />
-    </View>
+      <View onStartShouldSetResponder={() => true}>
+        <DownloadButton track={track} size={28} />
+      </View>
+    </Pressable>
   );
 }
 
@@ -100,42 +107,62 @@ function PasteSection() {
 
   const clear = () => { setYtInfo(null); setPlaylistTracks([]); setError(null); };
 
+  const handleLookup = useCallback(async (overrideUrl?: string) => {
+    const target = (overrideUrl ?? url).trim();
+    if (!target) return;
+    clear(); setLoading(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      if (isPlaylistUrl(target)) {
+        const listId = extractPlaylistId(target);
+        if (!listId) throw new Error('Could not extract playlist ID from URL');
+        const endpoint = `${BACKEND_URL}/api/youtube/playlist-tracks?listId=${encodeURIComponent(listId)}`;
+        console.log('[YouTube Paste] Fetching playlist:', endpoint);
+        const resp = await fetch(endpoint);
+        const bodyText = await resp.text();
+        if (!resp.ok) {
+          console.error('[YouTube Paste] playlist HTTP', resp.status, bodyText);
+          throw new Error(`Playlist fetch failed (${resp.status}): ${bodyText.slice(0, 120)}`);
+        }
+        let json: any;
+        try { json = JSON.parse(bodyText); } catch { throw new Error('Invalid playlist response'); }
+        const tracks: PlaylistTrack[] = json.data ?? [];
+        if (tracks.length === 0) throw new Error('Playlist is empty or unavailable');
+        setPlaylistTracks(tracks);
+      } else {
+        const videoId = extractYouTubeVideoId(target);
+        if (!videoId) throw new Error('Paste a YouTube video or playlist URL');
+        const endpoint = `${BACKEND_URL}/api/youtube/info/${videoId}`;
+        console.log('[YouTube Paste] Fetching info:', endpoint);
+        const resp = await fetch(endpoint);
+        const bodyText = await resp.text();
+        if (!resp.ok) {
+          console.error('[YouTube Paste] info HTTP', resp.status, bodyText);
+          throw new Error(`Video lookup failed (${resp.status}): ${bodyText.slice(0, 120)}`);
+        }
+        let json: any;
+        try { json = JSON.parse(bodyText); } catch { throw new Error('Invalid video response'); }
+        if (!json.data) throw new Error('Video info missing in response');
+        setYtInfo(json.data);
+      }
+    } catch (e) {
+      console.error('[YouTube Paste] lookup error:', e);
+      setError(e instanceof Error ? e.message : 'Something went wrong');
+    } finally { setLoading(false); }
+  }, [url]);
+
   const handlePaste = useCallback(async () => {
     try {
       const text = await Clipboard.getStringAsync();
       if (text && isYouTubeUrl(text)) {
         setUrl(text); clear();
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        // Auto-trigger the lookup with the pasted text directly — React
+        // state updates are async so `url` is still stale at this point.
+        handleLookup(text);
       }
     } catch {}
-  }, []);
-
-  const handleLookup = useCallback(async () => {
-    if (!url.trim()) return;
-    clear(); setLoading(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    try {
-      if (isPlaylistUrl(url)) {
-        const listId = extractPlaylistId(url);
-        if (!listId) throw new Error('Could not extract playlist ID');
-        const resp = await fetch(`${BACKEND_URL}/api/youtube/playlist-tracks?listId=${encodeURIComponent(listId)}`);
-        if (!resp.ok) throw new Error('Failed to fetch playlist');
-        const json = await resp.json();
-        const tracks: PlaylistTrack[] = json.data ?? [];
-        if (tracks.length === 0) throw new Error('Playlist is empty or unavailable');
-        setPlaylistTracks(tracks);
-      } else {
-        const videoId = extractYouTubeVideoId(url);
-        if (!videoId) throw new Error('Paste a YouTube video or playlist URL');
-        const resp = await fetch(`${BACKEND_URL}/api/youtube/info/${videoId}`);
-        if (!resp.ok) throw new Error('Failed to get video info');
-        const json = await resp.json();
-        setYtInfo(json.data);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong');
-    } finally { setLoading(false); }
-  }, [url]);
+  }, [handleLookup]);
 
   const videoId = url ? extractYouTubeVideoId(url) : null;
   const ytTrack: (Track & { youtubeId?: string }) | null = ytInfo && videoId ? {
@@ -228,6 +255,7 @@ function PasteSection() {
 // ── Search Section ────────────────────────────────────────────────────────────
 
 function SearchSection() {
+  const playTrack = usePlaybackController(s => s.playTrack);
   const [query, setQuery] = useState('');
   const [activeQuery, setActiveQuery] = useState('');
   const [urlLoading, setUrlLoading] = useState(false);
@@ -241,18 +269,12 @@ function SearchSection() {
   const { data, isFetching, isError } = useQuery({
     queryKey: ['yt-search', 'youtube', activeQuery],
     queryFn: async () => {
-      if (!activeQuery) {
-        const resp = await fetch(`${BACKEND_URL}/api/youtube/new-releases?maxResults=3`);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const json = await resp.json();
-        return (json.data ?? []) as SearchResult[];
-      }
       const resp = await fetch(`${BACKEND_URL}/api/youtube/search?q=${encodeURIComponent(activeQuery)}&maxResults=8`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const json = await resp.json();
       return (json.data ?? []) as SearchResult[];
     },
-    staleTime: 0, retry: 1, enabled: !queryIsUrl,
+    staleTime: 0, retry: 1, enabled: !queryIsUrl && !!activeQuery,
   });
 
   const handleSearch = async () => {
@@ -358,17 +380,39 @@ function SearchSection() {
         </View>
       ) : null}
 
-      {!queryIsUrl ? (
+      {!queryIsUrl && activeQuery ? (
         <>
           <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase', marginHorizontal: 16, marginBottom: 10 }}>
-            {activeQuery ? `Results for "${activeQuery}"` : 'Trending Now'}
+            {`Results for "${activeQuery}"`}
           </Text>
           {isFetching ? (
-            <ActivityIndicator size="small" color="#FF0000" style={{ marginVertical: 16 }} />
+            <View style={{ alignItems: 'center', marginVertical: 16 }}>
+              <LoadingRing size={26} color="#FF0000" />
+            </View>
           ) : isError ? (
             <Text style={{ color: '#EF4444', fontSize: 12, textAlign: 'center', marginVertical: 12 }}>Search failed — check your connection</Text>
           ) : (data ?? []).length > 0 ? (
-            (data ?? []).map(item => <TrackRow key={item.videoId} {...item} />)
+            (() => {
+              const items = data ?? [];
+              const queue: Track[] = items.map(item => ({
+                id: `yt-${item.videoId}`,
+                title: item.title,
+                artist: item.channelName,
+                artistId: '', album: '', albumId: '', isLiked: false,
+                artwork: item.thumbnailUrl,
+                duration: 0,
+                source: 'youtube',
+                audioUrl: '',
+                youtubeId: item.videoId,
+              } as Track));
+              return items.map(item => (
+                <TrackRow
+                  key={item.videoId}
+                  {...item}
+                  onPlay={track => playTrack(track, queue)}
+                />
+              ));
+            })()
           ) : (
             <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, textAlign: 'center', marginVertical: 16 }}>No results found</Text>
           )}

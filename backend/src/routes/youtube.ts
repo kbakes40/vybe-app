@@ -2,7 +2,17 @@ import { Hono } from "hono";
 import YTDlpWrap from "yt-dlp-wrap";
 import path from "path";
 import os from "os";
-import { getQuotaStats, getSearchCacheSize, purgeExpiredSearchCache, fetchNewReleases, fetchCuratedPlaylists, searchYouTube } from "../services/youtubeService";
+import {
+  getQuotaStats,
+  getSearchCacheSize,
+  purgeExpiredSearchCache,
+  fetchNewReleases,
+  fetchCuratedPlaylists,
+  searchYouTube,
+  getVideoInfoViaApi,
+  getPlaylistTracksViaApi,
+  isYouTubeApiAvailable,
+} from "../services/youtubeService";
 
 const youtubeRouter = new Hono();
 
@@ -214,12 +224,18 @@ youtubeRouter.get("/download/:videoId", async (c) => {
   const tmpBase = `/tmp/yt_${videoId}_${Date.now()}`;
   const tmpTemplate = `${tmpBase}.%(ext)s`;
 
-  const result = await (async (): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
+  // Try multiple player_clients in order — YouTube's bot detection blocks
+  // individual clients intermittently, so if ios fails we fall through to
+  // tv → web → android. This dramatically improves download reliability.
+  const PLAYER_CLIENTS = ["ios", "tv_embedded", "web", "android"] as const;
+
+  const tryClient = async (client: string): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
+    // Clean up any partial files from a previous attempt so the --print
+    // output only reports the file this attempt created.
+    Bun.spawn(["sh", "-c", `rm -f ${tmpBase}.* 2>/dev/null`]);
+
     const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-      Bun.spawn(["sh", "-c", `rm -f ${tmpBase}.* 2>/dev/null`]);
-    }, 60_000);
+    const timer = setTimeout(() => controller.abort(), 60_000);
     try {
       const output = await ytDlp.execPromise([
         `https://www.youtube.com/watch?v=${videoId}`,
@@ -229,7 +245,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
         "--no-warnings",
         "--no-part",
         "--print", "after_move:filepath",
-        "--extractor-args", "youtube:player_client=ios",
+        "--extractor-args", `youtube:player_client=${client}`,
         ...cookieArgs(),
       ], {}, controller.signal);
       clearTimeout(timer);
@@ -238,17 +254,45 @@ youtubeRouter.get("/download/:videoId", async (c) => {
       return { ok: false, reason: "yt-dlp produced no output file" };
     } catch (e: any) {
       clearTimeout(timer);
-      Bun.spawn(["sh", "-c", `rm -f ${tmpBase}.* 2>/dev/null`]);
       const msg: string = e.message ?? "";
       if (msg.includes("aborted")) return { ok: false, reason: "Download timed out" };
       const errLine = msg.split("\n").find((l: string) => l.includes("ERROR:")) ?? "";
       const reason = errLine.replace(/^ERROR:\s*\[youtube\]\s*[\w-]+:\s*/, "").trim() || msg.slice(0, 200);
       return { ok: false, reason };
     }
-  })();
+  };
+
+  let result: { ok: true; path: string } | { ok: false; reason: string } = {
+    ok: false,
+    reason: "no player clients tried",
+  };
+  const attempts: string[] = [];
+  for (const client of PLAYER_CLIENTS) {
+    const attempt = await tryClient(client);
+    if (attempt.ok) {
+      result = attempt;
+      if (attempts.length > 0) {
+        console.log(`[YouTube] download ${videoId}: succeeded with ${client} after ${attempts.join(", ")} failed`);
+      }
+      break;
+    }
+    attempts.push(`${client} (${attempt.reason.slice(0, 60)})`);
+    result = attempt;
+    // Don't bother trying other clients for errors that are permanent
+    // for this video (private / unavailable / copyright removed).
+    const r = attempt.reason.toLowerCase();
+    if (r.includes("private") || r.includes("copyright") || r.includes("removed") || r.includes("unavailable")) {
+      break;
+    }
+  }
+
+  // Final cleanup in case we bailed out mid-attempt.
+  if (!result.ok) {
+    Bun.spawn(["sh", "-c", `rm -f ${tmpBase}.* 2>/dev/null`]);
+  }
 
   if (!result.ok) {
-    console.error(`[YouTube] download failed for ${videoId}: ${result.reason}`);
+    console.error(`[YouTube] download failed for ${videoId} after trying ${attempts.length} clients: ${result.reason}`);
     const r = result.reason.toLowerCase();
     let userMsg = "This track couldn't be downloaded right now";
     if (r.includes("unavailable")) userMsg = "Video is unavailable";
@@ -256,6 +300,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
     else if (r.includes("private")) userMsg = "This video is private";
     else if (r.includes("timed out")) userMsg = "Download timed out — try again";
     else if (r.includes("copyright") || r.includes("removed")) userMsg = "Video removed due to copyright";
+    else if (r.includes("format") || r.includes("no video")) userMsg = "No compatible audio format found";
     return c.json({ error: userMsg }, 502);
   }
 
@@ -389,17 +434,37 @@ youtubeRouter.get("/info/:videoId", async (c) => {
   if (!videoId || !VIDEO_ID_RE.test(videoId)) {
     return c.json({ error: "Invalid YouTube video ID" }, 400);
   }
+
+  // 1. Prefer the YouTube Data API — it's not subject to the bot-detection
+  //    challenge that yt-dlp hits on datacenter IPs.
+  if (isYouTubeApiAvailable()) {
+    const apiInfo = await getVideoInfoViaApi(videoId);
+    if (apiInfo) return c.json({ data: apiInfo });
+    console.warn("[YouTube] API fallback — video not found or API unavailable, trying yt-dlp");
+  }
+
+  // 2. Fall back to yt-dlp, trying multiple player clients since YouTube
+  //    blocks some of them with "Sign in to confirm you're not a bot".
   try {
     const info = await getVideoInfo(videoId);
     return c.json({ data: info });
   } catch (e) {
     console.error("[YouTube] info error:", e);
-    return c.json({ error: "Failed to get video info" }, 502);
+    const msg = e instanceof Error ? e.message : "Failed to get video info";
+    return c.json({ error: msg }, 502);
   }
 });
 
+const YT_DLP_CLIENT_FALLBACKS = [
+  "ios",
+  "android",
+  "web_safari",
+  "mweb",
+  "tv_embedded",
+];
+
 async function getVideoInfo(videoId: string): Promise<{ title: string; channel: string; thumbnail: string; duration: number }> {
-  const output = await ytDlp.execPromise([
+  const baseArgs = [
     `https://www.youtube.com/watch?v=${videoId}`,
     "--print", "%(title)s",
     "--print", "%(uploader)s",
@@ -408,15 +473,29 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
     "--no-playlist",
     "--quiet",
     "--no-warnings",
-  ]);
-  const lines = output.trim().split("\n");
-  if (lines.length < 3) throw new Error(`yt-dlp info returned insufficient output`);
-  return {
-    title: lines[0] ?? "Unknown Title",
-    channel: lines[1] ?? "Unknown Artist",
-    thumbnail: lines[2] ?? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-    duration: parseInt(lines[3] ?? "0") || 0,
-  };
+  ];
+
+  let lastError: Error | null = null;
+  for (const client of YT_DLP_CLIENT_FALLBACKS) {
+    try {
+      const output = await ytDlp.execPromise([
+        ...baseArgs,
+        "--extractor-args", `youtube:player_client=${client}`,
+      ]);
+      const lines = output.trim().split("\n");
+      if (lines.length < 3) throw new Error(`yt-dlp info returned insufficient output`);
+      return {
+        title: lines[0] ?? "Unknown Title",
+        channel: lines[1] ?? "Unknown Artist",
+        thumbnail: lines[2] ?? `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+        duration: parseInt(lines[3] ?? "0") || 0,
+      };
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e));
+      console.warn(`[yt-dlp] info client=${client} failed:`, lastError.message.split("\n")[0]);
+    }
+  }
+  throw lastError ?? new Error("yt-dlp info failed for all player clients");
 }
 
 /**
@@ -427,12 +506,24 @@ youtubeRouter.get("/playlist-tracks", async (c) => {
   if (!listId || !/^[a-zA-Z0-9_-]+$/.test(listId)) {
     return c.json({ error: "Invalid playlist ID" }, 400);
   }
+
+  // 1. Prefer the YouTube Data API v3.
+  if (isYouTubeApiAvailable()) {
+    const apiTracks = await getPlaylistTracksViaApi(listId);
+    if (apiTracks && apiTracks.length > 0) {
+      return c.json({ data: apiTracks });
+    }
+    console.warn("[YouTube] API playlist fallback — empty or unavailable, trying yt-dlp");
+  }
+
+  // 2. Fall back to yt-dlp.
   try {
     const tracks = await getPlaylistTracks(listId);
     return c.json({ data: tracks });
   } catch (e) {
     console.error("[YouTube] playlist-tracks error:", e);
-    return c.json({ error: "Failed to fetch playlist" }, 502);
+    const msg = e instanceof Error ? e.message : "Failed to fetch playlist";
+    return c.json({ error: msg }, 502);
   }
 });
 

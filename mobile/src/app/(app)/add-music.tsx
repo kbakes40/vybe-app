@@ -487,20 +487,14 @@ function SearchSection({ platform, label, placeholder, accentColor, Icon, subtit
   const { data, isFetching, isError } = useQuery({
     queryKey: ['yt-search', platform, activeQuery],
     queryFn: async () => {
-      if (!activeQuery) {
-        const resp = await fetch(`${BACKEND_URL}/api/youtube/new-releases?maxResults=3`);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const json = await resp.json();
-        return (json.data ?? []) as Array<{ videoId: string; title: string; channelName: string; thumbnailUrl: string }>;
-      }
       const resp = await fetch(`${BACKEND_URL}/api/youtube/search?q=${encodeURIComponent(activeQuery)}&maxResults=5`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const json = await resp.json();
       return (json.data ?? []) as Array<{ videoId: string; title: string; channelName: string; thumbnailUrl: string }>;
     },
-    staleTime: 0,        // always re-fetch; prevents stale empty-results cache
+    staleTime: 0,
     retry: 1,
-    enabled: !queryIsUrl,
+    enabled: !queryIsUrl && !!activeQuery,
   });
 
   const tracks: TrendingTrack[] = (data ?? []).map(item => ({
@@ -650,10 +644,10 @@ function SearchSection({ platform, label, placeholder, accentColor, Icon, subtit
       ) : null}
 
       {/* Text search results */}
-      {!queryIsUrl ? (
+      {!queryIsUrl && activeQuery ? (
         <>
           <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase', marginHorizontal: 16, marginBottom: 10 }}>
-            {activeQuery ? `Results for "${activeQuery}"` : 'Trending Now'}
+            {`Results for "${activeQuery}"`}
           </Text>
           {isFetching ? (
             <ActivityIndicator size="small" color={accentColor} style={{ marginVertical: 16 }} />

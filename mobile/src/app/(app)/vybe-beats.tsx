@@ -13,6 +13,7 @@ import { DownloadButton } from '@/components/DownloadButton';
 import { LoadingRing } from '@/components/LoadingRing';
 import { TrackCard } from '@/components/TrackCard';
 import { Track } from '@/types/music';
+import { usePlaylistHeroColors } from '@/lib/usePlaylistHeroColors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -249,16 +250,21 @@ export default function VybeBeatsScreen() {
     playTrack(tracks[index], tracks);
   };
 
+  const ARTWORK_SIZE = SCREEN_WIDTH - 120;
+  const heroColors = usePlaylistHeroColors(heroSlots[0] ?? null);
+
   return (
     <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
       <ScrollView
-        style={{ flex: 1, backgroundColor: '#3B1F6E' }}
+        style={{ flex: 1, backgroundColor: '#0A0A0A' }}
         contentContainerStyle={{ paddingBottom: insets.bottom + 120 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header gradient */}
+        {/* Header gradient — dominant color from the hero artwork → black,
+            so the background always complements whatever the collage is. */}
         <LinearGradient
-          colors={['#3B1F6E', '#1A0D38', '#0A0A0A']}
+          colors={heroColors.gradient as unknown as readonly [string, string, ...string[]]}
+          locations={heroColors.locations as unknown as readonly [number, number, ...number[]]}
           style={{ paddingTop: insets.top }}
         >
           {/* Back button */}
@@ -272,49 +278,85 @@ export default function VybeBeatsScreen() {
             </Pressable>
           </View>
 
-          {/* Artwork — 2x2 collage of playlist art */}
-          <View style={{ alignItems: 'center', paddingTop: 24, paddingBottom: 20, paddingHorizontal: 60 }}>
-            <View style={{ shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.6, shadowRadius: 30 }}>
-              {heroSlots.length === 4 ? (
-                <View
-                  style={{
-                    width: SCREEN_WIDTH - 120,
-                    height: SCREEN_WIDTH - 120,
-                    borderRadius: 8,
-                    overflow: 'hidden',
-                    backgroundColor: '#0D0722',
-                  }}
-                >
-                  <View style={{ flex: 1, flexDirection: 'row' }}>
-                    <Image source={{ uri: heroSlots[0] }} style={{ flex: 1, height: '100%' }} contentFit="cover" />
-                    <View style={{ width: 2, backgroundColor: '#0D0722' }} />
-                    <Image source={{ uri: heroSlots[1] }} style={{ flex: 1, height: '100%' }} contentFit="cover" />
+          {/* Artwork — 2x2 collage with purple halo glow */}
+          <View style={{ alignItems: 'center', paddingTop: 28, paddingBottom: 24, paddingHorizontal: 60 }}>
+            <View
+              style={{
+                // Soft halo in the artwork's dominant color, blending
+                // into the surrounding gradient.
+                shadowColor: heroColors.glow,
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: 0.55,
+                shadowRadius: 40,
+              }}
+            >
+              <View
+                style={{
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 24 },
+                  shadowOpacity: 0.55,
+                  shadowRadius: 28,
+                }}
+              >
+                {heroSlots.length === 4 ? (
+                  <View
+                    style={{
+                      width: ARTWORK_SIZE,
+                      height: ARTWORK_SIZE,
+                      borderRadius: 10,
+                      overflow: 'hidden',
+                      backgroundColor: '#0D0722',
+                      borderWidth: 1,
+                      borderColor: 'rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <View style={{ flex: 1, flexDirection: 'row' }}>
+                      <Image source={{ uri: heroSlots[0] }} style={{ flex: 1, height: '100%' }} contentFit="cover" />
+                      <View style={{ width: 2, backgroundColor: '#0D0722' }} />
+                      <Image source={{ uri: heroSlots[1] }} style={{ flex: 1, height: '100%' }} contentFit="cover" />
+                    </View>
+                    <View style={{ height: 2, backgroundColor: '#0D0722' }} />
+                    <View style={{ flex: 1, flexDirection: 'row' }}>
+                      <Image source={{ uri: heroSlots[2] }} style={{ flex: 1, height: '100%' }} contentFit="cover" />
+                      <View style={{ width: 2, backgroundColor: '#0D0722' }} />
+                      <Image source={{ uri: heroSlots[3] }} style={{ flex: 1, height: '100%' }} contentFit="cover" />
+                    </View>
                   </View>
-                  <View style={{ height: 2, backgroundColor: '#0D0722' }} />
-                  <View style={{ flex: 1, flexDirection: 'row' }}>
-                    <Image source={{ uri: heroSlots[2] }} style={{ flex: 1, height: '100%' }} contentFit="cover" />
-                    <View style={{ width: 2, backgroundColor: '#0D0722' }} />
-                    <Image source={{ uri: heroSlots[3] }} style={{ flex: 1, height: '100%' }} contentFit="cover" />
-                  </View>
-                </View>
-              ) : (
-                <LinearGradient
-                  colors={['#1A0836', '#0F0428']}
-                  style={{ width: SCREEN_WIDTH - 120, height: SCREEN_WIDTH - 120, borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}
-                >
-                  <Sparkles size={64} color="#8B5CF6" />
-                </LinearGradient>
-              )}
+                ) : (
+                  <LinearGradient
+                    colors={['#1A0836', '#0F0428']}
+                    style={{
+                      width: ARTWORK_SIZE,
+                      height: ARTWORK_SIZE,
+                      borderRadius: 10,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderWidth: 1,
+                      borderColor: 'rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <Sparkles size={64} color="#8B5CF6" />
+                  </LinearGradient>
+                )}
+              </View>
             </View>
           </View>
 
           {/* Info */}
-          <View style={{ paddingHorizontal: 20, paddingBottom: 24 }}>
-            <View style={{ backgroundColor: '#7C3AED', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start', marginBottom: 8 }}>
-              <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 1.2 }}>CURATED</Text>
-            </View>
-            <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800' }}>Vybe Beats</Text>
-            <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 14, marginTop: 4 }}>
+          <View style={{ paddingHorizontal: 20, paddingBottom: 28 }}>
+            <Text
+              style={{
+                color: 'rgba(196,181,253,0.9)',
+                fontSize: 10,
+                fontWeight: '700',
+                letterSpacing: 2,
+                marginBottom: 10,
+              }}
+            >
+              CURATED
+            </Text>
+            <Text style={{ color: '#fff', fontSize: 30, fontWeight: '800', letterSpacing: -0.5 }}>Vybe Beats</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 14, marginTop: 6 }}>
               {tracks.length} {tracks.length === 1 ? 'song' : 'songs'} · YouTube · SoundCloud
             </Text>
           </View>

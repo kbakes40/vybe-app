@@ -12,6 +12,7 @@ import * as Clipboard from 'expo-clipboard';
 import { X, Link2, Search, Play } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import { DownloadButton } from '@/components/DownloadButton';
+import { LoadingRing } from '@/components/LoadingRing';
 import { Track } from '@/types/music';
 import { usePlaybackController } from '@/stores/playbackController';
 
@@ -62,26 +63,17 @@ function PasteSection() {
 
   const clear = () => { setScInfo(null); setError(null); setRelatedTracks([]); setPlayingId(null); };
 
-  const handlePaste = useCallback(async () => {
-    try {
-      const text = await Clipboard.getStringAsync();
-      if (text && text.includes('soundcloud.com/')) {
-        setUrl(text); clear();
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-    } catch {}
-  }, []);
-
-  const handleLookup = useCallback(async () => {
-    if (!url.trim()) return;
+  const handleLookup = useCallback(async (overrideUrl?: string) => {
+    const target = (overrideUrl ?? url).trim();
+    if (!target) return;
     clear(); setLoading(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      if (!url.includes('soundcloud.com/')) throw new Error('Paste a SoundCloud track URL');
+      if (!target.includes('soundcloud.com/')) throw new Error('Paste a SoundCloud track URL');
       const resp = await fetch(`${BACKEND_URL}/api/soundcloud/import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim(), tags: [] }),
+        body: JSON.stringify({ url: target, tags: [] }),
       });
       if (!resp.ok) throw new Error('Failed to import SoundCloud track');
       const json = await resp.json();
@@ -92,7 +84,7 @@ function PasteSection() {
         if (relatedResp.ok) {
           const relatedJson = await relatedResp.json();
           const results: SCSearchResult[] = (relatedJson.data ?? []).filter(
-            (r: SCSearchResult) => r.soundcloudUrl !== url.trim()
+            (r: SCSearchResult) => r.soundcloudUrl !== target
           );
           setRelatedTracks(results.slice(0, 5));
         }
@@ -101,6 +93,19 @@ function PasteSection() {
       setError(e instanceof Error ? e.message : 'Something went wrong');
     } finally { setLoading(false); }
   }, [url]);
+
+  const handlePaste = useCallback(async () => {
+    try {
+      const text = await Clipboard.getStringAsync();
+      if (text && text.includes('soundcloud.com/')) {
+        setUrl(text); clear();
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        // Auto-trigger lookup with the pasted URL directly — state is
+        // still stale at this tick.
+        handleLookup(text);
+      }
+    } catch {}
+  }, [handleLookup]);
 
   const scTrack: (Track & { soundcloudUrl?: string }) | null = scInfo ? {
     artistId: '', album: '', albumId: '', isLiked: false,
@@ -230,8 +235,6 @@ function PasteSection() {
 function SearchSection() {
   const [query, setQuery] = useState('');
   const [activeQuery, setActiveQuery] = useState('');
-  const [playingId, setPlayingId] = useState<string | null>(null);
-  const router = useRouter();
   const playTrack = usePlaybackController(s => s.playTrack);
 
   const { data, isFetching, isError } = useQuery({
@@ -252,24 +255,6 @@ function SearchSection() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setActiveQuery(query.trim());
   };
-
-  const handlePlay = useCallback((item: SCSearchResult) => {
-    const track: Track & { soundcloudUrl?: string } = {
-      id: `sc-${item.trackId}`, title: item.title, artist: item.artist,
-      artistId: '', album: '', albumId: '', isLiked: false,
-      artwork: item.artwork, duration: item.duration,
-      source: 'soundcloud', audioUrl: item.soundcloudUrl, soundcloudUrl: item.soundcloudUrl,
-    };
-    const allTracks = results.map(r => ({
-      id: `sc-${r.trackId}`, title: r.title, artist: r.artist,
-      artistId: '', album: '', albumId: '', isLiked: false,
-      artwork: r.artwork, duration: r.duration,
-      source: 'soundcloud' as const, audioUrl: r.soundcloudUrl, soundcloudUrl: r.soundcloudUrl,
-    }));
-    setPlayingId(item.trackId);
-    playTrack(track, allTracks);
-    router.push('/(app)/nowPlaying' as never);
-  }, [results, playTrack, router]);
 
   return (
     <View>
@@ -302,42 +287,47 @@ function SearchSection() {
       ) : null}
 
       {isFetching ? (
-        <ActivityIndicator size="small" color="#FF5500" style={{ marginVertical: 16 }} />
+        <View style={{ alignItems: 'center', marginVertical: 16 }}>
+          <LoadingRing size={26} color="#FF7700" />
+        </View>
       ) : isError ? (
         <Text style={{ color: '#EF4444', fontSize: 12, textAlign: 'center', marginVertical: 12, marginHorizontal: 16 }}>Search failed — check your connection</Text>
       ) : results.length > 0 ? (
-        results.map((item) => {
-          const track: Track & { soundcloudUrl?: string } = {
-            id: `sc-${item.trackId}`, title: item.title, artist: item.artist,
+        (() => {
+          const queue: Track[] = results.map((r) => ({
+            id: `sc-${r.trackId}`,
+            title: r.title,
+            artist: r.artist,
             artistId: '', album: '', albumId: '', isLiked: false,
-            artwork: item.artwork, duration: item.duration,
-            source: 'soundcloud', audioUrl: item.soundcloudUrl, soundcloudUrl: item.soundcloudUrl,
-          };
-          const isActive = playingId === item.trackId;
-          return (
-            <Pressable
-              key={item.trackId}
-              onPress={() => handlePlay(item)}
-              style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, paddingHorizontal: 16 }}
-            >
-              <View style={{ position: 'relative' }}>
-                <Image source={{ uri: item.artwork }} style={{ width: 52, height: 52, borderRadius: 6, opacity: isActive ? 0.6 : 1 }} contentFit="cover" />
-                {isActive && (
-                  <View style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center' }}>
-                    <Play size={18} color="#fff" fill="#fff" />
-                  </View>
-                )}
-              </View>
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={{ color: isActive ? '#FF5500' : '#fff', fontSize: 14, fontWeight: '600' }} numberOfLines={1}>{item.title}</Text>
-                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{item.artist}</Text>
-              </View>
-              <View onStartShouldSetResponder={() => true}>
-                <DownloadButton track={track} size={28} />
-              </View>
-            </Pressable>
-          );
-        })
+            artwork: r.artwork,
+            duration: r.duration,
+            source: 'soundcloud',
+            audioUrl: r.soundcloudUrl,
+            soundcloudUrl: r.soundcloudUrl,
+          } as Track));
+          return results.map((item, i) => {
+            const track = queue[i];
+            return (
+              <Pressable
+                key={item.trackId}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  playTrack(track, queue);
+                }}
+                style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12, paddingHorizontal: 16 }}
+              >
+                <Image source={{ uri: item.artwork }} style={{ width: 52, height: 52, borderRadius: 6 }} contentFit="cover" />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }} numberOfLines={1}>{item.title}</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{item.artist}</Text>
+                </View>
+                <View onStartShouldSetResponder={() => true}>
+                  <DownloadButton track={track} size={28} />
+                </View>
+              </Pressable>
+            );
+          });
+        })()
       ) : activeQuery && !isFetching ? (
         <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, textAlign: 'center', marginVertical: 16 }}>No results found</Text>
       ) : null}

@@ -95,7 +95,61 @@ export interface SpotifyTrackResult {
   durationMs: number;
 }
 
+export interface SpotifySearchResult {
+  /** Prefixed ID so the mobile client can namespace this per source. */
+  id: string;
+  title: string;
+  artist: string;
+  album: string;
+  artwork: string;
+  durationMs: number;
+  /** The resolved YouTube video ID the client will play/download. */
+  videoId: string;
+}
+
 const trackCache = new Map<string, { result: SpotifyTrackResult; expiresAt: number }>();
+const searchCache = new Map<string, { result: SpotifySearchResult[]; expiresAt: number }>();
+const SEARCH_TTL_MS = 10 * 60 * 1000; // 10 min
+
+/**
+ * Search for tracks "as if" on Spotify and return each with a resolved
+ * YouTube video ID. Spotify's own search API requires client credentials
+ * so we hit the iTunes Search API instead — it's free, keyless, and
+ * returns the same songs. The client treats these results exactly like
+ * YouTube/YouTube Music search results, piping each selection through the
+ * existing YouTube download route.
+ */
+export async function searchSpotifyTracks(query: string, limit = 10): Promise<SpotifySearchResult[]> {
+  const key = `${query.toLowerCase()}::${limit}`;
+  const cached = searchCache.get(key);
+  if (cached && Date.now() < cached.expiresAt) return cached.result;
+
+  const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=${limit}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Metadata search failed: ${res.status}`);
+  const json = (await res.json()) as { results: any[] };
+  const songs = (json.results ?? []).filter((r: any) => r.kind === 'song');
+
+  const resolved = await Promise.all(
+    songs.map(async (s: any): Promise<SpotifySearchResult | null> => {
+      const yt = await searchYouTube(s.trackName ?? '', s.artistName ?? '');
+      if (!yt) return null;
+      return {
+        id: `sp-${s.trackId}`,
+        title: s.trackName ?? 'Unknown',
+        artist: s.artistName ?? 'Unknown',
+        album: s.collectionName ?? '',
+        artwork: (s.artworkUrl100 ?? '').replace('100x100', '300x300'),
+        durationMs: s.trackTimeMillis ?? 0,
+        videoId: yt.videoId,
+      };
+    }),
+  );
+
+  const result = resolved.filter((r): r is SpotifySearchResult => r !== null);
+  searchCache.set(key, { result, expiresAt: Date.now() + SEARCH_TTL_MS });
+  return result;
+}
 
 /** Scrape a single Spotify track embed for title/artist, then find on YouTube. */
 export async function fetchSpotifyTrack(trackId: string): Promise<SpotifyTrackResult> {

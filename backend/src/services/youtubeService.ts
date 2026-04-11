@@ -707,3 +707,138 @@ export async function searchYouTubePersonalized(
 
   return filteredResults.slice(0, maxResults);
 }
+
+// ─── Video Info + Playlist (for Paste Link flows) ────────────────────────────
+// These use the Data API v3 directly and bypass yt-dlp, which is getting
+// bot-blocked by YouTube on datacenter IPs (Railway, etc).
+
+/**
+ * Parse an ISO 8601 duration (e.g. "PT3M42S") to total seconds.
+ */
+function parseIsoDuration(iso: string): number {
+  const m = iso.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
+  if (!m) return 0;
+  const h = parseInt(m[1] ?? '0', 10);
+  const mn = parseInt(m[2] ?? '0', 10);
+  const s = parseInt(m[3] ?? '0', 10);
+  return h * 3600 + mn * 60 + s;
+}
+
+export interface VideoInfo {
+  title: string;
+  channel: string;
+  thumbnail: string;
+  duration: number;
+}
+
+/**
+ * Fetch video info via YouTube Data API v3 videos.list.
+ * Cost: 1 quota unit. Returns null if the API is unavailable or the video
+ * can't be found (caller should fall back to yt-dlp).
+ */
+export async function getVideoInfoViaApi(videoId: string): Promise<VideoInfo | null> {
+  const key = getActiveKey();
+  if (!key) return null;
+
+  const url = `${YOUTUBE_API_BASE}/videos?part=snippet,contentDetails&id=${encodeURIComponent(videoId)}&key=${key}`;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      console.warn('[YouTube API] videos.list HTTP', resp.status);
+      return null;
+    }
+    const json = (await resp.json()) as {
+      items?: Array<{
+        snippet?: { title?: string; channelTitle?: string; thumbnails?: { high?: { url: string }; medium?: { url: string } } };
+        contentDetails?: { duration?: string };
+      }>;
+    };
+    const item = json.items?.[0];
+    if (!item) return null;
+    const title = item.snippet?.title ?? 'Unknown Title';
+    const channel = item.snippet?.channelTitle ?? 'Unknown Artist';
+    const thumbnail =
+      item.snippet?.thumbnails?.high?.url ??
+      item.snippet?.thumbnails?.medium?.url ??
+      `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+    const duration = parseIsoDuration(item.contentDetails?.duration ?? 'PT0S');
+    return { title, channel, thumbnail, duration };
+  } catch (e) {
+    console.warn('[YouTube API] getVideoInfoViaApi failed:', e);
+    return null;
+  }
+}
+
+export interface PlaylistTrackInfo {
+  videoId: string;
+  title: string;
+  channel: string;
+  thumbnail: string;
+  duration: number;
+}
+
+/**
+ * Fetch playlist tracks via YouTube Data API v3 playlistItems.list.
+ * Cost: ~1 quota unit per 50 items. Returns null if unavailable.
+ * Iterates pages until the full playlist (or a 200-item cap) is loaded.
+ */
+export async function getPlaylistTracksViaApi(listId: string): Promise<PlaylistTrackInfo[] | null> {
+  const key = getActiveKey();
+  if (!key) return null;
+
+  const tracks: PlaylistTrackInfo[] = [];
+  let pageToken: string | undefined;
+  const MAX_TRACKS = 200;
+
+  try {
+    while (tracks.length < MAX_TRACKS) {
+      const params = new URLSearchParams({
+        part: 'snippet',
+        maxResults: '50',
+        playlistId: listId,
+        key,
+      });
+      if (pageToken) params.set('pageToken', pageToken);
+
+      const resp = await fetch(`${YOUTUBE_API_BASE}/playlistItems?${params.toString()}`);
+      if (!resp.ok) {
+        console.warn('[YouTube API] playlistItems.list HTTP', resp.status);
+        return tracks.length > 0 ? tracks : null;
+      }
+      const json = (await resp.json()) as {
+        items?: Array<{
+          snippet?: {
+            title?: string;
+            videoOwnerChannelTitle?: string;
+            channelTitle?: string;
+            thumbnails?: { high?: { url: string }; medium?: { url: string } };
+            resourceId?: { videoId?: string };
+          };
+        }>;
+        nextPageToken?: string;
+      };
+
+      for (const item of json.items ?? []) {
+        const videoId = item.snippet?.resourceId?.videoId;
+        if (!videoId) continue;
+        tracks.push({
+          videoId,
+          title: item.snippet?.title ?? 'Unknown Title',
+          channel: item.snippet?.videoOwnerChannelTitle ?? item.snippet?.channelTitle ?? 'Unknown Artist',
+          thumbnail:
+            item.snippet?.thumbnails?.high?.url ??
+            item.snippet?.thumbnails?.medium?.url ??
+            `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+          duration: 0, // contentDetails not fetched here to save quota
+        });
+      }
+
+      pageToken = json.nextPageToken;
+      if (!pageToken) break;
+    }
+    return tracks;
+  } catch (e) {
+    console.warn('[YouTube API] getPlaylistTracksViaApi failed:', e);
+    return tracks.length > 0 ? tracks : null;
+  }
+}

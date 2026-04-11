@@ -599,8 +599,11 @@ export const getLikedTracks = (): Track[] => {
 };
 
 export const formatDuration = (seconds: number): string => {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
+  // Round to an integer first — track durations can arrive as floats
+  // (e.g. 133.80899...) and would otherwise leak the decimal into the UI.
+  const total = Math.max(0, Math.round(seconds));
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 };
 

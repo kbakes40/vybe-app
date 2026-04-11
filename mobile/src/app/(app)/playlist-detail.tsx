@@ -23,6 +23,7 @@ import {
 } from 'lucide-react-native';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useDownloadsStore, downloadYouTubeTrack } from '@/stores/downloadsStore';
+import { usePlaylistHeroColors } from '@/lib/usePlaylistHeroColors';
 import { api } from '@/lib/api/api';
 import { Track } from '@/types/music';
 import { MINI_PLAYER_HEIGHT } from './_layout';
@@ -158,6 +159,9 @@ export default function PlaylistDetailScreen() {
 
   // Build 2x2 collage artwork from first 4 tracks
   const artworks = playlist?.tracks.slice(0, 4).map(t => t.thumbnailUrl) ?? [];
+  // Dominant-color palette pulled from the first track's thumbnail so the
+  // fade into the track list matches the artwork.
+  const heroColors = usePlaylistHeroColors(artworks[0]);
 
   if (loading) {
     return (
@@ -214,10 +218,11 @@ export default function PlaylistDetailScreen() {
             </View>
           )}
 
-          {/* Gradient overlay at bottom */}
+          {/* Gradient overlay at bottom — dominant-color fade blending the
+              collage into the dark track list area. */}
           <LinearGradient
-            colors={['transparent', 'rgba(10,10,10,0.7)', '#0A0A0A']}
-            style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 120 }}
+            colors={['transparent', `${heroColors.glow}55`, '#0A0A0A'] as unknown as readonly [string, string, ...string[]]}
+            style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 160 }}
           />
 
           {/* Back button */}

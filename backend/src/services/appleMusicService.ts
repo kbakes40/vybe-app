@@ -143,6 +143,62 @@ async function fetchPlaylist(playlistId: string, nameSlug: string): Promise<Appl
   return result;
 }
 
+export interface AppleMusicSearchResult {
+  /** Stable ID from iTunes — prefix used by the client to avoid collision with other sources. */
+  id: string;
+  title: string;
+  artist: string;
+  album: string;
+  artwork: string;
+  durationMs: number;
+  /** The resolved YouTube video ID that the mobile app will actually play/download. */
+  videoId: string;
+}
+
+const searchCache = new Map<string, { result: AppleMusicSearchResult[]; expiresAt: number }>();
+const SEARCH_TTL_MS = 10 * 60 * 1000; // 10 min
+
+/**
+ * Search Apple Music via iTunes Search API (no auth required). Results are
+ * enriched with YouTube video IDs via yt-dlp so the client can play/download
+ * them through our existing YouTube pipeline — same pattern as the album
+ * import flow. Returns at most `limit` tracks and caches for 10 minutes so
+ * repeated searches for the same query are instant.
+ */
+export async function searchAppleMusic(query: string, limit = 10): Promise<AppleMusicSearchResult[]> {
+  const key = `${query.toLowerCase()}::${limit}`;
+  const cached = searchCache.get(key);
+  if (cached && Date.now() < cached.expiresAt) return cached.result;
+
+  const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&entity=song&limit=${limit}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`iTunes search failed: ${res.status}`);
+  const json = (await res.json()) as { results: any[] };
+  const songs = (json.results ?? []).filter((r: any) => r.kind === 'song');
+
+  // Resolve YouTube video IDs for each song in parallel. A song with no
+  // YouTube match is dropped from the list — the user can't play it.
+  const resolved = await Promise.all(
+    songs.map(async (s: any): Promise<AppleMusicSearchResult | null> => {
+      const yt = await searchYouTube(s.trackName ?? '', s.artistName ?? '');
+      if (!yt) return null;
+      return {
+        id: `am-${s.trackId}`,
+        title: s.trackName ?? 'Unknown',
+        artist: s.artistName ?? 'Unknown',
+        album: s.collectionName ?? '',
+        artwork: (s.artworkUrl100 ?? '').replace('100x100', '300x300'),
+        durationMs: s.trackTimeMillis ?? 0,
+        videoId: yt.videoId,
+      };
+    }),
+  );
+
+  const result = resolved.filter((r): r is AppleMusicSearchResult => r !== null);
+  searchCache.set(key, { result, expiresAt: Date.now() + SEARCH_TTL_MS });
+  return result;
+}
+
 /** Main entry: parse Apple Music URL and delegate */
 export async function fetchAppleMusicUrl(url: string): Promise<AppleMusicResult> {
   // Album: music.apple.com/us/album/album-name/1649434004
