@@ -11,13 +11,15 @@ import {
   Heart,
   MoreHorizontal,
   Clock,
+  Music2,
+  ChevronRight,
 } from 'lucide-react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
 } from 'react-native-reanimated';
-import { getPlaylistById, getTracksFromPlaylist, formatDuration } from '@/data/mockData';
+import { getPlaylistById, getTracksFromPlaylist, playlists } from '@/data/mockData';
 import { usePlaybackController } from '@/stores/playbackController';
 import { TrackCard } from '@/components/TrackCard';
 
@@ -34,6 +36,7 @@ export default function PlaylistScreen() {
 
   const playlist = getPlaylistById(id ?? '');
   const playlistTracks = getTracksFromPlaylist(id ?? '');
+  const relatedPlaylists = playlists.filter(p => p.id !== (id ?? '')).slice(0, 6);
 
   const playButtonStyle = useAnimatedStyle(() => ({
     transform: [{ scale: playScale.value }],
@@ -102,14 +105,29 @@ export default function PlaylistScreen() {
           {/* Playlist Info */}
           <View className="px-5 pb-6">
             <Text className="text-white text-2xl font-bold">{playlist.title}</Text>
-            <Text className="text-white/80 text-sm mt-2">{playlist.description}</Text>
-            <View className="flex-row items-center mt-2">
-              <Text className="text-white/60 text-sm font-semibold">
-                {playlist.creator}
-              </Text>
-              <View className="w-1 h-1 bg-white/40 rounded-full mx-2" />
+            <Text className="text-white/70 text-sm mt-1.5 leading-5">{playlist.description}</Text>
+            <View className="flex-row items-center mt-3 flex-wrap gap-2">
+              <View
+                style={{
+                  backgroundColor: '#8B5CF6',
+                  paddingHorizontal: 8,
+                  paddingVertical: 3,
+                  borderRadius: 4,
+                }}
+              >
+                <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>
+                  {playlist.creator}
+                </Text>
+              </View>
+              <View className="flex-row items-center">
+                <Music2 size={12} color="rgba(255,255,255,0.4)" />
+                <Text className="text-white/40 text-sm ml-1">
+                  {playlist.trackCount} songs
+                </Text>
+              </View>
+              <View className="w-1 h-1 bg-white/20 rounded-full" />
               <Text className="text-white/40 text-sm">
-                {playlist.trackCount} songs
+                {Math.floor(playlist.duration / 3600)}h {Math.floor((playlist.duration % 3600) / 60)}m
               </Text>
             </View>
           </View>
@@ -155,11 +173,66 @@ export default function PlaylistScreen() {
         </View>
 
         {/* Playlist Duration */}
-        <View className="px-5 py-4 flex-row items-center">
-          <Clock size={16} color="rgba(255,255,255,0.4)" />
-          <Text className="text-white/40 text-sm ml-2">
-            {Math.floor(totalDuration / 60)} min {totalDuration % 60} sec
+        <View className="px-5 py-3 flex-row items-center">
+          <Clock size={14} color="rgba(255,255,255,0.3)" />
+          <Text className="text-white/30 text-xs ml-1.5">
+            {Math.floor(totalDuration / 3600) > 0
+              ? `${Math.floor(totalDuration / 3600)} hr ${Math.floor((totalDuration % 3600) / 60)} min`
+              : `${Math.floor(totalDuration / 60)} min`}
           </Text>
+        </View>
+
+        {/* Recommended Playlists */}
+        <View className="mt-4 mb-2">
+          <Text className="text-white text-xl font-bold px-5 mb-1">Recommended Playlists</Text>
+          <Text className="text-white/40 text-sm px-5 mb-4">Based on what you're listening to</Text>
+          {relatedPlaylists.map(related => (
+            <Pressable
+              key={related.id}
+              onPress={() => router.push(`/(app)/playlist/${related.id}` as never)}
+              className="flex-row items-center px-5 py-3"
+            >
+              <View
+                style={{
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.3,
+                  shadowRadius: 8,
+                  elevation: 6,
+                }}
+              >
+                <Image
+                  source={{ uri: related.artwork }}
+                  style={{ width: 60, height: 60, borderRadius: 6 }}
+                  contentFit="cover"
+                />
+              </View>
+              <View className="flex-1 ml-4">
+                <Text className="text-white font-semibold text-[15px]" numberOfLines={1}>
+                  {related.title}
+                </Text>
+                <View className="flex-row items-center mt-0.5">
+                  <View
+                    style={{
+                      backgroundColor: '#8B5CF6',
+                      paddingHorizontal: 5,
+                      paddingVertical: 1,
+                      borderRadius: 3,
+                      marginRight: 6,
+                    }}
+                  >
+                    <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700', letterSpacing: 0.5 }}>
+                      PLAYLIST
+                    </Text>
+                  </View>
+                  <Text className="text-white/50 text-sm" numberOfLines={1}>
+                    {related.trackCount} songs
+                  </Text>
+                </View>
+              </View>
+              <ChevronRight size={18} color="rgba(255,255,255,0.3)" />
+            </Pressable>
+          ))}
         </View>
       </ScrollView>
     </View>
