@@ -10,7 +10,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import {
   Compass,
   Sparkles,
@@ -23,6 +23,7 @@ import {
   Cloud,
   Moon,
   Brain,
+  Play,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Animated, {
@@ -110,34 +111,34 @@ function VybeBeatsCard({ items, onPress }: { items: DiscoverItem[]; onPress: () 
         onPressOut={() => { cardScale.value = withSpring(1); }}
       >
         <LinearGradient
-          colors={['#0B1A2E', '#061020', '#040C18']}
+          colors={['#1A0836', '#0F0428', '#0D0722']}
           start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
           style={{ borderRadius: 18, overflow: 'hidden' }}
         >
           <View style={{ flexDirection: 'row', minHeight: BEATS_GRID }}>
             <View style={{ flex: 1, paddingLeft: 16, paddingVertical: 20, paddingRight: 12, justifyContent: 'space-between' }}>
               <View>
-                <View style={{ backgroundColor: '#2563EB', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start', marginBottom: 10 }}>
-                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 1.2 }}>CURATED</Text>
+                <View style={{ backgroundColor: '#7C3AED', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start', marginBottom: 10 }}>
+                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 1.2 }}>NEW</Text>
                 </View>
                 <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', lineHeight: 26 }} numberOfLines={2}>Vybe Beats</Text>
                 <Text style={{ color: 'rgba(255,255,255,0.42)', fontSize: 12, marginTop: 5 }} numberOfLines={1}>{subtitle}</Text>
               </View>
               <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
-                <Sparkles size={20} color="#0A0A0A" />
+                <Play size={20} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 2 }} />
               </View>
             </View>
             <View style={{ width: BEATS_GRID, height: BEATS_GRID }}>
               <View style={{ flex: 1, flexDirection: 'column' }}>
                 <View style={{ flex: 1, flexDirection: 'row' }}>
                   <BeatsFlipTile uri={slots[0]} size={BEATS_TILE} />
-                  <View style={{ width: 2, backgroundColor: '#040C18' }} />
+                  <View style={{ width: 2, backgroundColor: '#0D0722' }} />
                   <BeatsFlipTile uri={slots[1]} size={BEATS_TILE} />
                 </View>
-                <View style={{ height: 2, backgroundColor: '#040C18' }} />
+                <View style={{ height: 2, backgroundColor: '#0D0722' }} />
                 <View style={{ flex: 1, flexDirection: 'row' }}>
                   <BeatsFlipTile uri={slots[2]} size={BEATS_TILE} />
-                  <View style={{ width: 2, backgroundColor: '#040C18' }} />
+                  <View style={{ width: 2, backgroundColor: '#0D0722' }} />
                   <BeatsFlipTile uri={slots[3]} size={BEATS_TILE} />
                 </View>
               </View>
@@ -167,51 +168,78 @@ export default function DiscoverScreen() {
 
   // Store selectors
   const sections = useDiscoverFeedStore((s) => s.sections);
+  const preferences = useDiscoverFeedStore((s) => s.preferences);
   const isLoadingFeed = useDiscoverFeedStore((s) => s.isLoadingFeed);
   const feedError = useDiscoverFeedStore((s) => s.feedError);
   const fetchFeed = useDiscoverFeedStore((s) => s.fetchFeed);
   const refreshFeed = useDiscoverFeedStore((s) => s.refreshFeed);
   const needsOnboarding = useDiscoverFeedStore((s) => s.needsOnboarding);
   const fetchPreferences = useDiscoverFeedStore((s) => s.fetchPreferences);
+  const completeOnboardingWithInstantFeed = useDiscoverFeedStore((s) => s.completeOnboardingWithInstantFeed);
+
+  // Debug: log the current state whenever the screen gains focus
+  useEffect(() => {
+    console.log('[Discover] State snapshot:', {
+      sectionCount: sections.length,
+      itemCounts: sections.map(s => ({ id: s.id, items: s.items?.length ?? 0 })),
+      onboardingComplete: preferences?.onboardingComplete,
+      isLoadingFeed,
+      feedError,
+    });
+  }, [sections, preferences, isLoadingFeed, feedError]);
 
   // State
   const [isRefreshing, setIsRefreshing] = React.useState(false);
 
-  // Check if onboarding is needed and fetch data
-  useEffect(() => {
-    const init = async () => {
-      const store = useDiscoverFeedStore.getState();
+  // Check if onboarding is needed and fetch data — re-runs every time the tab gains focus
+  // so the card appears immediately after the user completes "Update Preferences"
+  useFocusEffect(
+    useCallback(() => {
+      const init = async () => {
+        const store = useDiscoverFeedStore.getState();
 
-      // If we already have sections loaded (from onboarding), don't refetch
-      if (store.sections.length > 0 && !store.needsOnboarding()) {
-        console.log('[Discover] Using existing sections from store');
-        return;
-      }
+        // Already have sections and onboarding complete — nothing to do, let zustand re-render
+        if (store.sections.length > 0 && !store.needsOnboarding()) {
+          console.log('[Discover] Using existing sections from store');
+          return;
+        }
 
-      // Check local state first - if onboarding is complete locally, just fetch feed
-      if (!store.needsOnboarding()) {
-        console.log('[Discover] Onboarding complete, fetching feed');
-        fetchFeed();
-        return;
-      }
+        // Onboarding complete locally but sections are empty — re-run instant-onboarding
+        // with stored preferences to do a FRESH YouTube+SoundCloud search (not just cache read).
+        // This populates the Vybe Beats card with real music after Update Preferences.
+        if (!store.needsOnboarding()) {
+          const prefs = store.preferences;
+          console.log('[Discover] Onboarding complete but sections empty, re-running instant onboarding with:', {
+            genres: prefs.genres,
+            moods: prefs.moods,
+            artists: prefs.favoriteArtists,
+          });
+          completeOnboardingWithInstantFeed({
+            genres: prefs.genres ?? [],
+            moods: prefs.moods ?? [],
+            favoriteArtists: prefs.favoriteArtists ?? [],
+          });
+          return;
+        }
 
-      // Try to fetch preferences from server (may fail if not logged in)
-      try {
-        await fetchPreferences();
-      } catch (error) {
-        console.log('[Discover] Failed to fetch preferences, checking local state');
-      }
+        // Try to fetch preferences from server (may fail if not logged in)
+        try {
+          await fetchPreferences();
+        } catch (error) {
+          console.log('[Discover] Failed to fetch preferences, checking local state');
+        }
 
-      // Re-check after fetch attempt
-      const updatedStore = useDiscoverFeedStore.getState();
-      if (updatedStore.needsOnboarding()) {
-        router.replace('/(app)/discover-onboarding');
-      } else {
-        fetchFeed();
-      }
-    };
-    init();
-  }, []);
+        // Re-check after fetch attempt
+        const updatedStore = useDiscoverFeedStore.getState();
+        if (updatedStore.needsOnboarding()) {
+          router.replace('/(app)/discover-onboarding');
+        } else {
+          refreshFeed();
+        }
+      };
+      init();
+    }, [refreshFeed, fetchPreferences, completeOnboardingWithInstantFeed, router])
+  );
 
   // Pull to refresh
   const onRefresh = useCallback(async () => {
@@ -342,32 +370,13 @@ export default function DiscoverScreen() {
           </Animated.View>
         ) : null}
 
-        {/* Empty state */}
-        {!isLoadingFeed && !feedError && sections.length === 0 ? (
-          <Animated.View
-            entering={FadeIn}
-            className="items-center justify-center py-20 px-5"
-          >
-            <View className="w-16 h-16 rounded-full bg-[#8B5CF6]/20 items-center justify-center mb-4">
-              <Compass size={32} color="#8B5CF6" />
-            </View>
-            <Text className="text-white text-lg font-semibold mb-2">
-              No matches found
-            </Text>
-            <Text className="text-white/60 text-center mb-6">
-              Try different genre or mood picks to discover new music
-            </Text>
-            <Pressable
-              onPress={handleEditPreferences}
-              className="bg-[#8B5CF6] px-6 py-3 rounded-xl"
-            >
-              <Text className="text-white font-semibold">Update Preferences</Text>
-            </Pressable>
-          </Animated.View>
-        ) : null}
+        {/* Empty state removed — the gear icon in the header handles preference updates
+            and the Vybe Beats card below covers the no-sections case visually. */}
 
-        {/* Vybe Beats — curated from preferences */}
-        {sections.length > 0 && (() => {
+        {/* Vybe Beats — curated from preferences. Show whenever onboarding is complete
+            so the card appears immediately after "Update Preferences" even if the feed
+            is still loading or returned empty. */}
+        {preferences?.onboardingComplete ? (() => {
           const allItems = sections.flatMap(s => s.items);
           const tracks: Track[] = allItems.map(item => ({
             id: item.id,
@@ -391,7 +400,7 @@ export default function DiscoverScreen() {
               />
             </Animated.View>
           );
-        })()}
+        })() : null}
 
         {/* Late Night Mix — from saved tracks */}
         <Animated.View entering={FadeInDown.delay(0).springify()} className="mt-6">

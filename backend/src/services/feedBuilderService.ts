@@ -24,6 +24,10 @@ import {
   generatePersonalizedSoundCloudItems,
 } from './soundcloudDiscoverService';
 import {
+  searchSoundCloudTracks,
+  searchYouTubeTracks,
+} from './ytDlpSearchService';
+import {
   buildPersonalizedQueries,
   buildInstantPersonalizedQueries,
   getHiddenCreators,
@@ -424,6 +428,68 @@ async function buildHiddenGemsSection(
 }
 
 /**
+ * Build the "Vybe Beats" curated section using real yt-dlp searches against
+ * YouTube and SoundCloud. This guarantees we return real tracks with real
+ * thumbnails for the Vybe Beats card on the Discover tab, even when the
+ * YouTube Data API key isn't configured.
+ *
+ * Picks the top few SoundCloud queries and top few YouTube queries from the
+ * personalized set and hits each one in parallel, then merges+dedupes.
+ */
+async function buildVybeBeatsSection(
+  personalizedQueries: PersonalizedQueries,
+  hiddenIds: Set<string>,
+  preferences: DiscoverPreferences
+): Promise<DiscoverSection> {
+  console.log(`[FeedBuilder] Building Vybe Beats section via yt-dlp`);
+
+  // Take a small number of queries from each source to keep latency reasonable.
+  // yt-dlp searches cost ~2-5s each, so we cap parallel calls.
+  const scQueries = personalizedQueries.soundcloud.slice(0, 3);
+  const ytQueries = personalizedQueries.youtube.slice(0, 3);
+
+  const [scResults, ytResults] = await Promise.all([
+    Promise.all(scQueries.map((q) => searchSoundCloudTracks(q, 4).catch(() => []))),
+    Promise.all(ytQueries.map((q) => searchYouTubeTracks(q, 4).catch(() => []))),
+  ]);
+
+  const rawItems: Array<Omit<DiscoverItem, 'id' | 'createdAt'>> = [
+    ...scResults.flat(),
+    ...ytResults.flat(),
+  ];
+
+  // Dedupe by externalUrl
+  const seen = new Set<string>();
+  const dedupedRawItems = rawItems.filter((item) => {
+    if (seen.has(item.externalUrl)) return false;
+    seen.add(item.externalUrl);
+    return true;
+  });
+
+  console.log(
+    `[FeedBuilder] Vybe Beats raw results: sc=${scResults.flat().length}, yt=${ytResults.flat().length}, deduped=${dedupedRawItems.length}`
+  );
+
+  // Persist to DB (getOrCreateDiscoverItem assigns ids) and filter hidden
+  const items: DiscoverItem[] = [];
+  for (const itemData of dedupedRawItems) {
+    const item = await getOrCreateDiscoverItem(itemData);
+    if (!hiddenIds.has(item.id)) items.push(item);
+  }
+
+  // Shuffle SoundCloud and YouTube together so the 2x2 card mixes sources
+  items.sort(() => Math.random() - 0.5);
+
+  return {
+    id: 'vybe_beats',
+    title: 'Vybe Beats',
+    subtitle: 'Curated just for your picks',
+    items: items.slice(0, 12),
+    refreshedAt: new Date().toISOString(),
+  };
+}
+
+/**
  * Check if cached feed is still valid
  */
 async function getCachedFeed(userId: string): Promise<DiscoverFeed | null> {
@@ -660,23 +726,26 @@ export async function buildInstantOnboardingFeed(
   };
 
   // Build sections in parallel using instant artist queries
-  const [youtubeSection, soundcloudSection, hiddenGems] = await Promise.all([
+  const [youtubeSection, soundcloudSection, hiddenGems, vybeBeatsSection] = await Promise.all([
     buildYouTubeSection(personalizedQueries, hiddenCreators, hiddenIds, preferences),
     buildSoundCloudSection(personalizedQueries, hiddenCreators, hiddenIds, preferences),
     buildHiddenGemsSection(personalizedQueries, hiddenCreators, hiddenIds, preferences),
+    buildVybeBeatsSection(personalizedQueries, hiddenIds, preferences),
   ]);
 
-  console.log(`[FeedBuilder] Section results - YouTube: ${youtubeSection.items.length}, SoundCloud: ${soundcloudSection.items.length}, HiddenGems: ${hiddenGems.items.length}`);
+  console.log(`[FeedBuilder] Section results - YouTube: ${youtubeSection.items.length}, SoundCloud: ${soundcloudSection.items.length}, HiddenGems: ${hiddenGems.items.length}, VybeBeats: ${vybeBeatsSection.items.length}`);
 
   // Cache all sections
   await Promise.all([
     cacheFeedSection(userId, youtubeSection, context),
     cacheFeedSection(userId, soundcloudSection, context),
     cacheFeedSection(userId, hiddenGems, context),
+    cacheFeedSection(userId, vybeBeatsSection, context),
   ]);
 
-  // Only include sections with items
-  const sections = [youtubeSection, soundcloudSection, hiddenGems].filter(
+  // Only include sections with items. Vybe Beats is placed first so it's the
+  // primary curated playlist displayed at the top of the discover tab.
+  const sections = [vybeBeatsSection, youtubeSection, soundcloudSection, hiddenGems].filter(
     s => s.items.length > 0
   );
 

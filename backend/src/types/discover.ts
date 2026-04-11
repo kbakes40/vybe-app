@@ -14,7 +14,8 @@ export type DiscoverSectionId =
   | 'new_today'
   | 'trending'
   | 'similar_to_clicks'
-  | 'hidden_gems';
+  | 'hidden_gems'
+  | 'vybe_beats';
 
 /**
  * Unified DiscoverItem interface
