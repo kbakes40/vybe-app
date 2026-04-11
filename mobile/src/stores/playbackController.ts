@@ -580,6 +580,34 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
       const audioUrl = `${backendBase}/api/youtube/audio/${ytVideoId}`;
       console.log('[PlaybackController] YouTube via backend proxy:', audioUrl);
+
+      // Fetch the real video duration from /info. Some YouTube DASH audio
+      // formats ship an m4a container whose mvhd duration is ~2x the actual
+      // audio length — AVPlayer believes that duration and plays silence
+      // for the second half until it finally hits `didJustFinish`. Having
+      // the real duration lets us (1) display the correct time bar and
+      // (2) advance to the next track as soon as audio actually ends.
+      let realDurationSec = track.duration || 0;
+      try {
+        const infoResp = await fetch(`${backendBase}/api/youtube/info/${ytVideoId}`);
+        if (infoResp.ok) {
+          const infoJson = (await infoResp.json()) as { data?: { duration?: number } };
+          const d = infoJson.data?.duration ?? 0;
+          if (d > 0) realDurationSec = d;
+        }
+      } catch {
+        // non-fatal — we'll fall back to whatever AVPlayer reports
+      }
+
+      // Bail if the user switched tracks while we were fetching /info.
+      if (!isStillCurrent()) { await stopVybeAudio(); return; }
+
+      // Publish the real duration up-front so the time bar is correct
+      // before the first audio status update arrives.
+      if (realDurationSec > 0) {
+        set({ duration: realDurationSec });
+      }
+
       try {
         const sound = new Audio.Sound();
         // Set vybeSound immediately so play/pause controls work during buffering
@@ -590,13 +618,24 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
           if (currentTrack?.id !== track.id) return;
           if (status.isLoaded) {
             const progressSec = status.positionMillis / 1000;
-            const durationSec = (status.durationMillis ?? 0) / 1000;
+            const rawDurationSec = (status.durationMillis ?? 0) / 1000;
+
+            // Trust /info over AVPlayer when AVPlayer's duration is clearly
+            // wrong (more than 1.5× the YouTube-reported length). This keeps
+            // the UI honest AND gives us a real end-of-track signal without
+            // waiting for AVPlayer's padded silence to run out.
+            const overrideDuration =
+              realDurationSec > 0 && rawDurationSec > realDurationSec * 1.5;
+            const durationSec = overrideDuration ? realDurationSec : rawDurationSec;
+
             set({
               progress: progressSec,
               duration: durationSec,
               playbackState: status.isPlaying ? 'playing' : 'paused',
             });
-            // Crossfade trigger
+
+            // Crossfade trigger — uses the trusted duration so it fires at
+            // the real tail of the song, not the silence at the end.
             const { crossfadeEnabled, crossfadeDuration } = usePlaybackSettingsStore.getState();
             if (
               crossfadeEnabled &&
@@ -608,6 +647,25 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
               crossfadeTriggeredForTrackId = track.id;
               triggerCrossfade(crossfadeDuration);
             }
+
+            // Force-advance when we're using an overridden duration and the
+            // real audio has ended. Without this the track would sit in
+            // silence until AVPlayer hits its own (wrong) didJustFinish.
+            if (
+              overrideDuration &&
+              progressSec >= realDurationSec - 0.5 &&
+              crossfadeTriggeredForTrackId !== track.id
+            ) {
+              const { repeatMode } = get();
+              if (repeatMode === 'one') {
+                sound.setPositionAsync(0).catch(() => {});
+              } else {
+                set({ playbackState: 'ended' });
+                get().next();
+              }
+              return;
+            }
+
             if (status.didJustFinish) {
               const { repeatMode } = get();
               if (repeatMode === 'one') {
@@ -625,7 +683,14 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         });
 
         await sound.loadAsync({ uri: audioUrl }, { shouldPlay: false, volume: get().volume });
-        if (!isStillCurrent()) { sound.stopAsync().catch(() => {}); sound.unloadAsync().catch(() => {}); vybeSound = null; return; }
+        if (!isStillCurrent()) {
+          sound.stopAsync().catch(() => {});
+          sound.unloadAsync().catch(() => {});
+          // Only clear the global ref if it still points to us — otherwise a
+          // newer playTrack already took over and we'd orphan its sound.
+          if (vybeSound === sound) vybeSound = null;
+          return;
+        }
         await sound.playAsync();
         set({ playbackState: 'playing' });
       } catch (error) {
@@ -673,7 +738,12 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         vybeSound = sound;
         sound.setOnPlaybackStatusUpdate(makeSCStatusCallback(sound));
         await sound.loadAsync({ uri: lqUrl }, { shouldPlay: false, volume: get().volume });
-        if (!isStillCurrent()) { sound.stopAsync().catch(() => {}); sound.unloadAsync().catch(() => {}); vybeSound = null; return; }
+        if (!isStillCurrent()) {
+          sound.stopAsync().catch(() => {});
+          sound.unloadAsync().catch(() => {});
+          if (vybeSound === sound) vybeSound = null;
+          return;
+        }
         await sound.playAsync();
         set({ playbackState: 'playing' });
 
