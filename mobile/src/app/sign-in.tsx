@@ -26,17 +26,20 @@ import { VybeIcon } from '@/components/VybeIcon';
 import { useVybePopup } from '@/components/VybePopup';
 import { useUpgradePromptStore } from '@/stores/upgradePromptStore';
 import * as AppleAuthentication from 'expo-apple-authentication';
-import * as AuthSession from 'expo-auth-session';
+import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
 
 WebBrowser.maybeCompleteAuthSession();
 
-// Google OAuth using iOS client — gets idToken directly, no PKCE redirect needed
-const GOOGLE_IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID ?? '';
-const googleDiscovery = {
-  authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
-  tokenEndpoint: 'https://oauth2.googleapis.com/token',
-};
+// Google OAuth — the dedicated Expo Google provider handles the iOS reversed-
+// client-id redirect URI format automatically, so we don't have to build it
+// ourselves. This is the real iOS client from Google Cloud Console (Vybe
+// project, team FCXP585VH2), registered under bundle com.vibecode.vybe.
+// Hardcoded so a stale EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID in .env can't silently
+// override it with the wrong client. The backend's auth.ts google.clientId
+// MUST match this value — Better Auth verifies it against the `aud` claim.
+const GOOGLE_IOS_CLIENT_ID =
+  '405236221156-rg9n0cquvqrh7rcg7nrbmgc20i46kgpn.apps.googleusercontent.com';
 
 interface UserPreferences {
   onboardingDone: boolean;
@@ -55,17 +58,15 @@ export default function SignInScreen() {
   const hasSeenPrompt = useUpgradePromptStore((s) => s.hasSeenPrompt);
   const browserOpenRef = useRef(false);
 
-  // Google auth request — uses iOS client ID to get idToken (no PKCE)
-  const [googleRequest, googleResponse, promptGoogleAsync] = AuthSession.useAuthRequest(
-    {
-      clientId: GOOGLE_IOS_CLIENT_ID,
-      redirectUri: AuthSession.makeRedirectUri({ scheme: 'com.googleusercontent.apps.405236221156-rg9n0cquvqrh7rcg7nrbmgc20i46kgpn' }),
-      responseType: AuthSession.ResponseType.IdToken,
-      scopes: ['openid', 'email', 'profile'],
-      usePKCE: false,
-    },
-    googleDiscovery,
-  );
+  // Google auth request — Expo's dedicated Google provider builds the correct
+  // iOS redirect URI (com.googleusercontent.apps.CLIENTID:/oauthredirect)
+  // automatically. Using the idToken variant so we get a JWT we can hand to
+  // Better Auth's social signin without needing a server-side code exchange.
+  const [googleRequest, googleResponse, promptGoogleAsync] = Google.useIdTokenAuthRequest({
+    iosClientId: GOOGLE_IOS_CLIENT_ID,
+    scopes: ['openid', 'email', 'profile'],
+  });
+
 
   // Reset loading when user comes back to app after cancelling browser auth
   useEffect(() => {
@@ -78,10 +79,14 @@ export default function SignInScreen() {
     return () => sub.remove();
   }, []);
 
-  // Handle Google response
+  // Handle Google response. Expo's native Google flow uses response_type=code
+  // and auto-exchanges the code, so the idToken lands in either
+  // `authentication.idToken` (post-exchange) or `params.id_token` (implicit).
   useEffect(() => {
     if (googleResponse?.type === 'success') {
-      const idToken = googleResponse.params?.id_token;
+      const idToken =
+        (googleResponse as any)?.authentication?.idToken ??
+        (googleResponse as any)?.params?.id_token;
       if (idToken) {
         handleGoogleToken(idToken);
       } else {
@@ -125,7 +130,7 @@ export default function SignInScreen() {
     } catch (error: any) {
       showVybePopup({
         title: 'Sign In Failed',
-        message: error.message || 'Failed to sign in with Google. Please try again.',
+        message: error?.message || 'Failed to sign in with Google. Please try again.',
         type: 'error',
       });
     } finally {

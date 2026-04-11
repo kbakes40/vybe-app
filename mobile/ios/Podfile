@@ -105,6 +105,15 @@ target 'vibecode' do
         end
       end
 
+      # Xcode 26 + clang index store deadlocks on heavy-header C++ files in
+      # react-native-skia (RNSkManager.cpp etc). Disabling the index store
+      # for the skia pod prevents the hang at ~0% CPU during compile.
+      if target.name == 'react-native-skia'
+        target.build_configurations.each do |config|
+          config.build_settings['COMPILER_INDEX_STORE_ENABLE'] = 'NO'
+        end
+      end
+
       # ReactCodegen + hermes-engine: disable sandboxing & fix script phases for Xcode 26
       if target.name == 'ReactCodegen' || target.name == 'hermes-engine'
         target.build_configurations.each do |config|
