@@ -7,23 +7,45 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
 } from 'react-native-reanimated';
-import { ExternalLink } from 'lucide-react-native';
+import { Play } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
 import {
   DiscoverItem,
   useDiscoverFeedStore,
 } from '@/stores/discoverFeedStore';
-import {
-  openExternal,
-  getActionButtonText,
-  getPlatformColor,
-  getSoundCloudHelperText,
-} from '@/lib/openExternal';
+import { getPlatformColor } from '@/lib/openExternal';
+import { usePlaybackController } from '@/stores/playbackController';
+import { Track } from '@/types/music';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 interface DiscoverCardProps {
   item: DiscoverItem;
+  queue?: DiscoverItem[];
   onVisible?: () => void;
+}
+
+// Convert a DiscoverItem into a Track the playback controller can play.
+// YouTube items keep their videoId; SoundCloud items keep the canonical URL —
+// the playback controller resolves the actual stream from those.
+function discoverItemToTrack(item: DiscoverItem): Track & { youtubeId?: string; soundcloudUrl?: string } {
+  const isYt = item.sourcePlatform === 'YOUTUBE';
+  const bareId = item.id.replace(/^yt-|^sc-/, '');
+  return {
+    id: item.id,
+    title: item.title,
+    artist: item.creatorName,
+    artistId: '',
+    album: '',
+    albumId: '',
+    isLiked: false,
+    artwork: item.thumbnailUrl,
+    duration: 0,
+    source: isYt ? 'youtube' : 'soundcloud',
+    audioUrl: isYt ? '' : item.externalUrl,
+    youtubeId: isYt ? bareId : undefined,
+    soundcloudUrl: isYt ? undefined : item.externalUrl,
+  };
 }
 
 /**
@@ -40,9 +62,10 @@ interface DiscoverCardProps {
  * - Impression tracking when card becomes visible
  * - Open tracking when user taps to open
  */
-export function DiscoverCard({ item, onVisible }: DiscoverCardProps) {
+export function DiscoverCard({ item, queue, onVisible }: DiscoverCardProps) {
   const scale = useSharedValue(1);
   const trackEvent = useDiscoverFeedStore((s) => s.trackEvent);
+  const playTrack = usePlaybackController((s) => s.playTrack);
   const hasTrackedImpression = useRef(false);
 
   // Track impression when card becomes visible
@@ -59,18 +82,14 @@ export function DiscoverCard({ item, onVisible }: DiscoverCardProps) {
   }));
 
   const handlePress = () => {
-    openExternal({
-      itemId: item.id,
-      platform: item.sourcePlatform,
-      deepLinkUrl: item.deepLinkUrl,
-      externalUrl: item.externalUrl,
-      searchQuery: item.searchQuery,
-    });
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    trackEvent(item.id, 'open');
+    const track = discoverItemToTrack(item);
+    const queueTracks = (queue ?? [item]).map(discoverItemToTrack);
+    playTrack(track, queueTracks);
   };
 
   const platformColor = getPlatformColor(item.sourcePlatform);
-  const actionText = getActionButtonText(item.sourcePlatform);
-  const isSoundCloud = item.sourcePlatform === 'SOUNDCLOUD';
 
   return (
     <AnimatedPressable
@@ -121,9 +140,9 @@ export function DiscoverCard({ item, onVisible }: DiscoverCardProps) {
             </Text>
           </View>
 
-          {/* Open external indicator */}
-          <View className="absolute bottom-2 right-2 bg-white/20 rounded-full p-2">
-            <ExternalLink size={16} color="#fff" />
+          {/* Play indicator */}
+          <View className="absolute bottom-2 right-2 bg-white rounded-full w-9 h-9 items-center justify-center">
+            <Play size={16} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 2 }} />
           </View>
         </View>
 
@@ -137,25 +156,6 @@ export function DiscoverCard({ item, onVisible }: DiscoverCardProps) {
         <Text className="text-white/60 text-xs mt-0.5" numberOfLines={1}>
           {item.creatorName}
         </Text>
-
-        {/* Action button */}
-        <Pressable
-          onPress={handlePress}
-          className="mt-2 rounded-lg py-2 px-3 flex-row items-center justify-center"
-          style={{ backgroundColor: platformColor }}
-        >
-          <ExternalLink size={14} color="#fff" />
-          <Text className="text-white text-xs font-semibold ml-1.5">
-            {actionText}
-          </Text>
-        </Pressable>
-
-        {/* SoundCloud helper text */}
-        {isSoundCloud ? (
-          <Text className="text-white/40 text-[10px] mt-1.5 text-center">
-            {getSoundCloudHelperText()}
-          </Text>
-        ) : null}
       </View>
     </AnimatedPressable>
   );
@@ -230,14 +230,12 @@ export function DiscoverCardCompact({ item }: DiscoverCardProps) {
     transform: [{ scale: scale.value }],
   }));
 
+  const playTrack = usePlaybackController((s) => s.playTrack);
   const handlePress = () => {
-    openExternal({
-      itemId: item.id,
-      platform: item.sourcePlatform,
-      deepLinkUrl: item.deepLinkUrl,
-      externalUrl: item.externalUrl,
-      searchQuery: item.searchQuery,
-    });
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    trackEvent(item.id, 'open');
+    const track = discoverItemToTrack(item);
+    playTrack(track, [track]);
   };
 
   const platformColor = getPlatformColor(item.sourcePlatform);
@@ -280,12 +278,12 @@ export function DiscoverCardCompact({ item }: DiscoverCardProps) {
         </View>
       </View>
 
-      {/* Open button */}
+      {/* Play button */}
       <View
         className="rounded-full p-2.5"
         style={{ backgroundColor: platformColor }}
       >
-        <ExternalLink size={18} color="#fff" />
+        <Play size={18} color="#fff" fill="#fff" style={{ marginLeft: 1 }} />
       </View>
     </AnimatedPressable>
   );

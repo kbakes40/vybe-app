@@ -190,6 +190,106 @@ export default function DiscoverScreen() {
 
   // State
   const [isRefreshing, setIsRefreshing] = React.useState(false);
+  const vybeBeats = useDiscoverFeedStore((s) => s.vybeBeats);
+  const setVybeBeats = useDiscoverFeedStore((s) => s.setVybeBeats);
+
+  // Client-side fallback: when preferences are set but sections are empty
+  // (e.g. backend /api/discover is auth-gated and failing), build a Vybe Beats
+  // feed directly from the public YouTube + SoundCloud search endpoints using
+  // the user's onboarding answers (genres, moods, favorite artists). This
+  // keeps the card populated without auth.
+  useEffect(() => {
+    if (!preferences?.onboardingComplete) return;
+    if (sections.length > 0) return;
+    if (vybeBeats.length > 0) return;
+
+    // Build seed queries from the onboarding answers.
+    // Artists are the strongest signal, then genre+mood combos, then bare genres.
+    const artists = (preferences.favoriteArtists ?? []).filter((a) => a && a.length > 0);
+    const genres = (preferences.genres ?? []).filter((g) => g && g.length > 0);
+    const moods = (preferences.moods ?? []).filter((m) => m && m.length > 0);
+
+    const seeds: string[] = [];
+    artists.slice(0, 2).forEach((a) => seeds.push(a));
+    genres.slice(0, 2).forEach((g, i) => {
+      const mood = moods[i % Math.max(moods.length, 1)];
+      seeds.push(mood ? `${mood} ${g}` : `${g} music`);
+    });
+    if (seeds.length === 0) seeds.push('new music');
+
+    const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
+    if (!backendUrl) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        // Run YouTube + SoundCloud searches in parallel for each seed.
+        const ytPromises = seeds.slice(0, 3).map(async (q) => {
+          const resp = await fetch(`${backendUrl}/api/youtube/search?q=${encodeURIComponent(q)}&maxResults=3`);
+          if (!resp.ok) return [] as DiscoverItem[];
+          const json = await resp.json();
+          const items = (json.data ?? []) as Array<{ videoId: string; title: string; channelName: string; thumbnailUrl: string }>;
+          return items.map((it): DiscoverItem => ({
+            id: `yt-${it.videoId}`,
+            sourcePlatform: 'YOUTUBE',
+            title: it.title,
+            creatorName: it.channelName,
+            thumbnailUrl: it.thumbnailUrl,
+            externalUrl: `https://www.youtube.com/watch?v=${it.videoId}`,
+            deepLinkUrl: `youtube://watch?v=${it.videoId}`,
+            searchQuery: q,
+            publishedAt: null,
+            createdAt: new Date().toISOString(),
+          }));
+        });
+
+        const scPromises = seeds.slice(0, 3).map(async (q) => {
+          const resp = await fetch(`${backendUrl}/api/soundcloud/search?q=${encodeURIComponent(q)}&maxResults=3`);
+          if (!resp.ok) return [] as DiscoverItem[];
+          const json = await resp.json();
+          const items = (json.data ?? []) as Array<{ trackId: string; title: string; artist: string; artwork: string; soundcloudUrl: string }>;
+          return items.map((it): DiscoverItem => ({
+            id: `sc-${it.trackId}`,
+            sourcePlatform: 'SOUNDCLOUD',
+            title: it.title,
+            creatorName: it.artist,
+            thumbnailUrl: it.artwork,
+            externalUrl: it.soundcloudUrl,
+            deepLinkUrl: it.soundcloudUrl,
+            searchQuery: q,
+            publishedAt: null,
+            createdAt: new Date().toISOString(),
+          }));
+        });
+
+        const [ytResults, scResults] = await Promise.all([
+          Promise.all(ytPromises),
+          Promise.all(scPromises),
+        ]);
+        if (cancelled) return;
+
+        // Interleave YT + SC results so the card mixes sources instead of
+        // grouping them. This matches how the feed would look if the backend
+        // built it.
+        const yt = ytResults.flat();
+        const sc = scResults.flat();
+        const merged: DiscoverItem[] = [];
+        const maxLen = Math.max(yt.length, sc.length);
+        for (let i = 0; i < maxLen; i++) {
+          if (yt[i]) merged.push(yt[i]);
+          if (sc[i]) merged.push(sc[i]);
+        }
+
+        const seen = new Set<string>();
+        const unique = merged.filter((i) => (seen.has(i.id) ? false : (seen.add(i.id), true)));
+        setVybeBeats(unique.slice(0, 5));
+      } catch (err) {
+        console.warn('[Discover] Local beats fallback failed:', err);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [preferences?.onboardingComplete, preferences?.genres, preferences?.moods, preferences?.favoriteArtists, sections.length, vybeBeats.length]);
 
   // Check if onboarding is needed and fetch data — re-runs every time the tab gains focus
   // so the card appears immediately after the user completes "Update Preferences"
@@ -346,38 +446,15 @@ export default function DiscoverScreen() {
           </Animated.View>
         ) : null}
 
-        {/* Error state */}
-        {feedError && sections.length === 0 ? (
-          <Animated.View
-            entering={FadeIn}
-            className="items-center justify-center py-20 px-5"
-          >
-            <View className="w-16 h-16 rounded-full bg-red-500/20 items-center justify-center mb-4">
-              <RefreshCw size={32} color="#EF4444" />
-            </View>
-            <Text className="text-white text-lg font-semibold mb-2">
-              Could not load recommendations
-            </Text>
-            <Text className="text-white/60 text-center mb-6">
-              {feedError}
-            </Text>
-            <Pressable
-              onPress={onRefresh}
-              className="bg-[#8B5CF6] px-6 py-3 rounded-xl"
-            >
-              <Text className="text-white font-semibold">Try Again</Text>
-            </Pressable>
-          </Animated.View>
-        ) : null}
-
-        {/* Empty state removed — the gear icon in the header handles preference updates
+        {/* Error state removed — the gear icon in the header handles preference updates
             and the Vybe Beats card below covers the no-sections case visually. */}
 
         {/* Vybe Beats — curated from preferences. Show whenever onboarding is complete
             so the card appears immediately after "Update Preferences" even if the feed
             is still loading or returned empty. */}
         {preferences?.onboardingComplete ? (() => {
-          const allItems = sections.flatMap(s => s.items);
+          const sectionItems = sections.flatMap(s => s.items);
+          const allItems = sectionItems.length > 0 ? sectionItems : vybeBeats;
           const tracks: Track[] = allItems.map(item => ({
             id: item.id,
             title: item.title,
@@ -396,7 +473,7 @@ export default function DiscoverScreen() {
             <Animated.View entering={FadeInDown.delay(0).springify()} className="mt-4">
               <VybeBeatsCard
                 items={allItems}
-                onPress={() => { if (tracks.length > 0) playTrack(tracks[0], tracks); }}
+                onPress={() => router.push('/(app)/vybe-beats')}
               />
             </Animated.View>
           );
@@ -488,7 +565,7 @@ export default function DiscoverScreen() {
               style={{ flexGrow: 0 }}
             >
               {section.items.map((item) => (
-                <DiscoverCard key={item.id} item={item} />
+                <DiscoverCard key={item.id} item={item} queue={section.items} />
               ))}
 
               {/* Empty section placeholder */}

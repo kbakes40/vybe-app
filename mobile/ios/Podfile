@@ -50,6 +50,27 @@ target 'vibecode' do
       :ccache_enabled => podfile_properties['apple.ccacheEnabled'] == 'true',
     )
 
+    # Patch fmt/base.h: wrap FMT_USE_CONSTEVAL detection block in #ifndef so
+    # the -DFMT_USE_CONSTEVAL=0 preprocessor define from build settings is honored.
+    # Without this patch the header unconditionally redefines the macro and the
+    # build flag is silently overridden.
+    fmt_base_h = File.join(__dir__, 'Pods', 'fmt', 'include', 'fmt', 'base.h')
+    if File.exist?(fmt_base_h)
+      contents = File.read(fmt_base_h)
+      sentinel = '// Detect consteval, C++20 constexpr extensions and std::is_constant_evaluated.'
+      if contents.include?(sentinel) && !contents.include?('#ifndef FMT_USE_CONSTEVAL')
+        patched = contents.sub(
+          "#{sentinel}\n#if !defined(__cpp_lib_is_constant_evaluated)",
+          "#{sentinel}\n#ifndef FMT_USE_CONSTEVAL\n#if !defined(__cpp_lib_is_constant_evaluated)"
+        ).sub(
+          "#elif defined(__cpp_consteval)\n#  define FMT_USE_CONSTEVAL 1\n#elif FMT_GCC_VERSION >= 1002 || FMT_CLANG_VERSION >= 1101\n#  define FMT_USE_CONSTEVAL 1\n#else\n#  define FMT_USE_CONSTEVAL 0\n#endif",
+          "#elif defined(__cpp_consteval)\n#  define FMT_USE_CONSTEVAL 1\n#elif FMT_GCC_VERSION >= 1002 || FMT_CLANG_VERSION >= 1101\n#  define FMT_USE_CONSTEVAL 1\n#else\n#  define FMT_USE_CONSTEVAL 0\n#endif\n#endif // FMT_USE_CONSTEVAL guard"
+        )
+        File.write(fmt_base_h, patched)
+        Pod::UI.puts "[fmt patch] base.h wrapped with #ifndef FMT_USE_CONSTEVAL guard"
+      end
+    end
+
     # This is necessary for Xcode 14, because it signs resource bundles by default
     # when building for devices.
     installer.target_installation_results.pod_target_installation_results
@@ -60,18 +81,26 @@ target 'vibecode' do
         end
       end
     end
-    # Fix deployment targets for all pods — Xcode 26 requires minimum 12.0
+    # Fix deployment targets + disable fmt consteval on EVERY pod target.
+    # fmt headers are included by many pods (RCT-Folly, React-jsi, etc.), so the
+    # FMT_USE_CONSTEVAL=0 define must be visible to all of them, not just the fmt target.
     installer.pods_project.targets.each do |target|
       target.build_configurations.each do |config|
         current = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
-        if current && current.to_f < 13.0
+        if current.nil? || current.to_f < 13.0
           config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.0'
         end
+
+        existing_defs = config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] || ['$(inherited)']
+        existing_defs = [existing_defs] unless existing_defs.is_a?(Array)
+        existing_defs << '$(inherited)' unless existing_defs.include?('$(inherited)')
+        existing_defs << 'FMT_USE_CONSTEVAL=0' unless existing_defs.include?('FMT_USE_CONSTEVAL=0')
+        existing_defs << 'FMT_USE_NONTYPE_TEMPLATE_ARGS=0' unless existing_defs.include?('FMT_USE_NONTYPE_TEMPLATE_ARGS=0')
+        config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = existing_defs
       end
 
-      if target.name == 'fmt' || target.name == 'glog'
+      if target.name == 'fmt'
         target.build_configurations.each do |config|
-          config.build_settings['OTHER_CPLUSPLUSFLAGS'] = '$(inherited) -DFMT_USE_CONSTEVAL=0'
           config.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++17'
         end
       end
