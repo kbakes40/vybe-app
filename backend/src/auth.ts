@@ -28,17 +28,31 @@ export const auth = betterAuth({
     autoSignIn: true,
   },
 
-  // Social providers - Apple and Google
+  // Social providers
   socialProviders: {
     apple: {
-      clientId: process.env.APPLE_CLIENT_ID || "com.vybe.app",
+      // Bundle ID must match the ACTUAL iOS bundle identifier committed in
+      // mobile/ios/vibecode.xcodeproj. Apple puts this in the JWT `aud` claim
+      // and Better Auth verifies it on sign-in. The bundle ID is
+      // com.vibecode.vybe — if the native project ever changes, update this.
+      clientId: process.env.APPLE_CLIENT_ID || "com.vibecode.vybe",
       clientSecret: process.env.APPLE_CLIENT_SECRET || "",
-      enabled: !!process.env.APPLE_CLIENT_SECRET,
+      // Enable the provider as soon as a client ID is present so the
+      // native idToken flow can verify tokens — client secret is only
+      // required for the web OAuth fallback.
+      enabled: true,
     },
     google: {
-      clientId: process.env.GOOGLE_CLIENT_ID || "",
+      // Must match the iOS OAuth client ID used by mobile/src/app/sign-in.tsx
+      // because Better Auth verifies the `aud` claim of Google's idToken
+      // against this value. This is the GOOGLE_IOS_CLIENT_ID from
+      // mobile/.env — it's under bundle com.vibecode.vybe.
+      clientId:
+        process.env.GOOGLE_CLIENT_ID ||
+        "806724306820-s04u1aboatjtugiejhual0i2ar1ge27e.apps.googleusercontent.com",
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
-      enabled: !!process.env.GOOGLE_CLIENT_SECRET,
+      // Native iOS flow uses idToken verification only — no client secret needed.
+      enabled: true,
     },
   },
 
@@ -48,20 +62,29 @@ export const auth = betterAuth({
       async sendVerificationOTP({ email, otp, type }) {
         if (type !== "sign-in") return;
 
-        const response = await fetch("https://smtp.vibecodeapp.com/v1/send/otp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to: email,
-            code: String(otp),
-            fromName: "VYBE",
-            lang: "en",
-          }),
-        });
+        // Always log so user can get code from LOGS tab if email fails
+        console.log(`[VYBE Auth] OTP for ${email}: ${otp}`);
 
-        if (!response.ok) {
-          const data = (await response.json().catch(() => null)) as { error?: string } | null;
-          throw new Error(data?.error || `Failed to send OTP (HTTP ${response.status})`);
+        try {
+          const response = await fetch("https://smtp.vibecodeapp.com/v1/send/otp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: email,
+              code: String(otp),
+              fromName: "VYBE",
+              lang: "en",
+            }),
+          });
+
+          if (!response.ok) {
+            const data = (await response.json().catch(() => null)) as { error?: string } | null;
+            console.error(`[VYBE Auth] Email send failed (HTTP ${response.status}):`, data?.error);
+            // Don't throw — OTP was logged above and is still valid
+          }
+        } catch (err) {
+          console.error("[VYBE Auth] Email send error:", err);
+          // Don't throw — OTP was logged above and is still valid
         }
       },
     }),
