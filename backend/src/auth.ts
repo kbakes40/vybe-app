@@ -43,13 +43,14 @@ export const auth = betterAuth({
       enabled: true,
     },
     google: {
-      // Must match the iOS OAuth client ID used by mobile/src/app/sign-in.tsx
-      // because Better Auth verifies the `aud` claim of Google's idToken
-      // against this value. This is the GOOGLE_IOS_CLIENT_ID from
-      // mobile/.env — it's under bundle com.vibecode.vybe.
+      // Must match the iOS OAuth client ID hardcoded in
+      // mobile/src/app/sign-in.tsx because Better Auth verifies the `aud`
+      // claim of Google's idToken against this value. This is the Vybe iOS
+      // client from Google Cloud Console (team FCXP585VH2), registered under
+      // bundle com.vibecode.vybe.
       clientId:
         process.env.GOOGLE_CLIENT_ID ||
-        "806724306820-s04u1aboatjtugiejhual0i2ar1ge27e.apps.googleusercontent.com",
+        "405236221156-rg9n0cquvqrh7rcg7nrbmgc20i46kgpn.apps.googleusercontent.com",
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
       // Native iOS flow uses idToken verification only — no client secret needed.
       enabled: true,
