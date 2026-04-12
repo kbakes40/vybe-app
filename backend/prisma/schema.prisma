@@ -160,6 +160,14 @@ model Playlist {
   updatedAt   DateTime @updatedAt
 }
 
+// VIP users — emails that bypass RevenueCat and always get premium
+model VipUser {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  note      String?  // e.g. "founder", "beta tester"
+  createdAt DateTime @default(now())
+}
+
 // Taste Profile for personalized discovery
 model TasteProfile {
   id        String   @id @default(cuid())
