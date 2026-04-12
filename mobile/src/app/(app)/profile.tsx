@@ -20,6 +20,8 @@ import { useDownloadsStore } from '@/stores/downloadsStore';
 import { VybeIcon } from '@/components/VybeIcon';
 import { MINI_PLAYER_HEIGHT } from './_layout';
 import { Track } from '@/types/music';
+import { authClient } from '@/lib/auth/auth-client';
+import { usePlaylistHeroColors } from '@/lib/usePlaylistHeroColors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -101,6 +103,23 @@ export default function ProfileScreen() {
   const userPlaylists = useUserPlaylistStore(s => s.playlists);
   const recentTracks = useRecentsStore(s => s.recentTracks);
   const downloads = useDownloadsStore(s => s.downloads);
+  const { data: session } = authClient.useSession();
+
+  // Derive display name and avatar from the logged-in user. Apple/Google
+  // give us `name` + `image`, email sign-in gives us email with no avatar.
+  const user = session?.user;
+  const displayName =
+    user?.name?.trim() ||
+    user?.email?.split('@')[0] ||
+    'Vybe Listener';
+  const displayEmail = user?.email ?? '';
+  const avatarUrl = user?.image ?? null;
+
+  // Pull the hero gradient + glow from the avatar so the profile header
+  // matches the same dominant-color pattern used on playlists / Vybe Mix
+  // / Vybe Beats. Falls back to the default purple palette while loading
+  // and for users with no avatar.
+  const heroColors = usePlaylistHeroColors(avatarUrl);
 
   const showMiniPlayer = !!currentTrack;
   const bottomPadding = insets.bottom + (showMiniPlayer ? MINI_PLAYER_HEIGHT : 0) + 40;
@@ -147,9 +166,12 @@ export default function ProfileScreen() {
         contentContainerStyle={{ paddingBottom: bottomPadding }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
+        {/* Header — gradient + glow derived from the user's avatar so the
+            profile screen matches the same dominant-color pattern as every
+            other playlist / Vybe Mix / Vybe Beats hero. */}
         <LinearGradient
-          colors={['#2D1B4E', '#1a1a2e', '#0A0A0A']}
+          colors={heroColors.gradient as unknown as readonly [string, string, ...string[]]}
+          locations={heroColors.locations as unknown as readonly [number, number, ...number[]]}
           style={{ paddingTop: insets.top }}
         >
           <View className="flex-row items-center justify-between px-4 py-3">
@@ -175,14 +197,61 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          {/* Profile avatar */}
+          {/* Profile avatar with dynamic halo */}
           <View className="items-center px-4 pb-8">
-            <View style={{ shadowColor: '#8B5CF6', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.5, shadowRadius: 20 }}>
-              <VybeIcon size={100} backgroundColor="#2D1B69" />
+            <View
+              style={{
+                shadowColor: heroColors.glow,
+                shadowOffset: { width: 0, height: 8 },
+                shadowOpacity: 0.6,
+                shadowRadius: 24,
+              }}
+            >
+              {avatarUrl ? (
+                <Image
+                  source={{ uri: avatarUrl }}
+                  style={{
+                    width: 110,
+                    height: 110,
+                    borderRadius: 55,
+                    borderWidth: 2,
+                    borderColor: 'rgba(255,255,255,0.15)',
+                  }}
+                  contentFit="cover"
+                />
+              ) : (
+                <View
+                  style={{
+                    width: 110,
+                    height: 110,
+                    borderRadius: 55,
+                    backgroundColor: 'rgba(255,255,255,0.08)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderWidth: 2,
+                    borderColor: 'rgba(255,255,255,0.15)',
+                  }}
+                >
+                  <VybeIcon size={72} backgroundColor="transparent" />
+                </View>
+              )}
             </View>
 
+            <Text
+              className="text-white font-bold mt-4"
+              style={{ fontSize: 22, letterSpacing: -0.3 }}
+              numberOfLines={1}
+            >
+              {displayName}
+            </Text>
+            {displayEmail ? (
+              <Text className="text-white/50 text-sm mt-1" numberOfLines={1}>
+                {displayEmail}
+              </Text>
+            ) : null}
+
             {tier === 'plus' && (
-              <View className="flex-row items-center mt-4 bg-[#8B5CF6]/20 rounded-full px-4 py-1.5">
+              <View className="flex-row items-center mt-3 bg-[#8B5CF6]/20 rounded-full px-4 py-1.5">
                 <Crown size={16} color="#8B5CF6" />
                 <Text className="text-[#8B5CF6] text-sm font-semibold ml-1.5">VYBE Plus</Text>
               </View>
