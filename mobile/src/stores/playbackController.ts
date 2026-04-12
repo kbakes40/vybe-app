@@ -5,7 +5,7 @@ import { Track, TrackSource, RepeatMode } from '@/types/music';
 import * as Haptics from 'expo-haptics';
 import { isEventObject, isValidTrack, isValidId } from '@/lib/eventGuard';
 import { useRecentsStore } from '@/stores/recentsStore';
-import { updateNowPlaying, updateNowPlayingProgress, clearNowPlaying, registerRemoteHandlers } from '@/lib/NowPlayingManager';
+import { updateNowPlaying, updateNowPlayingProgress, clearNowPlaying, registerRemoteHandlers, setNowPlayingArtwork } from '@/lib/NowPlayingManager';
 import { startNowPlayingActivity, updateNowPlayingActivity, endNowPlayingActivity, formatTime } from '@/lib/NowPlayingActivityManager';
 import { usePlaybackSettingsStore } from '@/stores/playbackSettingsStore';
 import { useDownloadsStore, downloadSoundCloudTrack, enqueueDownload } from '@/stores/downloadsStore';
@@ -1277,3 +1277,34 @@ AppState.addEventListener('change', async (nextState: AppStateStatus) => {
 
 // Export helper to stop VYBE audio (for AudioSessionManager)
 export const stopVybeNativeAudio = stopVybeAudio;
+
+// ── AirPlay artwork re-push ──────────────────────────────────────────────────
+// When AirPlay connects, Apple TV needs the album art image data
+// immediately — it can't fetch URLs on its own. Re-push whatever artwork
+// the current track has so the Now Playing card shows the cover.
+import { NativeModules, NativeEventEmitter, Platform } from 'react-native';
+if (Platform.OS === 'ios') {
+  try {
+    const { VybeNowPlaying } = NativeModules;
+    if (VybeNowPlaying) {
+      const airplayEmitter = new NativeEventEmitter(VybeNowPlaying);
+      airplayEmitter.addListener('onAirPlayConnected', () => {
+        const { currentTrack, progress, duration, playbackState } = usePlaybackController.getState();
+        if (currentTrack) {
+          console.log('[AirPlay] Connected — re-pushing full Now Playing info + artwork');
+          updateNowPlaying({
+            trackTitle: currentTrack.title,
+            artistName: currentTrack.artist,
+            artworkUrl: currentTrack.artwork ?? '',
+            duration: duration || 0,
+            currentTime: progress,
+            isPlaying: playbackState === 'playing',
+          });
+          if (currentTrack.artwork) {
+            setNowPlayingArtwork(currentTrack.artwork);
+          }
+        }
+      });
+    }
+  } catch {}
+}
