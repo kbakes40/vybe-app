@@ -16,6 +16,9 @@ import {
   Plus,
   LogOut,
   Trash2,
+  Mail,
+  UserRound,
+  Apple,
 } from 'lucide-react-native';
 import { authClient } from '@/lib/auth/auth-client';
 import { useVybePopup } from '@/components/VybePopup';
@@ -75,23 +78,95 @@ interface LoginOptionButtonProps {
   label: string;
   onPress: () => void;
   backgroundColor?: string;
+  textColor?: string;
+  borderColor?: string;
 }
 
-function LoginOptionButton({ icon, label, onPress, backgroundColor = 'rgba(255,255,255,0.1)' }: LoginOptionButtonProps) {
+/**
+ * A horizontal pill-style login/continue button with a left-aligned icon
+ * slot sized to match Apple's and Google's own guidelines. Label is
+ * visually centered across the whole row — the icon is absolutely
+ * positioned so the text doesn't shift when icons differ in width.
+ */
+function LoginOptionButton({
+  icon,
+  label,
+  onPress,
+  backgroundColor = 'rgba(255,255,255,0.08)',
+  textColor = '#fff',
+  borderColor,
+}: LoginOptionButtonProps) {
   return (
     <Pressable
       onPress={() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         onPress();
       }}
-      className="flex-row items-center justify-center py-4 px-6 rounded-full mb-3"
       style={({ pressed }) => ({
-        backgroundColor: pressed ? 'rgba(255,255,255,0.15)' : backgroundColor,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: 52,
+        borderRadius: 14,
+        marginBottom: 10,
+        paddingHorizontal: 16,
+        backgroundColor,
+        borderWidth: borderColor ? 1 : 0,
+        borderColor,
+        opacity: pressed ? 0.85 : 1,
       })}
     >
-      {icon}
-      <Text className="text-white font-semibold text-base ml-3">{label}</Text>
+      <View style={{ position: 'absolute', left: 18 }}>{icon}</View>
+      <Text
+        style={{
+          color: textColor,
+          fontWeight: '600',
+          fontSize: 15,
+          letterSpacing: -0.1,
+        }}
+      >
+        {label}
+      </Text>
     </Pressable>
+  );
+}
+
+// ── Brand glyph components ────────────────────────────────────────────────
+// Inline SVG-free marks so we don't pull in another asset. Matches the
+// Apple HIG "Continue with Apple" mark color and Google's "G" color block.
+
+function AppleGlyph({ color = '#000' }: { color?: string }) {
+  // lucide-react-native ships an Apple icon that already matches the
+  // HIG-approved silhouette when filled.
+  return <Apple size={20} color={color} fill={color} />;
+}
+
+function GoogleGlyph() {
+  // Google's multi-color "G" mark inside a white circle. The four wedges
+  // are absolutely positioned inside a 20x20 square so the mark reads
+  // correctly without needing an SVG file.
+  return (
+    <View
+      style={{
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <Text
+        style={{
+          fontSize: 18,
+          fontWeight: '900',
+          color: '#4285F4',
+          lineHeight: 20,
+          includeFontPadding: false,
+        }}
+      >
+        G
+      </Text>
+    </View>
   );
 }
 
@@ -229,51 +304,36 @@ export default function AccountsScreen() {
               </Text>
 
               <LoginOptionButton
-                icon={
-                  <View className="w-5 h-5">
-                    <Text style={{ fontSize: 20 }}>&#xF8FF;</Text>
-                  </View>
-                }
+                icon={<AppleGlyph color="#000" />}
                 label="Continue with Apple"
                 onPress={() => handleAddAccount('apple')}
                 backgroundColor="#fff"
+                textColor="#000"
               />
 
               <LoginOptionButton
-                icon={
-                  <View className="w-5 h-5 items-center justify-center">
-                    <View
-                      style={{
-                        width: 18,
-                        height: 18,
-                        borderRadius: 9,
-                        backgroundColor: '#4285F4',
-                      }}
-                    />
-                  </View>
-                }
+                icon={<GoogleGlyph />}
                 label="Continue with Google"
                 onPress={() => handleAddAccount('google')}
+                backgroundColor="#fff"
+                textColor="#000"
               />
 
               <LoginOptionButton
-                icon={
-                  <View className="w-5 h-5 rounded bg-white/20 items-center justify-center">
-                    <Text className="text-white text-xs">@</Text>
-                  </View>
-                }
+                icon={<Mail size={20} color="#fff" />}
                 label="Continue with Email"
                 onPress={() => handleAddAccount('email')}
+                backgroundColor="rgba(255,255,255,0.08)"
+                borderColor="rgba(255,255,255,0.12)"
               />
 
               <LoginOptionButton
-                icon={
-                  <View className="w-5 h-5 rounded bg-white/10 items-center justify-center">
-                    <Text className="text-white/60 text-xs">?</Text>
-                  </View>
-                }
+                icon={<UserRound size={20} color="rgba(255,255,255,0.7)" />}
                 label="Continue as Guest"
                 onPress={() => handleAddAccount('guest')}
+                backgroundColor="transparent"
+                borderColor="rgba(255,255,255,0.15)"
+                textColor="rgba(255,255,255,0.85)"
               />
 
               <Pressable
