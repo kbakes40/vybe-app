@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, ScrollView, TextInput, Pressable, Keyboard, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
+import { LoadingRing } from '@/components/LoadingRing';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Search as SearchIcon, X, ChevronLeft } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
@@ -82,12 +83,13 @@ function GenreTrackCard({ track, onPress }: { track: Track; onPress: () => void 
   );
 }
 
-function SectionRow({ label, icon, loading, tracks: rowTracks, onPlay }: {
+function SectionRow({ label, icon, loading, tracks: rowTracks, onPlay, loadingColor }: {
   label: string;
   icon: React.ReactNode;
   loading: boolean;
   tracks: Track[];
   onPlay: (track: Track) => void;
+  loadingColor?: string;
 }) {
   return (
     <View style={{ marginBottom: 28 }}>
@@ -96,7 +98,9 @@ function SectionRow({ label, icon, loading, tracks: rowTracks, onPlay }: {
         <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', marginLeft: 8 }}>{label}</Text>
       </View>
       {loading ? (
-        <ActivityIndicator size="small" color="#8B5CF6" style={{ alignSelf: 'flex-start', marginLeft: 4 }} />
+        <View style={{ alignSelf: 'flex-start', marginLeft: 4 }}>
+          <LoadingRing size={24} color={loadingColor ?? '#8B5CF6'} />
+        </View>
       ) : rowTracks.length === 0 ? (
         <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, paddingLeft: 4 }}>No results</Text>
       ) : (
@@ -513,6 +517,7 @@ export default function SearchScreen() {
               loading={ytMusicLoading}
               tracks={ytMusicTracks}
               onPlay={track => playTrack(track, ytMusicTracks)}
+              loadingColor="#FF0000"
             />
             <SectionRow
               label="YouTube"
@@ -520,6 +525,7 @@ export default function SearchScreen() {
               loading={youtubeLoading}
               tracks={youtubeTracks}
               onPlay={track => playTrack(track, youtubeTracks)}
+              loadingColor="#FF0000"
             />
             <SectionRow
               label="SoundCloud"
@@ -527,6 +533,7 @@ export default function SearchScreen() {
               loading={scLoading}
               tracks={scTracks}
               onPlay={track => playTrack(track, scTracks)}
+              loadingColor="#FF7700"
             />
           </View>
         ) : (

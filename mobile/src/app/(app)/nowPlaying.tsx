@@ -40,6 +40,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useDownloadsStore, downloadYouTubeTrack, downloadSoundCloudTrack } from '@/stores/downloadsStore';
 import { DownloadButton } from '@/components/DownloadButton';
+import { LoadingRing } from '@/components/LoadingRing';
 import { openInSoundCloud } from '@/lib/soundcloudHandoff';
 import { formatDuration } from '@/data/mockData';
 
@@ -854,7 +855,12 @@ export default function NowPlayingScreen() {
                 >
                   <View className={`w-[72px] h-[72px] rounded-full items-center justify-center ${isError ? 'bg-red-500' : 'bg-white'}`}>
                     {isPlayButtonBusy ? (
-                      <ActivityIndicator size="large" color="#0A0A0A" />
+                      <LoadingRing
+                        size={44}
+                        color={isYouTube || isYouTubeMusic ? '#FF0000' : isSoundCloud ? '#FF7700' : '#8B5CF6'}
+                        trackColor="rgba(10,10,10,0.15)"
+                        strokeWidth={3}
+                      />
                     ) : isPlaying ? (
                       <Pause size={36} color="#0A0A0A" fill="#0A0A0A" />
                     ) : (
@@ -985,7 +991,9 @@ export default function NowPlayingScreen() {
           </View>
 
           {relatedLoading ? (
-            <ActivityIndicator size="small" color="rgba(255,255,255,0.3)" style={{ marginVertical: 20 }} />
+            <View style={{ alignItems: 'center', marginVertical: 20 }}>
+              <LoadingRing size={28} />
+            </View>
           ) : null}
 
           {/* YouTube Music results */}

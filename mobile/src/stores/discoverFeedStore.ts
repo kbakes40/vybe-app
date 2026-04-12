@@ -39,6 +39,12 @@ interface DiscoverFeedState {
   // Feed sections
   sections: DiscoverSection[];
 
+  // Client-built Vybe Beats list (YouTube + SoundCloud tracks matched to the
+  // user's onboarding answers). Used when the backend discover feed is
+  // unavailable and as the data source for the Vybe Beats playlist screen.
+  vybeBeats: DiscoverItem[];
+  setVybeBeats: (items: DiscoverItem[]) => void;
+
   // User preferences
   preferences: UserPreferences;
 
@@ -86,6 +92,8 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
     (set, get) => ({
       // Initial state
       sections: [],
+      vybeBeats: [],
+      setVybeBeats: (items) => set({ vybeBeats: items }),
       preferences: defaultPreferences,
       lastFetchedAt: null,
       cacheDurationMs: DEFAULT_CACHE_DURATION_MS,
@@ -125,11 +133,17 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
             });
           }
         } catch (error) {
-          console.error('[DiscoverFeed] Error fetching feed:', error);
-          set({
-            isLoadingFeed: false,
-            feedError: error instanceof Error ? error.message : 'Failed to load recommendations',
-          });
+          // Backend discover routes are auth-gated — 401 is expected for
+          // unauthenticated sessions. The discover tab has a client-side
+          // fallback (public YouTube + SoundCloud search) that populates the
+          // Vybe Beats card, so this isn't fatal for the user.
+          const msg = error instanceof Error ? error.message : String(error);
+          if (msg.includes('UNAUTHORIZED')) {
+            console.warn('[DiscoverFeed] Feed fetch skipped (unauthenticated) — using local fallback');
+          } else {
+            console.warn('[DiscoverFeed] Feed fetch failed:', msg);
+          }
+          set({ isLoadingFeed: false });
         }
       },
 
@@ -168,11 +182,16 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
             set({ isLoadingPreferences: false });
           }
         } catch (error) {
-          console.error('[DiscoverFeed] Error fetching preferences:', error);
-          set({
-            isLoadingPreferences: false,
-            preferencesError: error instanceof Error ? error.message : 'Failed to load preferences',
-          });
+          // Same story as fetchFeed — 401 is expected when the user isn't
+          // signed in. Local preferences (persisted via zustand) are still
+          // the source of truth and the onboarding flow writes to them.
+          const msg = error instanceof Error ? error.message : String(error);
+          if (msg.includes('UNAUTHORIZED')) {
+            console.warn('[DiscoverFeed] Preferences fetch skipped (unauthenticated) — using local state');
+          } else {
+            console.warn('[DiscoverFeed] Preferences fetch failed:', msg);
+          }
+          set({ isLoadingPreferences: false });
         }
       },
 
@@ -180,33 +199,29 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
       savePreferences: async (newPreferences) => {
         set({ isSavingPreferences: true, preferencesError: null });
 
+        const currentPreferences = get().preferences;
+        const mergedPreferences = {
+          ...currentPreferences,
+          ...newPreferences,
+          onboardingComplete: true,
+          updatedAt: new Date().toISOString(),
+        };
+
+        // Persist locally first so onboarding always completes even if the
+        // backend is unreachable or rejects the request (e.g. 401 during
+        // guest sessions). The backend copy is best-effort.
+        set({
+          preferences: mergedPreferences,
+          isSavingPreferences: false,
+          lastFetchedAt: null,
+        });
+
         try {
-          const currentPreferences = get().preferences;
-          const mergedPreferences = {
-            ...currentPreferences,
-            ...newPreferences,
-            onboardingComplete: true,
-            updatedAt: new Date().toISOString(),
-          };
-
           await api.post('/api/discover/preferences', mergedPreferences);
-
-          set({
-            preferences: mergedPreferences,
-            isSavingPreferences: false,
-          });
-
-          // Invalidate cache so feed refreshes with new preferences
-          set({ lastFetchedAt: null });
-
           return true;
         } catch (error) {
-          console.error('[DiscoverFeed] Error saving preferences:', error);
-          set({
-            isSavingPreferences: false,
-            preferencesError: error instanceof Error ? error.message : 'Failed to save preferences',
-          });
-          return false;
+          console.warn('[DiscoverFeed] Preferences saved locally; backend sync failed:', error);
+          return true;
         }
       },
 
@@ -219,10 +234,23 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
           favoriteArtists: prefs.favoriteArtists,
         });
 
-        set({ isSavingPreferences: true, isLoadingFeed: true, preferencesError: null, feedError: null });
+        // Persist locally first so the UI can proceed even if the backend is
+        // unreachable or the user is unauthenticated.
+        set({
+          preferences: {
+            genres: prefs.genres,
+            moods: prefs.moods,
+            favoriteArtists: prefs.favoriteArtists,
+            onboardingComplete: true,
+            updatedAt: new Date().toISOString(),
+          },
+          isSavingPreferences: true,
+          isLoadingFeed: true,
+          preferencesError: null,
+          feedError: null,
+        });
 
         try {
-          // Call instant onboarding endpoint which saves prefs AND builds feed
           const response = await api.post<{ sections: DiscoverSection[] }>('/api/discover/instant-onboarding', {
             genres: prefs.genres,
             moods: prefs.moods,
@@ -232,51 +260,23 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
           console.log('[DiscoverFeed] Instant onboarding response:', {
             hasSections: !!response?.sections,
             sectionCount: response?.sections?.length ?? 0,
-            itemCounts: response?.sections?.map(s => ({ id: s.id, items: s.items?.length ?? 0 })) ?? [],
           });
 
-          // Update local state with the instant feed
           if (response?.sections) {
-            const totalItems = response.sections.reduce((sum, s) => sum + (s.items?.length ?? 0), 0);
-            console.log('[DiscoverFeed] Total recommendations:', totalItems);
-
             set({
               sections: response.sections,
-              preferences: {
-                genres: prefs.genres,
-                moods: prefs.moods,
-                favoriteArtists: prefs.favoriteArtists,
-                onboardingComplete: true,
-                updatedAt: new Date().toISOString(),
-              },
               lastFetchedAt: Date.now(),
               isSavingPreferences: false,
               isLoadingFeed: false,
             });
           } else {
-            console.log('[DiscoverFeed] No sections in response, saving preferences only');
-            set({
-              preferences: {
-                genres: prefs.genres,
-                moods: prefs.moods,
-                favoriteArtists: prefs.favoriteArtists,
-                onboardingComplete: true,
-                updatedAt: new Date().toISOString(),
-              },
-              isSavingPreferences: false,
-              isLoadingFeed: false,
-            });
+            set({ isSavingPreferences: false, isLoadingFeed: false });
           }
-
           return true;
         } catch (error) {
-          console.error('[DiscoverFeed] Error completing onboarding:', error);
-          set({
-            isSavingPreferences: false,
-            isLoadingFeed: false,
-            preferencesError: error instanceof Error ? error.message : 'Failed to complete onboarding',
-          });
-          return false;
+          console.warn('[DiscoverFeed] Instant feed failed; local prefs kept:', error);
+          set({ isSavingPreferences: false, isLoadingFeed: false });
+          return true;
         }
       },
 

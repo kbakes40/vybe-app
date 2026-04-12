@@ -99,10 +99,14 @@ config.resolver = {
       return context.resolveRequest(context, mjsPath, platform);
     }
 
-    // Fix @better-auth/expo incorrectly importing metro-config (dev-time only)
-    // Only mock when originating from @better-auth/expo — Expo Router needs async-require as a real function
+    // Stub out @expo/metro-config (a dev-time build tool) if it ever leaks into the
+    // runtime bundle from @better-auth/expo. Do NOT mock async-require here — it's
+    // Metro's runtime helper for dynamic import() and @better-auth/expo uses
+    // `await import("expo-network")` + `await import("expo-web-browser")` in client.mjs.
+    // Mocking it to empty makes Metro call `{}(...)` at runtime and crash with
+    // "is not a function (it is Object)".
     if (
-      (moduleName.includes("@expo/metro-config") || moduleName.includes("async-require")) &&
+      moduleName.includes("@expo/metro-config") &&
       context.originModulePath?.includes("@better-auth/expo")
     ) {
       return { type: "empty" };

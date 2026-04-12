@@ -35,14 +35,37 @@ const API_KEYS: string[] = (
 const UNIQUE_API_KEYS = [...new Set(API_KEYS)];
 
 let activeKeyIndex = 0;
+let allKeysExhaustedAt = 0; // timestamp when we last ran out of keys
 
 function getActiveKey(): string | null {
+  // Auto-reset: if all keys were exhausted and a new day has started
+  // (YouTube quota resets at midnight PT), start back at key 1 so the
+  // fresh daily quota is used without needing a manual restart.
+  if (activeKeyIndex >= UNIQUE_API_KEYS.length && allKeysExhaustedAt > 0) {
+    const now = Date.now();
+    const nextReset = getNextMidnightPT();
+    // getNextMidnightPT() returns the *upcoming* midnight. If allKeysExhaustedAt
+    // was before the most recent midnight, the quota has rolled over.
+    const lastMidnight = nextReset - 24 * 60 * 60 * 1000;
+    if (allKeysExhaustedAt < lastMidnight) {
+      console.log('[YouTube] New day — resetting all API keys to fresh quota');
+      activeKeyIndex = 0;
+      allKeysExhaustedAt = 0;
+      // Also reset per-key stats so proactive rotation thresholds are clean
+      for (const ks of keyStats) {
+        ks.totalUnits = 0;
+        ks.callCount = 0;
+        ks.resetAt = nextReset;
+      }
+    }
+  }
   return UNIQUE_API_KEYS[activeKeyIndex] ?? null;
 }
 
 function rotateKey(reason: string): boolean {
   if (activeKeyIndex + 1 >= UNIQUE_API_KEYS.length) {
     console.warn(`[YouTube] All ${UNIQUE_API_KEYS.length} key(s) exhausted. ${reason}`);
+    allKeysExhaustedAt = Date.now();
     return false;
   }
   activeKeyIndex++;

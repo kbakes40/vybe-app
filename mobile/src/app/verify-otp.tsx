@@ -36,10 +36,14 @@ export default function VerifyOtpScreen() {
     setIsLoading(true);
 
     try {
-      await authClient.emailOtp.verifyEmail({
+      // Use signIn.emailOtp — NOT emailOtp.verifyEmail. verifyEmail only marks
+      // the email as verified during signup and does not create a session.
+      // signIn.emailOtp actually signs the user in.
+      const result = await authClient.signIn.emailOtp({
         email: email ?? '',
         otp,
       });
+      if (result.error) throw new Error(result.error.message ?? 'Invalid code');
 
       // Check if onboarding is done
       const preferences = await api.get<UserPreferences>('/api/user/preferences');
@@ -53,11 +57,11 @@ export default function VerifyOtpScreen() {
       } else {
         router.replace('/onboarding');
       }
-    } catch (error) {
+    } catch (error: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       showVybePopup({
         title: 'Invalid Code',
-        message: 'The verification code is incorrect. Please try again.',
+        message: error?.message || 'The verification code is incorrect. Please try again.',
         type: 'error',
       });
     } finally {

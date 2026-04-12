@@ -26,12 +26,17 @@ SplashScreen.preventAutoHideAsync();
 const queryClient = new QueryClient();
 
 function RootLayoutNav() {
+  const { data: session, isPending } = authClient.useSession();
+
   useEffect(() => {
     SplashScreen.hideAsync();
   }, []);
 
-  const { data: session, isPending } = authClient.useSession();
-  const isAuthenticated = isPending || !!session?.user;
+  // Only treat the user as authenticated once we've confirmed they have a
+  // real session. While the session check is in flight we render the auth
+  // stack so first-time users (no stored session) land on the sign-in
+  // screen immediately instead of briefly flashing the app stack.
+  const isAuthenticated = !isPending && !!session?.user;
 
   // CRITICAL: Render ONLY auth stack OR app stack - never both
   // This prevents swipe-back from app to auth screens

@@ -11,6 +11,7 @@ import { ArrowLeft, Music2, Trash2 } from 'lucide-react-native';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useDownloadsStore } from '@/stores/downloadsStore';
 import { DownloadButton } from '@/components/DownloadButton';
+import { LoadingRing } from '@/components/LoadingRing';
 import { Track } from '@/types/music';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
@@ -91,7 +92,7 @@ function TopTrackDownload({ trackName, artistName, artwork }: { trackName: strin
   }, [cacheKey]);
 
   if (!foundTrack) {
-    return <ActivityIndicator size="small" color="rgba(255,255,255,0.2)" style={{ width: 28 }} />;
+    return <LoadingRing size={26} />;
   }
   return <DownloadButton track={foundTrack} size={26} />;
 }
@@ -210,6 +211,7 @@ export default function ArtistProfileScreen() {
         scrollEventThrottle={16}
         contentContainerStyle={{ paddingBottom: 120 }}
         showsVerticalScrollIndicator={false}
+        style={{ backgroundColor: '#1A0D38' }}
       >
         {/* Parallax header */}
         <Animated.View style={[styles.header, { transform: [{ translateY: headerTranslateY }] }]}>
@@ -266,7 +268,9 @@ export default function ArtistProfileScreen() {
 
           {/* Popular via Apple Music */}
           {loading ? (
-            <ActivityIndicator color="rgba(255,255,255,0.3)" style={{ marginTop: 20 }} />
+            <View style={{ alignItems: 'center', marginTop: 20 }}>
+              <LoadingRing size={28} />
+            </View>
           ) : (data?.topTracks ?? []).length > 0 ? (
             <View style={{ marginBottom: 28 }}>
               <Text style={styles.sectionTitle}>Popular via Apple Music</Text>

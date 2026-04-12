@@ -23,13 +23,24 @@ export const TAB_BAR_BASE_HEIGHT = 50;
 export let warmSoundCloudRef: React.RefObject<SoundCloudWebViewPoolRef | null> | null = null;
 export let warmYouTubeRef: React.RefObject<YouTubeWebViewPoolRef | null> | null = null;
 
-type MusicPlatform = 'soundcloud' | 'youtube_music';
+type MusicPlatform = 'soundcloud' | 'youtube_music' | 'youtube' | 'spotify' | 'apple_music';
 
 function detectMusicPlatform(text: string): MusicPlatform | null {
-  if (/soundcloud\.com\/.+\/.+/.test(text)) return 'soundcloud';
-  if (text.includes('music.youtube.com/')) return 'youtube_music';
+  if (text.includes('music.youtube.com')) return 'youtube_music';
+  if (text.includes('youtube.com/watch') || text.includes('youtu.be/')) return 'youtube';
+  if (text.includes('soundcloud.com/') || text.includes('on.soundcloud.com/')) return 'soundcloud';
+  if (text.includes('open.spotify.com/') || text.includes('spotify.link/')) return 'spotify';
+  if (text.includes('music.apple.com/')) return 'apple_music';
   return null;
 }
+
+const PLATFORM_META: Record<MusicPlatform, { label: string; color: string; symbol: string; symbolSize: number }> = {
+  soundcloud:   { label: 'SoundCloud',   color: '#FF5500', symbol: ')))', symbolSize: 11 },
+  youtube_music:{ label: 'YouTube Music',color: '#FF0000', symbol: '▶',   symbolSize: 13 },
+  youtube:      { label: 'YouTube',      color: '#FF0000', symbol: '▶',   symbolSize: 13 },
+  spotify:      { label: 'Spotify',      color: '#1DB954', symbol: '♫',   symbolSize: 16 },
+  apple_music:  { label: 'Apple Music',  color: '#FC3C44', symbol: '♪',   symbolSize: 16 },
+};
 
 export default function AppLayout() {
   // Use the unified PlaybackController instead of the old playerStore
@@ -49,10 +60,18 @@ export default function AppLayout() {
   const bannerStyle = useAnimatedStyle(() => ({ transform: [{ translateY: bannerY.value }] }));
 
   const showBanner = (url: string, platform: MusicPlatform) => {
+    bannerY.value = -120; // reset before mount
     setClipboardUrl(url);
     setClipboardPlatform(platform);
-    bannerY.value = withSpring(0, { damping: 18, stiffness: 200 });
+    // animation fires after mount via the effect below
   };
+
+  // Start slide-in after the Animated.View is actually in the tree
+  useEffect(() => {
+    if (clipboardUrl) {
+      bannerY.value = withSpring(0, { damping: 18, stiffness: 200 });
+    }
+  }, [clipboardUrl]);
 
   const dismissBanner = () => {
     bannerY.value = withTiming(-120, { duration: 250 });
@@ -67,14 +86,22 @@ export default function AppLayout() {
 
   // Check clipboard for music links whenever app comes to foreground
   useEffect(() => {
-    const checkClipboard = async () => {
+    const checkClipboard = async (retryCount = 0) => {
       try {
         const text = (await Clipboard.getStringAsync()).trim();
-        if (!text || text === lastSeenClip.current) return;
-        lastSeenClip.current = text;
+        if (!text) {
+          if (retryCount < 4) setTimeout(() => checkClipboard(retryCount + 1), 700);
+          return;
+        }
+        if (text === lastSeenClip.current) return;
         const platform = detectMusicPlatform(text);
-        if (platform) showBanner(text, platform);
-      } catch {}
+        if (platform) {
+          lastSeenClip.current = text;
+          showBanner(text, platform);
+        }
+      } catch {
+        if (retryCount < 4) setTimeout(() => checkClipboard(retryCount + 1), 700);
+      }
     };
 
     const sub = AppState.addEventListener('change', (state) => {
@@ -259,6 +286,18 @@ export default function AppLayout() {
             animation: 'slide_from_right',
           }}
         />
+        <Stack.Screen
+          name="vybe-beats"
+          options={{
+            animation: 'slide_from_right',
+          }}
+        />
+        <Stack.Screen
+          name="vybe-mix"
+          options={{
+            animation: 'slide_from_right',
+          }}
+        />
       </Stack>
 
       {/* Hidden warm WebView pools - preload APIs for instant playback */}
@@ -300,6 +339,8 @@ export default function AppLayout() {
               top: insets.top + 8,
               left: 16,
               right: 16,
+              zIndex: 9999,
+              elevation: 20,
               backgroundColor: '#1C1C1E',
               borderRadius: 16,
               borderWidth: 1,
@@ -322,21 +363,21 @@ export default function AppLayout() {
               width: 36,
               height: 36,
               borderRadius: 10,
-              backgroundColor: clipboardPlatform === 'soundcloud' ? '#FF5500' : '#FF0000',
+              backgroundColor: clipboardPlatform ? PLATFORM_META[clipboardPlatform].color : '#8B5CF6',
               alignItems: 'center',
               justifyContent: 'center',
               marginRight: 12,
             }}
           >
-            <Text style={{ color: '#fff', fontSize: clipboardPlatform === 'soundcloud' ? 11 : 13, fontWeight: '900' }}>
-              {clipboardPlatform === 'soundcloud' ? ')))' : '▶'}
+            <Text style={{ color: '#fff', fontSize: clipboardPlatform ? PLATFORM_META[clipboardPlatform].symbolSize : 13, fontWeight: '900' }}>
+              {clipboardPlatform ? PLATFORM_META[clipboardPlatform].symbol : '♫'}
             </Text>
           </View>
 
           {/* Text */}
           <View style={{ flex: 1 }}>
             <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }} numberOfLines={1}>
-              {clipboardPlatform === 'soundcloud' ? 'SoundCloud' : 'YouTube Music'} link detected
+              {clipboardPlatform ? PLATFORM_META[clipboardPlatform].label : ''} link detected
             </Text>
             <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 1 }} numberOfLines={1}>
               {clipboardUrl}

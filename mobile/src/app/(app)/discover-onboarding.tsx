@@ -96,19 +96,36 @@ export default function DiscoverOnboardingScreen() {
       artists: artistsArray,
     });
 
-    // Use instant onboarding which builds personalized feed immediately
-    const success = await completeOnboardingWithInstantFeed({
+    // Navigate immediately so the user isn't stuck if the backend is slow or
+    // returns an error. The Discover tab's focus effect retries feed building
+    // with the persisted preferences.
+    router.replace('/(app)/(tabs)/discover');
+
+    // Fire-and-forget: save preferences + build instant feed in the background.
+    // Fallback to plain savePreferences if the instant-onboarding call errors.
+    completeOnboardingWithInstantFeed({
       genres: selectedGenres,
       moods: selectedMoods,
       favoriteArtists: artistsArray,
-    });
-
-    console.log('[DiscoverOnboarding] Onboarding result:', success);
-
-    if (success) {
-      // Navigate to discover tab - feed is already loaded!
-      router.replace('/(app)/(tabs)/discover');
-    }
+    })
+      .then((success) => {
+        console.log('[DiscoverOnboarding] Onboarding result:', success);
+        if (!success) {
+          return savePreferences({
+            genres: selectedGenres,
+            moods: selectedMoods,
+            favoriteArtists: artistsArray,
+          });
+        }
+      })
+      .catch((err) => {
+        console.warn('[DiscoverOnboarding] instant feed failed, saving prefs only:', err);
+        return savePreferences({
+          genres: selectedGenres,
+          moods: selectedMoods,
+          favoriteArtists: artistsArray,
+        });
+      });
   };
 
   const handleSkip = async () => {

@@ -58,10 +58,12 @@ function PasteSection() {
   const [scInfo, setScInfo] = useState<SCImportTrack | null>(null);
   const [relatedTracks, setRelatedTracks] = useState<SCSearchResult[]>([]);
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [playlistTracks, setPlaylistTracks] = useState<SCImportTrack[]>([]);
+  const [playlistTitle, setPlaylistTitle] = useState('');
   const playTrack = usePlaybackController(s => s.playTrack);
   const router = useRouter();
 
-  const clear = () => { setScInfo(null); setError(null); setRelatedTracks([]); setPlayingId(null); };
+  const clear = () => { setScInfo(null); setError(null); setRelatedTracks([]); setPlayingId(null); setPlaylistTracks([]); setPlaylistTitle(''); };
 
   const handleLookup = useCallback(async (overrideUrl?: string) => {
     const target = (overrideUrl ?? url).trim();
@@ -69,24 +71,45 @@ function PasteSection() {
     clear(); setLoading(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      if (!target.includes('soundcloud.com/')) throw new Error('Paste a SoundCloud track URL');
-      const resp = await fetch(`${BACKEND_URL}/api/soundcloud/import`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: target, tags: [] }),
-      });
-      if (!resp.ok) throw new Error('Failed to import SoundCloud track');
-      const json = await resp.json();
-      const track: SCImportTrack = json.data?.track ?? json.track;
-      setScInfo(track);
-      if (track?.artist) {
-        const relatedResp = await fetch(`${BACKEND_URL}/api/soundcloud/search?q=${encodeURIComponent(track.artist)}&maxResults=6`);
-        if (relatedResp.ok) {
-          const relatedJson = await relatedResp.json();
-          const results: SCSearchResult[] = (relatedJson.data ?? []).filter(
-            (r: SCSearchResult) => r.soundcloudUrl !== target
-          );
-          setRelatedTracks(results.slice(0, 5));
+      if (!target.includes('soundcloud.com/')) throw new Error('Paste a SoundCloud URL');
+
+      const isPlaylistUrl = target.includes('/sets/');
+
+      if (isPlaylistUrl) {
+        // Playlist import
+        const resp = await fetch(`${BACKEND_URL}/api/soundcloud/import-playlist`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: target }),
+        });
+        if (!resp.ok) throw new Error('Failed to fetch playlist');
+        const json = await resp.json();
+        if (json.data?.tracks?.length > 0) {
+          setPlaylistTracks(json.data.tracks);
+          setPlaylistTitle(json.data.playlistTitle ?? 'Playlist');
+        } else {
+          throw new Error('No tracks found in playlist');
+        }
+      } else {
+        // Single track import (existing logic)
+        const resp = await fetch(`${BACKEND_URL}/api/soundcloud/import`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: target, tags: [] }),
+        });
+        if (!resp.ok) throw new Error('Failed to import SoundCloud track');
+        const json = await resp.json();
+        const track: SCImportTrack = json.data?.track ?? json.track;
+        setScInfo(track);
+        if (track?.artist) {
+          const relatedResp = await fetch(`${BACKEND_URL}/api/soundcloud/search?q=${encodeURIComponent(track.artist)}&maxResults=6`);
+          if (relatedResp.ok) {
+            const relatedJson = await relatedResp.json();
+            const results: SCSearchResult[] = (relatedJson.data ?? []).filter(
+              (r: SCSearchResult) => r.soundcloudUrl !== target
+            );
+            setRelatedTracks(results.slice(0, 5));
+          }
         }
       }
     } catch (e) {
@@ -224,6 +247,83 @@ function PasteSection() {
               })}
             </View>
           ) : null}
+        </View>
+      ) : null}
+
+      {playlistTracks.length > 0 ? (
+        <View style={{ marginHorizontal: 16, marginTop: 12, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 12, overflow: 'hidden' }}>
+          {/* Playlist header */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.07)' }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15, textTransform: 'capitalize' }} numberOfLines={1}>{playlistTitle}</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12, marginTop: 2 }}>{playlistTracks.length} tracks</Text>
+            </View>
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                const queue: Track[] = playlistTracks.map(t => ({
+                  ...t,
+                  artistId: '', album: '', albumId: '', isLiked: false,
+                  source: 'soundcloud' as const,
+                  audioUrl: t.soundcloudUrl ?? '',
+                }));
+                playTrack(queue[0], queue);
+                router.push('/(app)/nowPlaying' as never);
+              }}
+              style={{ backgroundColor: '#FF5500', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 4 }}
+            >
+              <Play size={12} color="#fff" fill="#fff" />
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Play All</Text>
+            </Pressable>
+          </View>
+          {/* Track list */}
+          {playlistTracks.map((t, i) => {
+            const track: Track = {
+              ...t,
+              artistId: '', album: '', albumId: '', isLiked: false,
+              source: 'soundcloud' as const,
+              audioUrl: t.soundcloudUrl ?? '',
+            };
+            const queue: Track[] = playlistTracks.map(pt => ({
+              ...pt,
+              artistId: '', album: '', albumId: '', isLiked: false,
+              source: 'soundcloud' as const,
+              audioUrl: pt.soundcloudUrl ?? '',
+            }));
+            return (
+              <Pressable
+                key={t.id}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setPlayingId(t.id);
+                  playTrack(track, queue);
+                  router.push('/(app)/nowPlaying' as never);
+                }}
+                style={({ pressed }) => ({
+                  flexDirection: 'row', alignItems: 'center',
+                  paddingHorizontal: 12, paddingVertical: 8,
+                  backgroundColor: pressed ? 'rgba(255,255,255,0.05)' : 'transparent',
+                  borderTopWidth: i === 0 ? 0 : 1,
+                  borderTopColor: 'rgba(255,255,255,0.05)',
+                })}
+              >
+                <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11, width: 22, textAlign: 'right', marginRight: 10 }}>{i + 1}</Text>
+                <Image source={{ uri: t.artwork }} style={{ width: 42, height: 42, borderRadius: 6, opacity: playingId === t.id ? 0.6 : 1 }} contentFit="cover" />
+                {playingId === t.id && (
+                  <View style={{ position: 'absolute', left: 32, top: 8, width: 42, height: 42, alignItems: 'center', justifyContent: 'center' }}>
+                    <Play size={14} color="#fff" fill="#fff" />
+                  </View>
+                )}
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={{ color: playingId === t.id ? '#FF5500' : '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{t.title}</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 1 }} numberOfLines={1}>{t.artist}</Text>
+                </View>
+                <View onStartShouldSetResponder={() => true}>
+                  <DownloadButton track={track} size={26} />
+                </View>
+              </Pressable>
+            );
+          })}
         </View>
       ) : null}
     </View>

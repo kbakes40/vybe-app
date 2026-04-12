@@ -19,6 +19,7 @@ import { usePlaybackController } from '@/stores/playbackController';
 import { downloadYouTubeTrack, useDownloadsStore } from '@/stores/downloadsStore';
 import { usePlaybackDebugStore } from '@/stores/playbackDebugStore';
 import { PlaybackDebugIndicator } from '@/components/PlaybackDebugOverlay';
+import { LoadingRing } from '@/components/LoadingRing';
 
 import * as Haptics from 'expo-haptics';
 
@@ -372,11 +373,14 @@ export function MiniPlayer() {
             </View>
           </View>
 
-          {/* Download button for YouTube tracks */}
+          {/* Download button — colored to match the current source */}
           {showDownload && (
             <GestureDetector gesture={downloadTapGesture}>
               <Animated.View style={[styles.playButton, { opacity: isImporting ? 0.4 : 1 }]}>
-                <Download size={18} color="#8B5CF6" />
+                <Download
+                  size={18}
+                  color={isYouTube || isYouTubeMusic ? '#FF0000' : isSoundCloud ? '#FF7700' : '#8B5CF6'}
+                />
               </Animated.View>
             </GestureDetector>
           )}
@@ -384,7 +388,12 @@ export function MiniPlayer() {
           {/* Play/Pause — dedicated Tap gesture so parent mini-player tap doesn't double-fire */}
           <GestureDetector gesture={playPauseTapGesture}>
             <Animated.View style={[styles.playButton, buttonAnimatedStyle]}>
-              {isPlaying ? (
+              {isLoading ? (
+                <LoadingRing
+                  size={26}
+                  color={isYouTube || isYouTubeMusic ? '#FF0000' : isSoundCloud ? '#FF7700' : '#8B5CF6'}
+                />
+              ) : isPlaying ? (
                 <Pause size={22} color="#fff" fill="#fff" />
               ) : (
                 <Play size={22} color="#fff" fill="#fff" style={{ marginLeft: 2 }} />

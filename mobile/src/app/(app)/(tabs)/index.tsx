@@ -779,7 +779,7 @@ export default function HomeScreen() {
               }
               return pool;
             })()}
-            onPress={() => { if (quickPicks.length > 0) playTrack(quickPicks[0], quickPicks); }}
+            onPress={() => router.push('/(app)/vybe-mix')}
           />
         </View>
 
@@ -1027,28 +1027,17 @@ export default function HomeScreen() {
                       key={station.id}
                       station={station}
                       artworks={artworks}
-                      onPress={async () => {
-                        try {
-                          const results = await api.get<PlaylistTrack[]>(
-                            `/api/youtube/search?q=${encodeURIComponent(station.searchQuery)}&maxResults=15`
-                          );
-                          if (!results || results.length === 0) return;
-                          const eraTracks: Track[] = results.map(t => ({
-                            id: `ytm-${t.videoId}`,
-                            title: t.title,
-                            artist: t.channelName,
-                            artistId: '',
-                            album: '',
-                            albumId: '',
-                            artwork: t.thumbnailUrl,
-                            duration: 0,
-                            isLiked: false,
-                            source: 'youtube_music' as const,
-                            audioUrl: '',
-                            youtubeMusicId: t.videoId,
-                          }));
-                          playTrack(eraTracks[0], eraTracks);
-                        } catch {}
+                      onPress={() => {
+                        router.push({
+                          pathname: '/(app)/era-playlist',
+                          params: {
+                            name: station.name,
+                            query: station.searchQuery,
+                            image: station.image,
+                            color: station.colors[0],
+                            decade: station.decade,
+                          },
+                        } as never);
                       }}
                     />
                   );

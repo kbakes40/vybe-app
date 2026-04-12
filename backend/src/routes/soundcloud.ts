@@ -509,6 +509,7 @@ async function fetchSoundCloudMetadata(url: string): Promise<SoundCloudTrackMeta
     let canonicalUrl = url;
     if (url.includes("on.soundcloud.com")) {
       canonicalUrl = await expandShortUrl(url);
+      console.log("[SoundCloud] Short URL expanded to:", canonicalUrl);
     }
 
     // Use SoundCloud's oEmbed endpoint with the canonical URL
@@ -614,9 +615,10 @@ async function expandShortUrl(url: string): Promise<string> {
 
     console.log("[SoundCloud] Expanding short URL:", url);
 
-    // Follow the redirect to get the canonical URL
+    // Follow the redirect to get the canonical URL.
+    // Must use GET — many shorteners don't redirect on HEAD requests.
     const response = await fetch(url, {
-      method: "HEAD",
+      method: "GET",
       redirect: "follow",
     });
 
@@ -626,7 +628,8 @@ async function expandShortUrl(url: string): Promise<string> {
     // Validate the expanded URL is a proper soundcloud.com URL
     const expandedParsed = new URL(expandedUrl);
     if (expandedParsed.hostname !== "soundcloud.com" &&
-        expandedParsed.hostname !== "www.soundcloud.com") {
+        expandedParsed.hostname !== "www.soundcloud.com" &&
+        expandedParsed.hostname !== "m.soundcloud.com") {
       console.error("[SoundCloud] Expanded URL is not soundcloud.com:", expandedUrl);
       throw new Error("Invalid expanded URL");
     }
@@ -1351,6 +1354,82 @@ soundcloudRouter.get("/download", async (c) => {
     const msg = e instanceof Error ? e.message : "Serve failed";
     console.error("[SoundCloud /download] serve error:", msg);
     return c.json({ error: msg }, 502);
+  }
+});
+
+/**
+ * POST /api/soundcloud/import-playlist
+ * Import all tracks from a SoundCloud playlist URL using yt-dlp flat-playlist dump.
+ */
+soundcloudRouter.post("/import-playlist", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { url } = body as { url: string };
+    if (!url) return c.json({ error: { message: "URL required", code: "MISSING_URL" } }, 400);
+
+    const normalized = normalizeSoundCloudUrl(url);
+    if (!normalized) return c.json({ error: { message: "Invalid SoundCloud URL", code: "INVALID_URL" } }, 400);
+
+    // Expand short URLs to canonical form
+    let canonicalUrl = normalized;
+    if (normalized.includes("on.soundcloud.com")) {
+      canonicalUrl = await expandShortUrl(normalized);
+    }
+
+    const isPlaylist = canonicalUrl.includes("/sets/");
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60_000);
+    let output = "";
+    try {
+      output = await ytDlp.execPromise([
+        canonicalUrl,
+        "--dump-json",
+        "--flat-playlist",
+        "--quiet",
+        "--no-warnings",
+      ], {}, controller.signal);
+      clearTimeout(timer);
+    } catch (e: any) {
+      clearTimeout(timer);
+      output = e.stderr ?? "";
+      if (!output) throw new Error(`yt-dlp failed: ${e.message}`);
+    }
+
+    const tracks = output.trim().split("\n").filter(Boolean).map((line) => {
+      try {
+        const j = JSON.parse(line);
+        const thumbs: Array<{ url: string }> = j.thumbnails ?? [];
+        const artwork = thumbs.length > 0
+          ? thumbs[thumbs.length - 1].url
+          : "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop";
+        return {
+          id: `soundcloud-${j.id ?? Date.now()}`,
+          title: (j.title as string) ?? "Unknown",
+          artist: (j.uploader ?? j.channel ?? "Unknown") as string,
+          artwork,
+          duration: (j.duration as number) ?? 0,
+          soundcloudUrl: (j.webpage_url ?? j.url ?? canonicalUrl) as string,
+          source: "soundcloud" as const,
+        };
+      } catch { return null; }
+    }).filter((t): t is NonNullable<typeof t> => t !== null);
+
+    if (tracks.length === 0) {
+      return c.json({ error: { message: "No tracks found", code: "NO_TRACKS" } }, 400);
+    }
+
+    // Extract playlist title from URL path for sets
+    let playlistTitle = "Playlist";
+    if (isPlaylist) {
+      const parts = canonicalUrl.split("/sets/");
+      if (parts[1]) playlistTitle = parts[1].replace(/-/g, " ").replace(/\?.*/, "");
+    }
+
+    return c.json({ data: { tracks, isPlaylist: isPlaylist || tracks.length > 1, playlistTitle } });
+  } catch (error) {
+    console.error("[SoundCloud] import-playlist error:", error);
+    return c.json({ error: { message: "Failed to fetch playlist", code: "FETCH_FAILED" } }, 500);
   }
 });
 
