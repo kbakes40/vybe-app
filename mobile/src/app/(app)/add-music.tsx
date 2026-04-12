@@ -339,7 +339,7 @@ function PasteSection({ initialUrl }: { initialUrl?: string }) {
           )}
         </View>
         <Pressable
-          onPress={url ? handleLookup : handlePaste}
+          onPress={() => { if (url) { handleLookup(); } else { handlePaste(); } }}
           style={{ backgroundColor: '#6366F1', borderRadius: 12, height: 44, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' }}
         >
           {loading ? (

@@ -264,7 +264,7 @@ export default function AddMusicSpotifyScreen() {
 
             {isValidUrl && !result && !trackResult && !loading && (
               <Pressable
-                onPress={handleLoad}
+                onPress={() => handleLoad()}
                 style={{ marginTop: 12, backgroundColor: '#1DB954', borderRadius: 12, height: 44, alignItems: 'center', justifyContent: 'center' }}
               >
                 <Text style={{ color: '#000', fontWeight: '800', fontSize: 15 }}>{trackId ? 'Load Track' : 'Load Playlist'}</Text>

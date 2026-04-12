@@ -221,7 +221,7 @@ export default function AddMusicAppleMusicScreen() {
 
             {isValid && !result && !loading && (
               <Pressable
-                onPress={handleLoad}
+                onPress={() => handleLoad()}
                 style={{ marginTop: 12, backgroundColor: '#FC3C44', borderRadius: 12, height: 44, alignItems: 'center', justifyContent: 'center' }}
               >
                 <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>Load Content</Text>
