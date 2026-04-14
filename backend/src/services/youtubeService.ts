@@ -468,6 +468,19 @@ const CURATED_PLAYLISTS_META: { id: string; name: string; category?: string; sec
   { id: 'RDCLAK5uy_k1VVBVsS6pu1pVkYZK2B0EWic3i4j_TY4', name: 'Trap Bangers', category: 'Pump It Up' },
   { id: 'RDCLAK5uy_llM83Y-j8DfoxM_iJMHCU2NMM_UytLTT0', name: 'Old School Rap', category: 'Pump It Up' },
 
+  // ── Era Hits ──────────────────────────────────────────────────────────────
+  // Surfaced as "Era Hits" cards on the home screen. The `section: 'era'` flag
+  // lets the mobile client filter these out of All-time Essentials so they
+  // don't appear twice.
+  { id: 'OLAK5uy_nNJT7AbBdhV752pwUKXiyYRs6aEiUyh5Y', name: "The Hits: '70s", section: 'era' },
+  { id: 'RDCLAK5uy_lMzHW51iFg1Kx0d_2EHpzbOgCrwtu8cgI', name: "The Hits: '80s", section: 'era' },
+  { id: 'RDCLAK5uy_nQkPLhMF6chdzKSlWdX8NHMrLVpdci-eU', name: "The Hits: '90s", section: 'era' },
+  { id: 'OLAK5uy_k8MpasYgwAswSjuvZN5ilDMNPxT5R-mHk', name: "90s & 00s Hits Rewind", section: 'era' },
+  { id: 'PLmyAPRLQRJ6lMbAdXYGuyZ627Y9RoX25i', name: "MTV Hits 90's-2000's", section: 'era' },
+  { id: 'RDCLAK5uy_mGYde2Wyx9INZd6GbPcMWkxDOu6Utmedw', name: "The Hits: '10s", section: 'era' },
+  { id: 'RDCLAK5uy_nZgpioZcDw6oYAp4o3oUNTWdVK0j_XyWo', name: "'10s Party", section: 'era' },
+  { id: 'RDCLAK5uy_mplKe9BIYCO3ZuNWSHZr48bm9DUDzbWnE', name: "Millennial Mixtape", section: 'era' },
+
   // ── Popular Playlists ──────────────────────────────────────────────────────
   // Hits / Mainstream
   { id: 'RDCLAK5uy_kmPRjHDECIcuVwnKsx2Ng7fyNgFKWNJFs', name: 'The Hit List', section: 'popular', category: 'Hits / Mainstream' },
