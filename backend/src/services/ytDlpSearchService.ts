@@ -7,20 +7,9 @@
  */
 
 import YTDlpWrap from 'yt-dlp-wrap';
-import * as path from 'path';
-import * as os from 'os';
-import * as fs from 'fs';
 import type { DiscoverItem } from '../types/discover';
 
-const YTDLP_BINARY_PATH = path.join(os.tmpdir(), 'yt-dlp');
-const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), 'youtube-cookies.txt');
-const ytDlp = new YTDlpWrap(YTDLP_BINARY_PATH);
-
-function cookieArgs(): string[] {
-  try {
-    return fs.existsSync(YTDLP_COOKIES_PATH) ? ['--cookies', YTDLP_COOKIES_PATH] : [];
-  } catch { return []; }
-}
+const ytDlp = new YTDlpWrap();
 
 interface RawTrack {
   id: string;
@@ -42,9 +31,6 @@ async function runYtDlpSearch(prefix: string, query: string, maxResults: number)
         '--flat-playlist',
         '--quiet',
         '--no-warnings',
-        '--extractor-args', 'youtube:player_client=tv_embedded',
-        '--js-runtimes', 'node',
-        ...cookieArgs(),
       ],
       {},
       controller.signal
