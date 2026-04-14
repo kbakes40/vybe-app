@@ -56,6 +56,19 @@ const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), "youtube-cookies.txt");
     } else {
       console.warn("[yt-dlp] YOUTUBE_COOKIES not set — YouTube may block requests");
     }
+    // Create a /tmp/node → bun shim so yt-dlp can use --js-runtimes node
+    // on Railway (which only has Bun, not Node). yt-dlp shells out to "node"
+    // for JS challenge solving — this shim lets bun handle it.
+    const nodeShimPath = path.join(os.tmpdir(), "node");
+    if (!fs.existsSync(nodeShimPath)) {
+      const bunPath = Bun.which("bun") ?? "/usr/local/bin/bun";
+      fs.symlinkSync(bunPath, nodeShimPath);
+      console.log("[yt-dlp] created node shim:", nodeShimPath, "→", bunPath);
+    }
+    // Ensure /tmp is on PATH so yt-dlp can find the node shim
+    if (!process.env.PATH?.includes(os.tmpdir())) {
+      process.env.PATH = `${os.tmpdir()}:${process.env.PATH}`;
+    }
   } catch (e: any) {
     console.error("[yt-dlp] startup error:", e.message);
   }
@@ -99,7 +112,8 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
       "--get-url",
       "--no-playlist",
       "--quiet",
-      "--extractor-args", "youtube:player_client=ios",
+      "--extractor-args", "youtube:player_client=tv_embedded",
+      "--js-runtimes", "node",
       ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
@@ -239,7 +253,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
   // Try multiple player_clients in order — YouTube's bot detection blocks
   // individual clients intermittently, so if ios fails we fall through to
   // tv → web → android. This dramatically improves download reliability.
-  const PLAYER_CLIENTS = ["ios", "tv_embedded", "web", "android"] as const;
+  const PLAYER_CLIENTS = ["tv_embedded", "ios", "web", "android"] as const;
 
   const tryClient = async (client: string): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
     // Clean up any partial files from a previous attempt so the --print
@@ -258,6 +272,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
         "--no-part",
         "--print", "after_move:filepath",
         "--extractor-args", `youtube:player_client=${client}`,
+        "--js-runtimes", "node",
         ...cookieArgs(),
       ], {}, controller.signal);
       clearTimeout(timer);
@@ -428,6 +443,8 @@ async function searchYouTubeYtDlp(query: string, maxResults: number): Promise<Ar
     output = await ytDlp.execPromise([
       `ytsearch${fetchCount}:${query}`,
       "--dump-json", "--flat-playlist", "--quiet", "--no-warnings",
+      "--js-runtimes", "node",
+      ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
   } catch (e: any) {
@@ -483,11 +500,11 @@ youtubeRouter.get("/info/:videoId", async (c) => {
 });
 
 const YT_DLP_CLIENT_FALLBACKS = [
+  "tv_embedded",
   "ios",
   "android",
   "web_safari",
   "mweb",
-  "tv_embedded",
 ];
 
 async function getVideoInfo(videoId: string): Promise<{ title: string; channel: string; thumbnail: string; duration: number }> {
@@ -508,6 +525,8 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
       const output = await ytDlp.execPromise([
         ...baseArgs,
         "--extractor-args", `youtube:player_client=${client}`,
+        "--js-runtimes", "node",
+        ...cookieArgs(),
       ]);
       const lines = output.trim().split("\n");
       if (lines.length < 3) throw new Error(`yt-dlp info returned insufficient output`);
@@ -565,6 +584,8 @@ async function getPlaylistTracks(listId: string): Promise<Array<{ videoId: strin
       "--dump-json",
       "--no-warnings",
       "--quiet",
+      "--js-runtimes", "node",
+      ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
   } catch (e: any) {
