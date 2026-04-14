@@ -574,28 +574,9 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     // If the track has been downloaded locally, always play from the local file
     // regardless of its original source (handles downloaded SoundCloud/YouTube tracks)
     if (track.audioUrl?.startsWith('file://')) {
-      // Downloaded YouTube / YouTube Music m4a files have the same DASH container
-      // quirk as streamed YouTube: the mvhd atom reports ~2x the real audio length,
-      // so AVPlayer shows a doubled duration and plays silence for the second half.
-      // Fetch real duration from /info so the time bar is honest and we can
-      // auto-advance when audio actually ends — mirrors the streaming path below.
       const ytVideoIdForDownload = track.youtubeId || track.youtubeMusicId;
       const isYt = (source === 'youtube' || source === 'youtube_music') && !!ytVideoIdForDownload;
-      let realDurationSec = track.duration || 0;
-      if (isYt && realDurationSec <= 0) {
-        try {
-          const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
-          const infoResp = await fetch(`${backendBase}/api/youtube/info/${ytVideoIdForDownload}`);
-          if (infoResp.ok) {
-            const infoJson = (await infoResp.json()) as { data?: { duration?: number } };
-            const d = infoJson.data?.duration ?? 0;
-            if (d > 0) realDurationSec = d;
-          }
-        } catch {
-          // non-fatal — fall back to whatever AVPlayer reports
-        }
-        if (!isStillCurrent()) { await stopVybeAudio(); return; }
-      }
+      const realDurationSec = track.duration || 0;
       if (isYt && realDurationSec > 0) set({ duration: realDurationSec });
 
       try {

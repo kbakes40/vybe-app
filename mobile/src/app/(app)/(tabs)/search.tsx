@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, ScrollView, TextInput, Pressable, Keyboard, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 import { LoadingRing } from '@/components/LoadingRing';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Search as SearchIcon, X, ChevronLeft } from 'lucide-react-native';
+import { Search as SearchIcon, X, ChevronLeft, Music, Play, Radio } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import { Image } from 'expo-image';
 import { CategoryCard } from '@/components/CategoryCard';
@@ -13,6 +13,7 @@ import { usePlaybackController } from '@/stores/playbackController';
 import { useDownloadsStore } from '@/stores/downloadsStore';
 import { api } from '@/lib/api/api';
 import { Track } from '@/types/music';
+import { createMMKVCache, TTL } from '@/lib/mmkv-cache';
 
 interface PlaylistTrack {
   videoId: string;
@@ -66,9 +67,32 @@ function isFresh(entry: CacheEntry) {
   return Date.now() - entry.timestamp < CACHE_TTL;
 }
 
+// MMKV disk-persisted tier — lets genreCache survive app restart.
+// Additive: the in-memory Map above is still the primary cache.
+const searchMMKV = createMMKVCache('vybe-search');
+const SEARCH_KEY_PREFIX = 'genre:';
+
+// On module load, hydrate in-memory Map from disk (fresh entries only).
+// Silent on failure.
+try {
+  // We don't know which keys exist without enumerating; instead we lazy-hydrate
+  // on access via hydrateGenreFromDisk() below.
+} catch {
+  /* no-op */
+}
+
+function hydrateGenreFromDisk(genre: string): CacheEntry | null {
+  if (genreCache.has(genre)) return genreCache.get(genre) ?? null;
+  const hit = searchMMKV.get<CacheEntry>(`${SEARCH_KEY_PREFIX}${genre}`, CACHE_TTL);
+  if (!hit || hit.isStale) return null;
+  // Seed the in-memory Map so the rest of the screen's logic sees it.
+  genreCache.set(genre, hit.value);
+  return hit.value;
+}
+
 function GenreTrackCard({ track, onPress }: { track: Track; onPress: () => void }) {
-  const label = track.source === 'youtube_music' ? 'YouTube Music'
-    : track.source === 'soundcloud' ? 'SoundCloud' : 'YouTube';
+  const label = track.source === 'youtube_music' ? 'Vybe Music'
+    : track.source === 'soundcloud' ? 'Vybe Waves' : 'Vybe Video';
   return (
     <Pressable onPress={onPress} style={{ marginRight: 12, width: 120 }}>
       <View style={{ width: 120, height: 120, borderRadius: 8, overflow: 'hidden', backgroundColor: '#1A1A1A', marginBottom: 6 }}>
@@ -149,6 +173,10 @@ export default function SearchScreen() {
   const [youtubeLoading, setYoutubeLoading] = useState(false);
   const [scLoading, setScLoading] = useState(false);
 
+  // Live SoundCloud results for the typed search bar (separate from genre cache)
+  const [liveSoundCloudTracks, setLiveSoundCloudTracks] = useState<Track[]>([]);
+  const [liveSoundCloudLoading, setLiveSoundCloudLoading] = useState(false);
+
   const [spotifyResult, setSpotifyResult] = useState<SpotifyPlaylistResult | null>(null);
   const [spotifyLoading, setSpotifyLoading] = useState(false);
   const [spotifyError, setSpotifyError] = useState<string | null>(null);
@@ -206,6 +234,43 @@ export default function SearchScreen() {
         t.artist.toLowerCase().includes(searchQuery.toLowerCase())
       )
     : [];
+
+  // Debounced live SoundCloud search for the typed bar.
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) {
+      setLiveSoundCloudTracks([]);
+      setLiveSoundCloudLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLiveSoundCloudLoading(true);
+    const handle = setTimeout(() => {
+      withTimeout(
+        api.get<SCTrack[]>(`/api/soundcloud/search?q=${encodeURIComponent(q)}&maxResults=20`),
+        15000,
+      )
+        .then(res => {
+          if (cancelled) return;
+          const mapped: Track[] = (res ?? []).map(t => ({
+            id: `sc-${t.trackId}`,
+            title: t.title,
+            artist: t.artist,
+            artwork: t.artwork,
+            duration: t.duration,
+            isLiked: false,
+            source: 'soundcloud' as const,
+            soundcloudUrl: t.soundcloudUrl,
+            audioUrl: '',
+            artistId: '', album: '', albumId: '',
+          }));
+          setLiveSoundCloudTracks(mapped);
+        })
+        .catch(() => { if (!cancelled) setLiveSoundCloudTracks([]); })
+        .finally(() => { if (!cancelled) setLiveSoundCloudLoading(false); });
+    }, 350);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [searchQuery]);
 
   const filteredArtists = searchQuery
     ? artists.filter(a => a.name.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -302,12 +367,15 @@ export default function SearchScreen() {
   // Write to cache once all 3 sections have resolved
   const tryCommitCache = (genre: string, partial: Partial<CacheEntry>) => {
     if (partial.ytMusic !== undefined && partial.youtube !== undefined && partial.soundcloud !== undefined) {
-      genreCache.set(genre, {
+      const entry: CacheEntry = {
         ytMusic: partial.ytMusic,
         youtube: partial.youtube,
         soundcloud: partial.soundcloud,
         timestamp: Date.now(),
-      });
+      };
+      genreCache.set(genre, entry);
+      // Additive: also persist to MMKV so cache survives app restart.
+      searchMMKV.set(`${SEARCH_KEY_PREFIX}${genre}`, entry);
     }
   };
 
@@ -315,7 +383,8 @@ export default function SearchScreen() {
     lastSelectedGenre = genre;
     setSelectedGenre(genre);
 
-    const cached = genreCache.get(genre);
+    // Try in-memory first; if miss, try disk (MMKV) before fetching.
+    const cached = genreCache.get(genre) ?? hydrateGenreFromDisk(genre);
     if (cached && isFresh(cached)) {
       // Restore from cache — no spinners, instant results
       activeGenreRef.current = genre;
@@ -385,9 +454,9 @@ export default function SearchScreen() {
                 <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: '#1DB954', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
                   <Text style={{ fontSize: 28 }}>♫</Text>
                 </View>
-                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 6 }}>Spotify Playlist Detected</Text>
+                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 6 }}>Stream Playlist Detected</Text>
                 <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, textAlign: 'center', marginBottom: 24 }}>
-                  Tracks will be found on YouTube and played in-app
+                  Tracks will be matched and played in-app
                 </Text>
                 <Pressable
                   onPress={handleLoadSpotify}
@@ -405,7 +474,7 @@ export default function SearchScreen() {
               <View style={{ alignItems: 'center', paddingTop: 60 }}>
                 <ActivityIndicator size="large" color="#1DB954" />
                 <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 14, marginTop: 16 }}>
-                  Finding tracks on YouTube…
+                  Finding tracks…
                 </Text>
               </View>
             )}
@@ -437,7 +506,7 @@ export default function SearchScreen() {
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }} numberOfLines={1}>{spotifyResult.name}</Text>
-                      <Text style={{ color: '#1DB954', fontSize: 12, marginTop: 2 }}>via Spotify · {playlistTracks.length} tracks on YouTube</Text>
+                      <Text style={{ color: '#1DB954', fontSize: 12, marginTop: 2 }}>Stream Library · {playlistTracks.length} tracks</Text>
                     </View>
                     <Pressable
                       onPress={() => playTrack(playlistTracks[0], playlistTracks)}
@@ -469,7 +538,7 @@ export default function SearchScreen() {
           </View>
         ) : searchQuery ? (
           <View>
-            {filteredDownloads.length > 0 || filteredTracks.length > 0 || filteredArtists.length > 0 ? (
+            {filteredDownloads.length > 0 || filteredTracks.length > 0 || filteredArtists.length > 0 || liveSoundCloudTracks.length > 0 || liveSoundCloudLoading ? (
               <>
                 {filteredDownloads.length > 0 ? (
                   <View style={{ marginBottom: 8 }}>
@@ -497,6 +566,27 @@ export default function SearchScreen() {
                     ))}
                   </View>
                 ) : null}
+
+                {liveSoundCloudLoading || liveSoundCloudTracks.length > 0 ? (
+                  <View style={{ marginTop: 24 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginBottom: 12 }}>
+                      <View style={{ width: 18, height: 18, borderRadius: 4, backgroundColor: '#FF5500', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+                        <Radio size={11} color="#fff" strokeWidth={2.5} />
+                      </View>
+                      <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>From Vybe Waves</Text>
+                    </View>
+                    {liveSoundCloudLoading && liveSoundCloudTracks.length === 0 ? (
+                      <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                        <ActivityIndicator color="#FF5500" />
+                      </View>
+                    ) : (
+                      liveSoundCloudTracks.map(track => (
+                        <TrackCard key={track.id} track={track} queue={liveSoundCloudTracks} />
+                      ))
+                    )}
+                  </View>
+                ) : null}
+
               </>
             ) : (
               <View style={{ alignItems: 'center', justifyContent: 'center', paddingTop: 80 }}>
@@ -512,24 +602,24 @@ export default function SearchScreen() {
               </Text>
             ) : null}
             <SectionRow
-              label="YouTube Music"
-              icon={<View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: '#FF0000', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#fff', fontSize: 10 }}>♪</Text></View>}
+              label="Vybe Music"
+              icon={<View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: '#FF0000', alignItems: 'center', justifyContent: 'center' }}><Music size={11} color="#fff" strokeWidth={2.5} /></View>}
               loading={ytMusicLoading}
               tracks={ytMusicTracks}
               onPlay={track => playTrack(track, ytMusicTracks)}
               loadingColor="#FF0000"
             />
             <SectionRow
-              label="YouTube"
-              icon={<View style={{ width: 18, height: 14, borderRadius: 3, backgroundColor: '#FF0000', alignItems: 'center', justifyContent: 'center' }}><View style={{ width: 0, height: 0, borderTopWidth: 4, borderBottomWidth: 4, borderLeftWidth: 6, borderTopColor: 'transparent', borderBottomColor: 'transparent', borderLeftColor: '#fff', marginLeft: 1 }} /></View>}
+              label="Vybe Video"
+              icon={<View style={{ width: 18, height: 14, borderRadius: 3, backgroundColor: '#FF0000', alignItems: 'center', justifyContent: 'center' }}><Play size={9} color="#fff" fill="#fff" /></View>}
               loading={youtubeLoading}
               tracks={youtubeTracks}
               onPlay={track => playTrack(track, youtubeTracks)}
               loadingColor="#FF0000"
             />
             <SectionRow
-              label="SoundCloud"
-              icon={<View style={{ width: 18, height: 14, borderRadius: 3, backgroundColor: '#FF5500', alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#fff', fontSize: 8, fontWeight: '900', letterSpacing: -0.5 }}>)))</Text></View>}
+              label="Vybe Waves"
+              icon={<View style={{ width: 18, height: 14, borderRadius: 3, backgroundColor: '#FF5500', alignItems: 'center', justifyContent: 'center' }}><Radio size={10} color="#fff" strokeWidth={2.5} /></View>}
               loading={scLoading}
               tracks={scTracks}
               onPlay={track => playTrack(track, scTracks)}

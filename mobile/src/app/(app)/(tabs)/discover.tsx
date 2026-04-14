@@ -370,7 +370,9 @@ export default function DiscoverScreen() {
   // keeps the card populated without auth.
   useEffect(() => {
     if (!preferences?.onboardingComplete) return;
-    if (sections.length > 0) return;
+    // Skip only if we already have real tracks in Vybe Beats. `sections` may
+    // be populated with "tap to search" placeholders — if so, still run the
+    // fallback YT/SC search to get real tracks.
     if (vybeBeats.length > 0) return;
 
     // Build seed queries from the onboarding answers.
@@ -674,7 +676,7 @@ export default function DiscoverScreen() {
                 }));
                 if (queue.length === 0) return null;
                 return (
-                  <Pressable key={pl.playlistId} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(queue[0], queue); }} className="mr-4">
+                  <Pressable key={pl.playlistId} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); router.push(`/(app)/playlist-detail?id=${pl.playlistId}` as never); }} className="mr-4">
                     <Image source={{ uri: pl.thumbnailUrl }} style={{ width: 160, height: 160, borderRadius: 10 }} contentFit="cover" />
                     <Text className="text-white font-semibold text-sm mt-2" numberOfLines={2} style={{ width: 160 }}>{pl.name}</Text>
                     <Text className="text-white/50 text-xs mt-0.5" numberOfLines={1}>{pl.tracks.length} tracks</Text>
@@ -795,7 +797,7 @@ export default function DiscoverScreen() {
                 }));
                 const track = queue.find(q => q.id === `ytm-${t.videoId}`)!;
                 return (
-                  <Pressable key={track.id} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, queue); }} className="mr-4">
+                  <Pressable key={track.id} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); router.push('/(app)/track-feed?kind=ytm' as never); }} className="mr-4">
                     <Image source={{ uri: t.thumbnailUrl }} style={{ width: 140, height: 140, borderRadius: 8 }} contentFit="cover" />
                     <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>{t.title}</Text>
                     <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 140 }}>{t.channelName}</Text>
@@ -826,7 +828,7 @@ export default function DiscoverScreen() {
                 }));
                 const track = queue.find(q => q.id === `sc-${t.trackId}`)!;
                 return (
-                  <Pressable key={track.id} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, queue); }} className="mr-4">
+                  <Pressable key={track.id} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); router.push('/(app)/track-feed?kind=sc' as never); }} className="mr-4">
                     <Image source={{ uri: t.artwork }} style={{ width: 140, height: 140, borderRadius: 8 }} contentFit="cover" />
                     <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>{t.title}</Text>
                     <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 140 }}>{t.artist}</Text>

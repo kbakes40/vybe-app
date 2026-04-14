@@ -30,7 +30,10 @@ const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), "youtube-cookies.txt");
       console.log("[yt-dlp] binary already present at", YTDLP_BINARY_PATH);
     } else {
       console.log("[yt-dlp] downloading standalone binary...");
-      const url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
+      // Pin to 2026.03.17 — the version that was "latest" when the working
+      // Railway deploy d7e78237 was built. Newer yt-dlp releases introduced
+      // an EJS signature-solver requirement that breaks downloads on Railway.
+      const url = "https://github.com/yt-dlp/yt-dlp/releases/download/2026.03.17/yt-dlp_linux";
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const buf = await res.arrayBuffer();

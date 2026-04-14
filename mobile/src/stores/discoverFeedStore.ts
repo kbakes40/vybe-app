@@ -263,8 +263,30 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
           });
 
           if (response?.sections) {
+            // Flatten only REAL tracks into Vybe Beats. Some backend items are
+            // "Tap to search" placeholders — these have no real id prefix or
+            // their creator name hints at the search prompt. Filter them out.
+            const isRealTrack = (item: DiscoverItem) => {
+              const idOk = /^yt-[\w-]+$|^sc-\d+$/.test(item.id);
+              const creatorOk = !/tap to search/i.test(item.creatorName ?? '');
+              const hasUrl = !!item.externalUrl && /^https?:\/\//.test(item.externalUrl);
+              return idOk && creatorOk && hasUrl;
+            };
+            const beats: DiscoverItem[] = [];
+            const seen = new Set<string>();
+            for (const section of response.sections) {
+              for (const item of section.items ?? []) {
+                if (seen.has(item.id)) continue;
+                if (!isRealTrack(item)) continue;
+                seen.add(item.id);
+                beats.push(item);
+                if (beats.length >= 20) break;
+              }
+              if (beats.length >= 20) break;
+            }
             set({
               sections: response.sections,
+              vybeBeats: beats,
               lastFetchedAt: Date.now(),
               isSavingPreferences: false,
               isLoadingFeed: false,

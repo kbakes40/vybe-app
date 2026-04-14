@@ -25,9 +25,15 @@ import { usePlaybackController } from '@/stores/playbackController';
 import { useDownloadsStore, downloadYouTubeTrack } from '@/stores/downloadsStore';
 import { usePlaylistHeroColors } from '@/lib/usePlaylistHeroColors';
 import { api } from '@/lib/api/api';
+import { createMMKVCache, TTL } from '@/lib/mmkv-cache';
 import { Track } from '@/types/music';
 import { MINI_PLAYER_HEIGHT } from './_layout';
 import { DownloadButton } from '@/components/DownloadButton';
+
+// Read from the same caches Home / Discover write to so we can resolve the
+// playlist immediately even if the fresh API response drifts.
+const homeMMKV = createMMKVCache('vybe-home');
+const discoverMMKV = createMMKVCache('vybe-discover');
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const HALF = (SCREEN_WIDTH) / 2;
@@ -102,6 +108,17 @@ export default function PlaylistDetailScreen() {
   useEffect(() => {
     async function load() {
       try {
+        // 1. Check MMKV caches first (populated by Home/Discover) — gives
+        // instant content and survives backend response drift.
+        const cached = [
+          homeMMKV.get<CuratedPlaylist[]>('curatedPlaylists', TTL.CURATED)?.value,
+          discoverMMKV.get<CuratedPlaylist[]>('ytCuratedPlaylists', TTL.CURATED)?.value,
+        ];
+        for (const list of cached) {
+          const hit = list?.find(p => p.playlistId === id);
+          if (hit) { setPlaylist(hit); setLoading(false); return; }
+        }
+        // 2. Fall back to fresh API.
         const all = await api.get<CuratedPlaylist[]>('/api/youtube/playlists');
         const found = all?.find(p => p.playlistId === id);
         if (found) setPlaylist(found);

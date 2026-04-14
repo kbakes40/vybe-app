@@ -17,6 +17,7 @@ import {
   Heart,
   ListMusic,
   Share2,
+  Airplay,
   ChevronDown,
   ExternalLink,
   RotateCcw,
@@ -24,6 +25,8 @@ import {
   Cloud,
   Download,
   Check,
+  Music,
+  Radio,
 } from 'lucide-react-native';
 import { Svg, Circle } from 'react-native-svg';
 import Animated, {
@@ -42,7 +45,11 @@ import { useDownloadsStore, downloadYouTubeTrack, downloadSoundCloudTrack } from
 import { DownloadButton } from '@/components/DownloadButton';
 import { LoadingRing } from '@/components/LoadingRing';
 import { openInSoundCloud } from '@/lib/soundcloudHandoff';
+import { showRoutePicker } from '@/lib/NowPlayingManager';
 import { formatDuration } from '@/data/mockData';
+import { usePlaylistHeroColors } from '@/lib/usePlaylistHeroColors';
+import { useAdBreakStore } from '@/lib/ads/use-ad-break';
+import { useSubscriptionStore } from '@/stores/subscriptionStore';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const ARTWORK_SIZE = SCREEN_WIDTH - 80;
@@ -196,7 +203,7 @@ function YouTubeInlinePlayer({ videoId, artworkUri, isPlaying }: YouTubeInlinePl
             }}
           >
             <YouTubeIcon size={13} />
-            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 4 }}>YouTube</Text>
+            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 4 }}>Vybe Video</Text>
           </View>
         </View>
       )}
@@ -204,7 +211,7 @@ function YouTubeInlinePlayer({ videoId, artworkUri, isPlaying }: YouTubeInlinePl
   );
 }
 
-// ─── Source icon components ───────────────────────────────────────────────────
+// ─── Source icon components (generic purple — no brand logos) ────────────────
 
 function YouTubeIcon({ size = 16 }: { size?: number }) {
   return (
@@ -218,19 +225,7 @@ function YouTubeIcon({ size = 16 }: { size?: number }) {
         justifyContent: 'center',
       }}
     >
-      <View
-        style={{
-          width: 0,
-          height: 0,
-          borderLeftWidth: size * 0.35,
-          borderTopWidth: size * 0.2,
-          borderBottomWidth: size * 0.2,
-          borderLeftColor: '#fff',
-          borderTopColor: 'transparent',
-          borderBottomColor: 'transparent',
-          marginLeft: 2,
-        }}
-      />
+      <Play size={size * 0.6} color="#fff" fill="#fff" />
     </View>
   );
 }
@@ -247,7 +242,7 @@ function SoundCloudIcon({ size = 16 }: { size?: number }) {
         justifyContent: 'center',
       }}
     >
-      <Cloud size={size * 0.7} color="#fff" strokeWidth={3} />
+      <Radio size={size * 0.6} color="#fff" strokeWidth={2.5} />
     </View>
   );
 }
@@ -264,21 +259,20 @@ function YouTubeMusicIcon({ size = 16 }: { size?: number }) {
         justifyContent: 'center',
       }}
     >
-      <View
-        style={{
-          width: 0,
-          height: 0,
-          borderLeftWidth: size * 0.3,
-          borderTopWidth: size * 0.18,
-          borderBottomWidth: size * 0.18,
-          borderLeftColor: '#fff',
-          borderTopColor: 'transparent',
-          borderBottomColor: 'transparent',
-          marginLeft: 1,
-        }}
-      />
+      <Music size={size * 0.6} color="#fff" strokeWidth={2.5} />
     </View>
   );
+}
+
+// ─── Ad break countdown — isolated to avoid re-rendering the whole screen ───
+function AdCountdownNumber() {
+  const countdown = useAdBreakStore(s => s.countdown);
+  return <Text style={{ color: '#8B5CF6', fontSize: 22, fontWeight: '800' }}>{countdown}</Text>;
+}
+
+function AdCountdownLabel() {
+  const countdown = useAdBreakStore(s => s.countdown);
+  return <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11, marginTop: 8 }}>Ad ends in {countdown}s</Text>;
 }
 
 // ─── Main screen ─────────────────────────────────────────────────────────────
@@ -290,6 +284,12 @@ export default function NowPlayingScreen() {
   const [showQueue, setShowQueue] = useState(false);
 
   const currentTrack = usePlaybackController(s => s.currentTrack);
+  const heroColors = usePlaylistHeroColors(currentTrack?.artwork ?? null);
+
+  // Ad break state — only subscribe to isAdBreak (not countdown)
+  // so the screen doesn't re-render every second during ad breaks.
+  // The AdCountdown component reads countdown directly.
+  const isAdBreak = useAdBreakStore(s => s.isAdBreak);
 
   // Related tracks for the queue sheet
   interface RelatedYT { videoId: string; title: string; channelName: string; thumbnailUrl: string; duration?: number; }
@@ -342,6 +342,17 @@ export default function NowPlayingScreen() {
   const play = usePlaybackController(s => s.play);
   const next = usePlaybackController(s => s.next);
   const previous = usePlaybackController(s => s.previous);
+
+  const skipsRemaining = useSubscriptionStore(s => s.skipsRemaining());
+
+  const handleSkip = useCallback(() => {
+    if (skipsRemaining === 0) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      router.push('/upgrade');
+      return;
+    }
+    next();
+  }, [skipsRemaining, next, router]);
   const seekTo = usePlaybackController(s => s.seekTo);
   const setProgress = usePlaybackController(s => s.setProgress);
   const toggleShuffle = usePlaybackController(s => s.toggleShuffle);
@@ -624,7 +635,8 @@ export default function NowPlayingScreen() {
     <GestureDetector gesture={panGesture}>
       <Animated.View style={[{ flex: 1 }, containerStyle]}>
         <LinearGradient
-          colors={isSoundCloud ? ['#1a1510', '#0A0A0A', '#0A0A0A'] : isYouTubeMusic ? ['#1a0a0a', '#0A0A0A', '#0A0A0A'] : ['#1a1a2e', '#0A0A0A', '#0A0A0A']}
+          colors={heroColors.gradient as unknown as readonly [string, string, ...string[]]}
+          locations={heroColors.locations as unknown as readonly [number, number, ...number[]]}
           style={{ flex: 1 }}
         >
           <View style={{ flex: 1, paddingTop: insets.top }}>
@@ -641,17 +653,17 @@ export default function NowPlayingScreen() {
                   {isYouTube ? (
                     <>
                       <YouTubeIcon size={14} />
-                      <Text className="text-white font-semibold text-sm ml-1.5">YouTube</Text>
+                      <Text className="text-white font-semibold text-sm ml-1.5">Vybe Video</Text>
                     </>
                   ) : isYouTubeMusic ? (
                     <>
                       <YouTubeMusicIcon size={14} />
-                      <Text className="text-white font-semibold text-sm ml-1.5">YouTube Music</Text>
+                      <Text className="text-white font-semibold text-sm ml-1.5">Vybe Music</Text>
                     </>
                   ) : isSoundCloud ? (
                     <>
                       <SoundCloudIcon size={14} />
-                      <Text className="text-white font-semibold text-sm ml-1.5">SoundCloud</Text>
+                      <Text className="text-white font-semibold text-sm ml-1.5">Vybe Waves</Text>
                     </>
                   ) : (
                     <Text className="text-white font-semibold text-sm">{currentTrack.album}</Text>
@@ -661,15 +673,42 @@ export default function NowPlayingScreen() {
               <View className="w-10" />
             </View>
 
-            {/* Artwork / Video */}
+            {/* Artwork / Video — or Ad during ad break */}
             <View className="items-center justify-center flex-1 px-10">
-              {isYouTubeMusic && ytVideoId ? (
+              {isAdBreak ? (
+                /* ── Ad Break: replace artwork with ad ── */
+                <View style={{
+                  width: ARTWORK_SIZE,
+                  height: ARTWORK_SIZE,
+                  borderRadius: 12,
+                  backgroundColor: '#1A1A1A',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.08)',
+                  overflow: 'hidden',
+                }}>
+                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+                    <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(139,92,246,0.2)', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+                      <Text style={{ fontSize: 24 }}>📢</Text>
+                    </View>
+                    <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 6 }}>Advertisement</Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textAlign: 'center', marginBottom: 20 }}>
+                      Upgrade to VYBE Plus for ad-free listening
+                    </Text>
+                    <View style={{ width: 56, height: 56, borderRadius: 28, borderWidth: 3, borderColor: '#8B5CF6', alignItems: 'center', justifyContent: 'center' }}>
+                      <AdCountdownNumber />
+                    </View>
+                    <AdCountdownLabel />
+                  </View>
+                </View>
+              ) : isYouTubeMusic && ytVideoId ? (
                 /* YouTube Music — 16:9 for thumbnails (crops letterbox), square for album art */
                 <Animated.View
                   style={[artworkAnimStyle, {
-                    shadowColor: '#FF0000',
+                    shadowColor: heroColors.glow,
                     shadowOffset: { width: 0, height: 20 },
-                    shadowOpacity: 0.4,
+                    shadowOpacity: 0.5,
                     shadowRadius: 40,
                     elevation: 20,
                   }]}
@@ -694,17 +733,18 @@ export default function NowPlayingScreen() {
                       }}
                     >
                       <YouTubeMusicIcon size={14} />
-                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 5 }}>YouTube Music</Text>
+                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 5 }}>Vybe Music</Text>
                     </View>
                   </View>
                 </Animated.View>
-              ) : isYouTube && ytVideoId ? (
-                /* YouTube — show inline video player with artwork fallback */
+              ) : isYouTube && ytVideoId && !currentTrack?.audioUrl?.startsWith('file://') ? (
+                /* YouTube — show inline video player (streaming only; downloaded tracks
+                   fall through to static artwork so the iframe error never flashes) */
                 <Animated.View
                   style={[artworkAnimStyle, {
-                    shadowColor: '#FF0000',
+                    shadowColor: heroColors.glow,
                     shadowOffset: { width: 0, height: 20 },
-                    shadowOpacity: 0.4,
+                    shadowOpacity: 0.5,
                     shadowRadius: 40,
                     elevation: 20,
                     borderRadius: 12,
@@ -717,9 +757,9 @@ export default function NowPlayingScreen() {
                 /* SoundCloud — artwork with source badge */
                 <Animated.View
                   style={[artworkAnimStyle, {
-                    shadowColor: '#FF5500',
+                    shadowColor: heroColors.glow,
                     shadowOffset: { width: 0, height: 20 },
-                    shadowOpacity: 0.4,
+                    shadowOpacity: 0.5,
                     shadowRadius: 40,
                     elevation: 20,
                   }]}
@@ -744,7 +784,7 @@ export default function NowPlayingScreen() {
                       }}
                     >
                       <SoundCloudIcon size={14} />
-                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 5 }}>SoundCloud</Text>
+                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 5 }}>Vybe Waves</Text>
                     </View>
                   </View>
                 </Animated.View>
@@ -752,7 +792,7 @@ export default function NowPlayingScreen() {
                 /* VYBE / local — square artwork */
                 <Animated.View
                   style={[artworkAnimStyle, {
-                    shadowColor: '#8B5CF6',
+                    shadowColor: heroColors.glow,
                     shadowOffset: { width: 0, height: 20 },
                     shadowOpacity: 0.5,
                     shadowRadius: 40,
@@ -773,10 +813,10 @@ export default function NowPlayingScreen() {
               <View className="flex-row items-center justify-between">
                 <View className="flex-1 mr-4">
                   <Text className="text-white text-2xl font-bold" numberOfLines={1}>
-                    {currentTrack.title}
+                    {isAdBreak ? 'Advertisement' : currentTrack.title}
                   </Text>
                   <Text className="text-white/60 text-lg mt-1" numberOfLines={1}>
-                    {currentTrack.artist}
+                    {isAdBreak ? 'VYBE Plus removes all ads' : currentTrack.artist}
                   </Text>
                 </View>
                 <View className="flex-row items-center gap-2">
@@ -829,7 +869,10 @@ export default function NowPlayingScreen() {
                 </View>
               </View>
 
-              {/* Controls */}
+              {/* Controls — hidden during ad break */}
+              {isAdBreak ? (
+                <View className="items-center mt-4" style={{ height: 72 }} />
+              ) : (
               <View className="flex-row items-center justify-between mt-4">
                 <Pressable
                   onPress={() => {
@@ -869,7 +912,7 @@ export default function NowPlayingScreen() {
                   </View>
                 </AnimatedPressable>
 
-                <Pressable onPress={next} className="p-3">
+                <Pressable onPress={handleSkip} className="p-3">
                   <SkipForward size={32} color="#fff" fill="#fff" />
                 </Pressable>
 
@@ -887,6 +930,7 @@ export default function NowPlayingScreen() {
                   )}
                 </Pressable>
               </View>
+              )}
 
               {/* Bottom Actions */}
               <View
@@ -895,6 +939,9 @@ export default function NowPlayingScreen() {
               >
                 <Pressable className="p-3" onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowQueue(true); }}>
                   <ListMusic size={24} color="#fff" />
+                </Pressable>
+                <Pressable className="p-3" onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); showRoutePicker(); }}>
+                  <Airplay size={22} color="#fff" />
                 </Pressable>
                 <Pressable className="p-3" onPress={handleShareTrack}>
                   <Share2 size={24} color="#fff" />
@@ -1003,7 +1050,7 @@ export default function NowPlayingScreen() {
                 <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: '#FF0000', alignItems: 'center', justifyContent: 'center', marginRight: 7 }}>
                   <Text style={{ color: '#fff', fontSize: 10, lineHeight: 11 }}>♪</Text>
                 </View>
-                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase' }}>YouTube Music</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase' }}>Vybe Music</Text>
               </View>
               {ytRelated.map((item) => {
                 const t = {
@@ -1045,7 +1092,7 @@ export default function NowPlayingScreen() {
                 <View style={{ width: 18, height: 14, borderRadius: 3, backgroundColor: '#FF5500', alignItems: 'center', justifyContent: 'center', marginRight: 7 }}>
                   <Text style={{ color: '#fff', fontSize: 7, fontWeight: '900', letterSpacing: -0.5 }}>)))</Text>
                 </View>
-                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase' }}>SoundCloud</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase' }}>Vybe Waves</Text>
               </View>
               {scRelated.map((item) => {
                 const t = {
