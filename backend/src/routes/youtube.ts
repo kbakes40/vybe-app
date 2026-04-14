@@ -30,7 +30,11 @@ const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), "youtube-cookies.txt");
       console.log("[yt-dlp] binary already present at", YTDLP_BINARY_PATH);
     } else {
       console.log("[yt-dlp] downloading standalone binary...");
-      const url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
+      // Pin to 2026.03.03 — the "latest" release introduced PO token
+      // requirements on tv_embedded that broke Railway deploys. This
+      // pinned version is the last one confirmed working on Railway
+      // with tv_embedded + js-runtimes + cookies.
+      const url = "https://github.com/yt-dlp/yt-dlp/releases/download/2026.03.03/yt-dlp_linux";
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const buf = await res.arrayBuffer();
@@ -44,18 +48,32 @@ const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), "youtube-cookies.txt");
     } else {
       console.warn("[yt-dlp] YOUTUBE_COOKIES not set — YouTube may block requests");
     }
+
+    // Create /tmp/node → bun symlink so yt-dlp's --js-runtimes node flag
+    // works on Railway (which ships Bun, not Node). yt-dlp shells out to
+    // `node` for JS n-challenge solving — this symlink makes bun handle it.
+    const nodeShimPath = path.join(os.tmpdir(), "node");
+    if (!fs.existsSync(nodeShimPath)) {
+      const bunPath = Bun.which("bun") ?? "/usr/local/bin/bun";
+      fs.symlinkSync(bunPath, nodeShimPath);
+      console.log("[yt-dlp] created node shim:", nodeShimPath, "→", bunPath);
+    }
+    // Ensure /tmp is on PATH so yt-dlp finds the node shim
+    if (!process.env.PATH?.includes(os.tmpdir())) {
+      process.env.PATH = `${os.tmpdir()}:${process.env.PATH}`;
+    }
   } catch (e: any) {
     console.error("[yt-dlp] startup error:", e.message);
   }
 })();
 
-// Cookies are intentionally disabled: recent yt-dlp builds refuse the `ios`
-// player client when cookies are present ("Skipping client 'ios' since it
-// does not support cookies"), which leaves only image formats available and
-// breaks every audio request. We keep the cookie file on disk (in case we
-// want to re-enable for specific clients later) but never pass --cookies.
+// Pass --cookies when the file exists. Paired with player_client=tv_embedded
+// (which accepts cookies), this bypasses YouTube's bot check on Railway IPs.
 function cookieArgs(): string[] {
-  return [];
+  try {
+    const fs = require("fs");
+    return fs.existsSync(YTDLP_COOKIES_PATH) ? ["--cookies", YTDLP_COOKIES_PATH] : [];
+  } catch { return []; }
 }
 
 // Cache resolved CDN URLs so repeated range requests don't re-run yt-dlp
@@ -88,7 +106,8 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
       "--get-url",
       "--no-playlist",
       "--quiet",
-      "--extractor-args", "youtube:player_client=ios",
+      "--extractor-args", "youtube:player_client=tv_embedded",
+      "--js-runtimes", "node",
       ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
@@ -228,7 +247,9 @@ youtubeRouter.get("/download/:videoId", async (c) => {
   // Try multiple player_clients in order — YouTube's bot detection blocks
   // individual clients intermittently, so if ios fails we fall through to
   // tv → web → android. This dramatically improves download reliability.
-  const PLAYER_CLIENTS = ["ios", "tv_embedded", "web", "android"] as const;
+  // tv_embedded first — supports cookies + no PO token requirement on pinned
+  // yt-dlp 2026.03.03. Other clients as fallback if something changes.
+  const PLAYER_CLIENTS = ["tv_embedded", "ios", "web", "android"] as const;
 
   const tryClient = async (client: string): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
     // Clean up any partial files from a previous attempt so the --print
@@ -247,6 +268,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
         "--no-part",
         "--print", "after_move:filepath",
         "--extractor-args", `youtube:player_client=${client}`,
+        "--js-runtimes", "node",
         ...cookieArgs(),
       ], {}, controller.signal);
       clearTimeout(timer);
@@ -402,6 +424,9 @@ async function searchYouTubeYtDlp(query: string, maxResults: number): Promise<Ar
     output = await ytDlp.execPromise([
       `ytsearch${fetchCount}:${query}`,
       "--dump-json", "--flat-playlist", "--quiet", "--no-warnings",
+      "--extractor-args", "youtube:player_client=tv_embedded",
+      "--js-runtimes", "node",
+      ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
   } catch (e: any) {
@@ -456,12 +481,13 @@ youtubeRouter.get("/info/:videoId", async (c) => {
   }
 });
 
+// tv_embedded first — supports cookies + no PO token on pinned yt-dlp
 const YT_DLP_CLIENT_FALLBACKS = [
+  "tv_embedded",
   "ios",
   "android",
   "web_safari",
   "mweb",
-  "tv_embedded",
 ];
 
 async function getVideoInfo(videoId: string): Promise<{ title: string; channel: string; thumbnail: string; duration: number }> {
@@ -482,6 +508,8 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
       const output = await ytDlp.execPromise([
         ...baseArgs,
         "--extractor-args", `youtube:player_client=${client}`,
+        "--js-runtimes", "node",
+        ...cookieArgs(),
       ]);
       const lines = output.trim().split("\n");
       if (lines.length < 3) throw new Error(`yt-dlp info returned insufficient output`);
@@ -539,6 +567,9 @@ async function getPlaylistTracks(listId: string): Promise<Array<{ videoId: strin
       "--dump-json",
       "--no-warnings",
       "--quiet",
+      "--extractor-args", "youtube:player_client=tv_embedded",
+      "--js-runtimes", "node",
+      ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
   } catch (e: any) {
