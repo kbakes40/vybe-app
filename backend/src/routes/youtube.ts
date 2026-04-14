@@ -458,11 +458,11 @@ youtubeRouter.get("/info/:videoId", async (c) => {
 });
 
 const YT_DLP_CLIENT_FALLBACKS = [
+  "tv_embedded",
   "ios",
   "android",
   "web_safari",
   "mweb",
-  "tv_embedded",
 ];
 
 async function getVideoInfo(videoId: string): Promise<{ title: string; channel: string; thumbnail: string; duration: number }> {
@@ -483,6 +483,8 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
       const output = await ytDlp.execPromise([
         ...baseArgs,
         "--extractor-args", `youtube:player_client=${client}`,
+        "--js-runtimes", "node",
+        ...cookieArgs(),
       ]);
       const lines = output.trim().split("\n");
       if (lines.length < 3) throw new Error(`yt-dlp info returned insufficient output`);

@@ -9,6 +9,11 @@ import { updateNowPlaying, updateNowPlayingProgress, clearNowPlaying, registerRe
 import { startNowPlayingActivity, updateNowPlayingActivity, endNowPlayingActivity, formatTime } from '@/lib/NowPlayingActivityManager';
 import { usePlaybackSettingsStore } from '@/stores/playbackSettingsStore';
 import { useDownloadsStore, downloadSoundCloudTrack, enqueueDownload } from '@/stores/downloadsStore';
+// Lazy-cached refs to avoid circular dependency + dynamic require overhead
+let _subStore: any = null;
+let _adStore: any = null;
+function getSubStore() { return _subStore ?? (_subStore = require('./subscriptionStore').useSubscriptionStore); }
+function getAdStore() { return _adStore ?? (_adStore = require('../lib/ads/use-ad-break').useAdBreakStore); }
 
 /**
  * Unified Playback Controller
@@ -246,6 +251,7 @@ function startNowPlayingInterval() {
   nowPlayingInterval = setInterval(() => {
     const { currentTrack, playbackState, progress, duration } = usePlaybackController.getState();
     if (!currentTrack || playbackState === 'idle' || playbackState === 'error') return;
+    // Update Dynamic Island Live Activity
     updateNowPlayingActivity(
       playbackState === 'playing',
       duration > 0 ? progress / duration : 0,
@@ -254,6 +260,10 @@ function startNowPlayingInterval() {
       currentTrack.title,
       currentTrack.artist,
     );
+    // Update lock screen / Apple TV Now Playing info center + re-anchor
+    // the native keep-alive timer so it doesn't drift. This is the main
+    // heartbeat that keeps Apple TV's Now Playing card alive.
+    updateNowPlayingProgress(progress, playbackState === 'playing');
   }, 1000);
 }
 
@@ -348,6 +358,10 @@ interface PlaybackControllerState {
 
   // Preload state
   preparedTrackId: string | null;
+
+  // Ad-break pending track (track queued while ad was playing)
+  pendingTrackAfterAd: Track | null;
+  pendingQueueAfterAd: Track[] | null;
 
   // Silent playback detection
   lastProgressTime: number;
@@ -460,6 +474,8 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
   volume: 1,
   likedTracks: new Set(['t1', 't3', 't5', 't7', 't9', 't11', 't13', 't15', 't17', 't19', 't21', 'yt2', 'yt4', 'sc2', 'sc4']),
   preparedTrackId: null,
+  pendingTrackAfterAd: null,
+  pendingQueueAfterAd: null,
   lastProgressTime: 0,
   silentRetryCount: 0,
 
@@ -473,6 +489,26 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    // If an ad is currently playing, block all new playback
+    try {
+      const adState = getAdStore().getState();
+      if (adState.isAdBreak && !adState.resumingFromAd) return;
+
+      // Free tier: check if ad break should fire
+      if (!adState.resumingFromAd) {
+        const subState = getSubStore().getState();
+        if (subState.tier === 'free') {
+          const shouldShowAd = subState.recordTrackPlay();
+          if (shouldShowAd) {
+            // Store track as pending — play it after the ad finishes
+            set({ pendingTrackAfterAd: track, pendingQueueAfterAd: queue ?? [track] });
+            adState.startAdBreak();
+            return;
+          }
+        }
+      }
+    } catch {}
 
     // Claim this play slot — any in-flight playTrack call with an older ID will abort
     const myRequestId = ++playRequestCounter;
@@ -538,6 +574,30 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     // If the track has been downloaded locally, always play from the local file
     // regardless of its original source (handles downloaded SoundCloud/YouTube tracks)
     if (track.audioUrl?.startsWith('file://')) {
+      // Downloaded YouTube / YouTube Music m4a files have the same DASH container
+      // quirk as streamed YouTube: the mvhd atom reports ~2x the real audio length,
+      // so AVPlayer shows a doubled duration and plays silence for the second half.
+      // Fetch real duration from /info so the time bar is honest and we can
+      // auto-advance when audio actually ends — mirrors the streaming path below.
+      const ytVideoIdForDownload = track.youtubeId || track.youtubeMusicId;
+      const isYt = (source === 'youtube' || source === 'youtube_music') && !!ytVideoIdForDownload;
+      let realDurationSec = track.duration || 0;
+      if (isYt && realDurationSec <= 0) {
+        try {
+          const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
+          const infoResp = await fetch(`${backendBase}/api/youtube/info/${ytVideoIdForDownload}`);
+          if (infoResp.ok) {
+            const infoJson = (await infoResp.json()) as { data?: { duration?: number } };
+            const d = infoJson.data?.duration ?? 0;
+            if (d > 0) realDurationSec = d;
+          }
+        } catch {
+          // non-fatal — fall back to whatever AVPlayer reports
+        }
+        if (!isStillCurrent()) { await stopVybeAudio(); return; }
+      }
+      if (isYt && realDurationSec > 0) set({ duration: realDurationSec });
+
       try {
         const { sound, status } = await Audio.Sound.createAsync(
           { uri: track.audioUrl },
@@ -547,13 +607,38 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
             if (currentTrack?.id !== track.id) return;
             if (status.isLoaded) {
               const progressSec = status.positionMillis / 1000;
-              const durationSec = (status.durationMillis ?? track.duration * 1000) / 1000;
+              const rawDurationSec = (status.durationMillis ?? track.duration * 1000) / 1000;
+
+              // Only override when we're confident the container lied
+              // (> 1.5x real). Protects SoundCloud and non-YT downloads.
+              const overrideDuration =
+                isYt && realDurationSec > 0 && rawDurationSec > realDurationSec * 1.5;
+              const durationSec = overrideDuration ? realDurationSec : rawDurationSec;
+
               set({ progress: progressSec, duration: durationSec, playbackState: status.isPlaying ? 'playing' : 'paused' });
               const { crossfadeEnabled, crossfadeDuration } = usePlaybackSettingsStore.getState();
               if (crossfadeEnabled && crossfadeTriggeredForTrackId !== track.id && durationSec > 0 && progressSec > 0 && durationSec - progressSec <= crossfadeDuration) {
                 crossfadeTriggeredForTrackId = track.id;
                 triggerCrossfade(crossfadeDuration);
               }
+
+              // Force-advance when overridden duration runs out. Otherwise
+              // AVPlayer would play silence until its (wrong) didJustFinish.
+              if (
+                overrideDuration &&
+                progressSec >= realDurationSec - 0.5 &&
+                crossfadeTriggeredForTrackId !== track.id
+              ) {
+                const { repeatMode } = get();
+                if (repeatMode === 'one') {
+                  sound.setPositionAsync(0).catch(() => {});
+                } else {
+                  set({ playbackState: 'ended' });
+                  get().next();
+                }
+                return;
+              }
+
               if (status.didJustFinish) {
                 const { repeatMode } = get();
                 if (repeatMode === 'one') { sound.replayAsync(); }
@@ -588,15 +673,17 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       // the real duration lets us (1) display the correct time bar and
       // (2) advance to the next track as soon as audio actually ends.
       let realDurationSec = track.duration || 0;
-      try {
-        const infoResp = await fetch(`${backendBase}/api/youtube/info/${ytVideoId}`);
-        if (infoResp.ok) {
-          const infoJson = (await infoResp.json()) as { data?: { duration?: number } };
-          const d = infoJson.data?.duration ?? 0;
-          if (d > 0) realDurationSec = d;
+      if (realDurationSec <= 0) {
+        try {
+          const infoResp = await fetch(`${backendBase}/api/youtube/info/${ytVideoId}`);
+          if (infoResp.ok) {
+            const infoJson = (await infoResp.json()) as { data?: { duration?: number } };
+            const d = infoJson.data?.duration ?? 0;
+            if (d > 0) realDurationSec = d;
+          }
+        } catch {
+          // non-fatal — we'll fall back to whatever AVPlayer reports
         }
-      } catch {
-        // non-fatal — we'll fall back to whatever AVPlayer reports
       }
 
       // Bail if the user switched tracks while we were fetching /info.
@@ -981,6 +1068,12 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     const { queue, queueIndex, repeatMode, isShuffled } = get();
     if (queue.length === 0) return;
 
+    // Free tier: enforce skip limit (6/day) — VIP/plus users pass instantly
+    try {
+      const sub = getSubStore().getState();
+      if (sub.tier === 'free' && !sub.useSkip()) return;
+    } catch {}
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     let nextIndex: number;
@@ -1279,17 +1372,18 @@ AppState.addEventListener('change', async (nextState: AppStateStatus) => {
 export const stopVybeNativeAudio = stopVybeAudio;
 
 // ── AirPlay artwork re-push ──────────────────────────────────────────────────
-// When AirPlay connects, Apple TV needs the album art image data
-// immediately — it can't fetch URLs on its own. Re-push whatever artwork
-// the current track has so the Now Playing card shows the cover.
+// When AirPlay connects, Apple TV needs the album artwork pushed again
+// because it can't fetch URLs on its own — it needs the image data.
 import { NativeModules, NativeEventEmitter, Platform } from 'react-native';
 if (Platform.OS === 'ios') {
   try {
     const { VybeNowPlaying } = NativeModules;
     if (VybeNowPlaying) {
       const airplayEmitter = new NativeEventEmitter(VybeNowPlaying);
+      console.log('[AirPlay] Listener registered, waiting for onAirPlayConnected event');
       airplayEmitter.addListener('onAirPlayConnected', () => {
         const { currentTrack, progress, duration, playbackState } = usePlaybackController.getState();
+        console.log('[AirPlay] 🎵 onAirPlayConnected fired. currentTrack:', currentTrack?.title, 'artwork:', currentTrack?.artwork);
         if (currentTrack) {
           console.log('[AirPlay] Connected — re-pushing full Now Playing info + artwork');
           updateNowPlaying({
@@ -1306,5 +1400,7 @@ if (Platform.OS === 'ios') {
         }
       });
     }
-  } catch {}
+  } catch (e) {
+    console.warn('[AirPlay] Failed to register listener:', e);
+  }
 }
