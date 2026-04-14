@@ -15,8 +15,7 @@ import {
 } from "../services/youtubeService";
 import { createCache, searchCacheKey, CACHEABLE_HEADERS } from "../lib/memory-cache";
 
-// In-memory response caches for hot read endpoints. Follows the same Map-based
-// pattern as urlCache above.
+// In-memory response caches for hot read endpoints.
 const ONE_HOUR_MS = 60 * 60 * 1000;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const ytSearchCache = createCache<Array<{
@@ -55,30 +54,6 @@ const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), "youtube-cookies.txt");
     } else {
       console.warn("[yt-dlp] YOUTUBE_COOKIES not set — YouTube may block requests");
     }
-
-    // yt-dlp's web clients need a JS runtime to solve YouTube's n-challenge
-    // (signature decoding). Railway provides 'bun', not 'node', so create a
-    // /tmp/node wrapper that delegates to bun, then prepend /tmp to PATH so
-    // yt-dlp finds it when invoked with --js-runtimes node.
-    const { execSync } = require("child_process");
-    try {
-      execSync("node --version 2>/dev/null", { stdio: "ignore" });
-      console.log("[yt-dlp] node already available for JS challenge solving");
-    } catch {
-      try {
-        const bunPath = execSync("which bun 2>/dev/null", { encoding: "utf-8" }).trim();
-        if (bunPath) {
-          fs.writeFileSync("/tmp/node", `#!/bin/sh\nexec "${bunPath}" "$@"\n`);
-          fs.chmodSync("/tmp/node", 0o755);
-          if (!process.env.PATH?.startsWith("/tmp:")) {
-            process.env.PATH = `/tmp:${process.env.PATH}`;
-          }
-          console.log("[yt-dlp] created /tmp/node → bun shim for JS challenge solving");
-        }
-      } catch (shimErr: any) {
-        console.warn("[yt-dlp] could not create node shim:", shimErr.message);
-      }
-    }
   } catch (e: any) {
     console.error("[yt-dlp] startup error:", e.message);
   }
@@ -113,43 +88,27 @@ function setCachedUrl(videoId: string, url: string): void {
  * Prefers m4a (AAC) which iOS AVPlayer can decode natively.
  */
 async function resolveAudioUrl(videoId: string): Promise<string> {
-  // tv_embedded bypasses YouTube's PO token requirement on server IPs
-  // (confirmed in commit 474845e). Web gets 429s on Railway, ios needs
-  // PO tokens, so tv_embedded is the reliable primary. Falls back to
-  // other clients if that somehow fails.
-  const args = cookieArgs();
-  const hasCookies = args.length > 0;
-  const clients = hasCookies
-    ? ["tv_embedded", "web_safari", "mweb", "android", "ios"]
-    : ["ios", "tv_embedded", "android", "web_safari", "mweb"];
-
-  let lastError: Error | null = null;
-  for (const client of clients) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30_000);
-    try {
-      const output = await ytDlp.execPromise([
-        `https://www.youtube.com/watch?v=${videoId}`,
-        "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio[acodec^=mp4a]/bestaudio[ext!=webm][ext!=opus][acodec!=opus]",
-        "--get-url",
-        "--no-playlist",
-        "--quiet",
-        "--extractor-args", `youtube:player_client=${client}`,
-        "--js-runtimes", "node",
-        ...args,
-      ], {}, controller.signal);
-      clearTimeout(timer);
-      const url = output.trim().split("\n")[0];
-      if (!url.startsWith("http")) throw new Error(`yt-dlp returned invalid URL`);
-      return url;
-    } catch (e: any) {
-      clearTimeout(timer);
-      lastError = e instanceof Error ? e : new Error(String(e));
-      // Continue to next client
-    }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const output = await ytDlp.execPromise([
+      `https://www.youtube.com/watch?v=${videoId}`,
+      "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio[acodec^=mp4a]/bestaudio[ext!=webm][ext!=opus][acodec!=opus]",
+      "--get-url",
+      "--no-playlist",
+      "--quiet",
+      "--extractor-args", "youtube:player_client=ios",
+      ...cookieArgs(),
+    ], {}, controller.signal);
+    clearTimeout(timer);
+    const url = output.trim().split("\n")[0];
+    if (!url.startsWith("http")) throw new Error(`yt-dlp returned invalid URL`);
+    return url;
+  } catch (e: any) {
+    clearTimeout(timer);
+    console.error("[yt-dlp] resolveAudioUrl error:", e.message);
+    throw new Error(`yt-dlp failed: ${e.message}`);
   }
-  console.error("[yt-dlp] resolveAudioUrl error after trying all clients:", lastError?.message);
-  throw new Error(`yt-dlp failed: ${lastError?.message ?? "all clients failed"}`);
 }
 
 // Track in-flight resolutions so concurrent requests for the same video
@@ -278,9 +237,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
   // Try multiple player_clients in order — YouTube's bot detection blocks
   // individual clients intermittently, so if ios fails we fall through to
   // tv → web → android. This dramatically improves download reliability.
-  // tv_embedded first — it's the one that bypasses PO token requirement
-  // on Railway (commit 474845e). Others are fallbacks if it fails.
-  const PLAYER_CLIENTS = ["tv_embedded", "ios", "web", "android"] as const;
+  const PLAYER_CLIENTS = ["ios", "tv_embedded", "web", "android"] as const;
 
   const tryClient = async (client: string): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
     // Clean up any partial files from a previous attempt so the --print
@@ -299,7 +256,6 @@ youtubeRouter.get("/download/:videoId", async (c) => {
         "--no-part",
         "--print", "after_move:filepath",
         "--extractor-args", `youtube:player_client=${client}`,
-        "--js-runtimes", "node",
         ...cookieArgs(),
       ], {}, controller.signal);
       clearTimeout(timer);
@@ -470,9 +426,6 @@ async function searchYouTubeYtDlp(query: string, maxResults: number): Promise<Ar
     output = await ytDlp.execPromise([
       `ytsearch${fetchCount}:${query}`,
       "--dump-json", "--flat-playlist", "--quiet", "--no-warnings",
-      "--extractor-args", "youtube:player_client=tv_embedded",
-      "--js-runtimes", "node",
-      ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
   } catch (e: any) {
@@ -528,11 +481,11 @@ youtubeRouter.get("/info/:videoId", async (c) => {
 });
 
 const YT_DLP_CLIENT_FALLBACKS = [
-  "tv_embedded",
   "ios",
   "android",
   "web_safari",
   "mweb",
+  "tv_embedded",
 ];
 
 async function getVideoInfo(videoId: string): Promise<{ title: string; channel: string; thumbnail: string; duration: number }> {
@@ -552,9 +505,8 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
     try {
       const output = await ytDlp.execPromise([
         ...baseArgs,
-        ...cookieArgs(),
         "--extractor-args", `youtube:player_client=${client}`,
-        "--js-runtimes", "node",
+        ...cookieArgs(),
       ]);
       const lines = output.trim().split("\n");
       if (lines.length < 3) throw new Error(`yt-dlp info returned insufficient output`);
@@ -612,9 +564,6 @@ async function getPlaylistTracks(listId: string): Promise<Array<{ videoId: strin
       "--dump-json",
       "--no-warnings",
       "--quiet",
-      "--extractor-args", "youtube:player_client=tv_embedded",
-      "--js-runtimes", "node",
-      ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
   } catch (e: any) {
@@ -661,9 +610,8 @@ youtubeRouter.get("/playlists", async (c) => {
     c.header("Cache-Control", CACHEABLE_HEADERS["Cache-Control"]);
     return c.json({ data: cached });
   }
-
   const results = await fetchCuratedPlaylists();
-  if (Array.isArray(results) ? results.length > 0 : !!results) {
+  if (results && (results as unknown[]).length > 0) {
     ytPlaylistsCache.set(YT_PLAYLISTS_CACHE_KEY, results);
     c.header("Cache-Control", CACHEABLE_HEADERS["Cache-Control"]);
   }
