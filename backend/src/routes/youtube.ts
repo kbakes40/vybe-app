@@ -87,7 +87,7 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
       "--get-url",
       "--no-playlist",
       "--quiet",
-      "--extractor-args", "youtube:player_client=ios",
+      "--extractor-args", "youtube:player_client=tv_embedded",
       "--js-runtimes", "node",
       ...cookieArgs(),
     ], {}, controller.signal);
@@ -228,7 +228,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
   // Try multiple player_clients in order — YouTube's bot detection blocks
   // individual clients intermittently, so if ios fails we fall through to
   // tv → web → android. This dramatically improves download reliability.
-  const PLAYER_CLIENTS = ["ios", "tv_embedded", "web", "android"] as const;
+  const PLAYER_CLIENTS = ["tv_embedded", "ios", "web", "android"] as const;
 
   const tryClient = async (client: string): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
     // Clean up any partial files from a previous attempt so the --print
