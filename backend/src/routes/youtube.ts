@@ -113,16 +113,15 @@ function setCachedUrl(videoId: string, url: string): void {
  * Prefers m4a (AAC) which iOS AVPlayer can decode natively.
  */
 async function resolveAudioUrl(videoId: string): Promise<string> {
-  // Cycle through multiple player clients. Cookies bypass bot detection but
-  // yt-dlp skips the `ios` client when cookies are passed ("ios does not
-  // support cookies"). So when cookies are available we start with clients
-  // that DO support them. Falls back through the same list the download path
-  // uses. Matches the pattern in getVideoInfo() below.
+  // tv_embedded bypasses YouTube's PO token requirement on server IPs
+  // (confirmed in commit 474845e). Web gets 429s on Railway, ios needs
+  // PO tokens, so tv_embedded is the reliable primary. Falls back to
+  // other clients if that somehow fails.
   const args = cookieArgs();
   const hasCookies = args.length > 0;
   const clients = hasCookies
-    ? ["web_safari", "mweb", "tv_embedded", "android", "ios"]
-    : ["ios", "android", "web_safari", "mweb", "tv_embedded"];
+    ? ["tv_embedded", "web_safari", "mweb", "android", "ios"]
+    : ["ios", "tv_embedded", "android", "web_safari", "mweb"];
 
   let lastError: Error | null = null;
   for (const client of clients) {
@@ -279,7 +278,9 @@ youtubeRouter.get("/download/:videoId", async (c) => {
   // Try multiple player_clients in order — YouTube's bot detection blocks
   // individual clients intermittently, so if ios fails we fall through to
   // tv → web → android. This dramatically improves download reliability.
-  const PLAYER_CLIENTS = ["ios", "tv_embedded", "web", "android"] as const;
+  // tv_embedded first — it's the one that bypasses PO token requirement
+  // on Railway (commit 474845e). Others are fallbacks if it fails.
+  const PLAYER_CLIENTS = ["tv_embedded", "ios", "web", "android"] as const;
 
   const tryClient = async (client: string): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
     // Clean up any partial files from a previous attempt so the --print
@@ -469,6 +470,9 @@ async function searchYouTubeYtDlp(query: string, maxResults: number): Promise<Ar
     output = await ytDlp.execPromise([
       `ytsearch${fetchCount}:${query}`,
       "--dump-json", "--flat-playlist", "--quiet", "--no-warnings",
+      "--extractor-args", "youtube:player_client=tv_embedded",
+      "--js-runtimes", "node",
+      ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
   } catch (e: any) {
@@ -524,11 +528,11 @@ youtubeRouter.get("/info/:videoId", async (c) => {
 });
 
 const YT_DLP_CLIENT_FALLBACKS = [
+  "tv_embedded",
   "ios",
   "android",
   "web_safari",
   "mweb",
-  "tv_embedded",
 ];
 
 async function getVideoInfo(videoId: string): Promise<{ title: string; channel: string; thumbnail: string; duration: number }> {
@@ -608,6 +612,9 @@ async function getPlaylistTracks(listId: string): Promise<Array<{ videoId: strin
       "--dump-json",
       "--no-warnings",
       "--quiet",
+      "--extractor-args", "youtube:player_client=tv_embedded",
+      "--js-runtimes", "node",
+      ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
   } catch (e: any) {
