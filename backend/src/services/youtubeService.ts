@@ -288,7 +288,8 @@ export async function searchYouTube(
       }
 
       if (!response.ok) {
-        console.error(`[YouTube] Search failed: ${response.status}`);
+        const body = await response.text().catch(() => '<unreadable body>');
+        console.error(`[YouTube] Search failed: ${response.status} — query=${JSON.stringify(query)} body=${body.slice(0, 500)}`);
         return [];
       }
 

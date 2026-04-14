@@ -13,6 +13,17 @@ import {
   getPlaylistTracksViaApi,
   isYouTubeApiAvailable,
 } from "../services/youtubeService";
+import { createCache, searchCacheKey, CACHEABLE_HEADERS } from "../lib/memory-cache";
+
+// In-memory response caches for hot read endpoints. Follows the same Map-based
+// pattern as urlCache above.
+const ONE_HOUR_MS = 60 * 60 * 1000;
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const ytSearchCache = createCache<Array<{
+  videoId: string; title: string; channelName: string; thumbnailUrl: string; publishedAt: string; searchQuery: string;
+}>>(ONE_HOUR_MS);
+const ytPlaylistsCache = createCache<unknown>(ONE_DAY_MS);
+const YT_PLAYLISTS_CACHE_KEY = "youtube:playlists";
 
 const youtubeRouter = new Hono();
 
@@ -375,15 +386,30 @@ youtubeRouter.get("/search", async (c) => {
   const maxResults = Math.min(parseInt(c.req.query("maxResults") ?? "10", 10), 20);
   if (!q) return c.json({ error: "Missing q parameter" }, 400);
 
+  const cacheKey = searchCacheKey("youtube:search", q, maxResults);
+  const cached = ytSearchCache.get(cacheKey);
+  if (cached) {
+    c.header("Cache-Control", CACHEABLE_HEADERS["Cache-Control"]);
+    return c.json({ data: cached });
+  }
+
   try {
     const ytdlpResults = await searchYouTubeYtDlp(q, maxResults);
-    if (ytdlpResults.length > 0) return c.json({ data: ytdlpResults });
+    if (ytdlpResults.length > 0) {
+      ytSearchCache.set(cacheKey, ytdlpResults);
+      c.header("Cache-Control", CACHEABLE_HEADERS["Cache-Control"]);
+      return c.json({ data: ytdlpResults });
+    }
   } catch (e) {
     console.error("[YouTube] yt-dlp search failed:", e);
   }
 
   try {
     const apiResults = await searchYouTube(q, maxResults);
+    if (apiResults.length > 0) {
+      ytSearchCache.set(cacheKey, apiResults);
+      c.header("Cache-Control", CACHEABLE_HEADERS["Cache-Control"]);
+    }
     return c.json({ data: apiResults });
   } catch {
     return c.json({ data: [] });
@@ -480,6 +506,7 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
     try {
       const output = await ytDlp.execPromise([
         ...baseArgs,
+        ...cookieArgs(),
         "--extractor-args", `youtube:player_client=${client}`,
       ]);
       const lines = output.trim().split("\n");
@@ -579,7 +606,17 @@ youtubeRouter.get("/new-releases", async (c) => {
 });
 
 youtubeRouter.get("/playlists", async (c) => {
+  const cached = ytPlaylistsCache.get(YT_PLAYLISTS_CACHE_KEY);
+  if (cached) {
+    c.header("Cache-Control", CACHEABLE_HEADERS["Cache-Control"]);
+    return c.json({ data: cached });
+  }
+
   const results = await fetchCuratedPlaylists();
+  if (Array.isArray(results) ? results.length > 0 : !!results) {
+    ytPlaylistsCache.set(YT_PLAYLISTS_CACHE_KEY, results);
+    c.header("Cache-Control", CACHEABLE_HEADERS["Cache-Control"]);
+  }
   return c.json({ data: results });
 });
 

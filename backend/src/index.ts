@@ -126,6 +126,41 @@ app.route("/api/vip", vipRouter);
 
 const port = Number(process.env.PORT) || 3000;
 
+// Prewarm hot search caches shortly after startup so the mobile app's
+// home/explore/search tabs see instant responses for popular genres.
+// Runs async and non-blocking — failures are ignored.
+const PREWARM_QUERIES = [
+  "pop", "rock", "hip hop", "electronic", "jazz",
+  "r&b", "country", "indie", "latin", "k-pop",
+  "metal", "classical", "reggae", "blues", "folk",
+  "punk", "soul", "funk", "edm", "house",
+];
+
+async function prewarmSearchCaches(baseUrl: string) {
+  const start = Date.now();
+  const tasks = PREWARM_QUERIES.flatMap((q) => {
+    const qs = `q=${encodeURIComponent(q)}&maxResults=10`;
+    return [
+      fetch(`${baseUrl}/api/youtube/search?${qs}`).then((r) => r.ok),
+      fetch(`${baseUrl}/api/soundcloud/search?${qs}`).then((r) => r.ok),
+    ];
+  });
+  const results = await Promise.allSettled(tasks);
+  const ok = results.filter((r) => r.status === "fulfilled" && r.value).length;
+  const total = PREWARM_QUERIES.length * 2;
+  const ms = Date.now() - start;
+  console.log(`[cache-prewarm] completed ${ok}/${total} queries in ${ms} ms`);
+}
+
+// Fire prewarm after the server has had a moment to bind. Kept off the
+// critical startup path — pipelined with Promise.allSettled.
+setTimeout(() => {
+  const baseUrl = process.env.BACKEND_URL ?? `http://127.0.0.1:${port}`;
+  prewarmSearchCaches(baseUrl).catch((e) => {
+    console.warn("[cache-prewarm] failed:", e instanceof Error ? e.message : e);
+  });
+}, 1500);
+
 export default {
   port,
   fetch: app.fetch,

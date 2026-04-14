@@ -3,8 +3,23 @@ import { stream } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import YTDlpWrap from "yt-dlp-wrap";
+import { createCache, searchCacheKey, CACHEABLE_HEADERS } from "../lib/memory-cache";
 
 const ytDlp = new YTDlpWrap();
+
+// In-memory response caches for hot read endpoints.
+const SC_ONE_HOUR_MS = 60 * 60 * 1000;
+const SC_ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const scSearchCache = createCache<Array<{
+  trackId: string;
+  title: string;
+  artist: string;
+  artwork: string;
+  duration: number;
+  soundcloudUrl: string;
+}>>(SC_ONE_HOUR_MS);
+const scMixesCache = createCache<unknown>(SC_ONE_DAY_MS);
+const SC_MIXES_CACHE_KEY = "soundcloud:mixes";
 const SC_URL_RE = /^https:\/\/(soundcloud\.com|on\.soundcloud\.com)\/.+/;
 
 // SoundCloud oEmbed response type
@@ -936,6 +951,15 @@ soundcloudRouter.post("/related", zValidator("json", relatedRequestSchema), (c) 
  * Get curated mix definitions
  */
 soundcloudRouter.get("/mixes", (c) => {
+  const cached = scMixesCache.get(SC_MIXES_CACHE_KEY);
+  if (cached) {
+    c.header("Cache-Control", CACHEABLE_HEADERS["Cache-Control"]);
+    return c.json({ data: cached });
+  }
+  if (Array.isArray(curatedMixes) ? curatedMixes.length > 0 : !!curatedMixes) {
+    scMixesCache.set(SC_MIXES_CACHE_KEY, curatedMixes);
+    c.header("Cache-Control", CACHEABLE_HEADERS["Cache-Control"]);
+  }
   return c.json({ data: curatedMixes });
 });
 
@@ -1120,8 +1144,19 @@ soundcloudRouter.get("/search", async (c) => {
 
   if (!q) return c.json({ error: { message: "Missing q parameter", code: "MISSING_Q" } }, 400);
 
+  const cacheKey = searchCacheKey("soundcloud:search", q, maxResults);
+  const cached = scSearchCache.get(cacheKey);
+  if (cached) {
+    c.header("Cache-Control", CACHEABLE_HEADERS["Cache-Control"]);
+    return c.json({ data: cached });
+  }
+
   try {
     const tracks = await searchSoundCloud(q, maxResults);
+    if (tracks.length > 0) {
+      scSearchCache.set(cacheKey, tracks);
+      c.header("Cache-Control", CACHEABLE_HEADERS["Cache-Control"]);
+    }
     return c.json({ data: tracks });
   } catch (e) {
     console.error("[SoundCloud] search error:", e);
