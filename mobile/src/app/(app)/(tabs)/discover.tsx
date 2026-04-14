@@ -98,7 +98,21 @@ const DISCOVER_KEYS = {
   ytCuratedPlaylists: 'ytCuratedPlaylists',
   scMixes: 'scMixes',
   spotifyPlaylists: 'spotifyPlaylists',
+  // Trending track feeds per source
+  ytVideosFeed: 'ytVideosFeed',
+  ytmTracksFeed: 'ytmTracksFeed',
+  scTracksFeed: 'scTracksFeed',
 } as const;
+
+// SoundCloud track shape returned by /api/soundcloud/search
+interface SCSearchTrack {
+  trackId: string;
+  title: string;
+  artist: string;
+  artwork: string;
+  duration: number;
+  soundcloudUrl: string;
+}
 
 // ─── Vybe Beats Card ─────────────────────────────────────────────────────────
 const BEATS_GRID = 200;
@@ -280,16 +294,32 @@ export default function DiscoverScreen() {
     const hit = discoverMMKV.get<SpotifyPlaylist[]>(DISCOVER_KEYS.spotifyPlaylists, TTL.CURATED);
     return hit?.value ?? [];
   });
+  // Trending track feeds per source — backend cached 1h
+  const [ytVideosFeed, setYtVideosFeed] = useState<PlaylistTrack[]>(() => {
+    const hit = discoverMMKV.get<PlaylistTrack[]>(DISCOVER_KEYS.ytVideosFeed, TTL.GENRE);
+    return hit?.value ?? [];
+  });
+  const [ytmTracksFeed, setYtmTracksFeed] = useState<PlaylistTrack[]>(() => {
+    const hit = discoverMMKV.get<PlaylistTrack[]>(DISCOVER_KEYS.ytmTracksFeed, TTL.GENRE);
+    return hit?.value ?? [];
+  });
+  const [scTracksFeed, setScTracksFeed] = useState<SCSearchTrack[]>(() => {
+    const hit = discoverMMKV.get<SCSearchTrack[]>(DISCOVER_KEYS.scTracksFeed, TTL.GENRE);
+    return hit?.value ?? [];
+  });
 
-  // Fetch curated playlists from backend (cached 24h, so hits are <100ms)
+  // Fetch curated playlists + trending feeds from backend (cached, so hits are <100ms)
   useEffect(() => {
     (async () => {
-      const [yt, sc, sp] = await Promise.all([
+      const [yt, sc, sp, ytVideos, ytmTracks, scTracks] = await Promise.all([
         api.get<CuratedPlaylist[]>('/api/youtube/playlists').catch(() => null),
         api.get<MixDefinition[]>('/api/soundcloud/mixes').catch(() => null),
         Promise.all(SPOTIFY_DISCOVER_IDS.map(id =>
           api.get<SpotifyPlaylist>(`/api/spotify/playlist/${id}`).catch(() => null)
         )),
+        api.get<PlaylistTrack[]>(`/api/youtube/search?q=${encodeURIComponent('popular music videos')}&maxResults=15`).catch(() => null),
+        api.get<PlaylistTrack[]>(`/api/youtube/search?q=${encodeURIComponent('new music 2025')}&maxResults=15`).catch(() => null),
+        api.get<SCSearchTrack[]>(`/api/soundcloud/search?q=${encodeURIComponent('hidden gems')}&maxResults=15`).catch(() => null),
       ]);
       if (yt && yt.length > 0) {
         const filtered = yt.filter(p => p.tracks.length > 0);
@@ -304,6 +334,18 @@ export default function DiscoverScreen() {
       if (validSp.length > 0) {
         setSpotifyPlaylists(validSp);
         discoverMMKV.set(DISCOVER_KEYS.spotifyPlaylists, validSp);
+      }
+      if (ytVideos && ytVideos.length > 0) {
+        setYtVideosFeed(ytVideos);
+        discoverMMKV.set(DISCOVER_KEYS.ytVideosFeed, ytVideos);
+      }
+      if (ytmTracks && ytmTracks.length > 0) {
+        setYtmTracksFeed(ytmTracks);
+        discoverMMKV.set(DISCOVER_KEYS.ytmTracksFeed, ytmTracks);
+      }
+      if (scTracks && scTracks.length > 0) {
+        setScTracksFeed(scTracks);
+        discoverMMKV.set(DISCOVER_KEYS.scTracksFeed, scTracks);
       }
     })();
   }, []);
@@ -702,8 +744,101 @@ export default function DiscoverScreen() {
           </Animated.View>
         ) : null}
 
+        {/* From YouTube — trending music videos (backend cached 1h) */}
+        {ytVideosFeed.length > 0 ? (
+          <Animated.View entering={FadeInDown.delay(120).springify()} className="mt-6">
+            <View className="flex-row items-center px-5 mb-2">
+              <View style={{ width: 20, height: 16, borderRadius: 3, backgroundColor: '#FF0000', alignItems: 'center', justifyContent: 'center' }}>
+                <Play size={9} color="#fff" fill="#fff" />
+              </View>
+              <Text className="text-white text-xl font-bold ml-2">From YouTube</Text>
+            </View>
+            <Text className="text-white/50 text-sm px-5 mb-4">Trending music videos</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }} style={{ flexGrow: 0 }}>
+              {ytVideosFeed.map(t => {
+                const queue: Track[] = ytVideosFeed.map(x => ({
+                  id: `yt-${x.videoId}`, title: x.title, artist: x.channelName,
+                  artistId: '', album: '', albumId: '',
+                  artwork: x.thumbnailUrl, duration: 0, isLiked: false,
+                  source: 'youtube' as const, youtubeId: x.videoId, audioUrl: '',
+                }));
+                const track = queue.find(q => q.id === `yt-${t.videoId}`)!;
+                return (
+                  <Pressable key={track.id} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, queue); }} className="mr-4">
+                    <Image source={{ uri: t.thumbnailUrl }} style={{ width: 160, height: 90, borderRadius: 8 }} contentFit="cover" />
+                    <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 160 }}>{t.title}</Text>
+                    <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 160 }}>{t.channelName}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </Animated.View>
+        ) : null}
+
+        {/* From YouTube Music — new music (backend cached 1h) */}
+        {ytmTracksFeed.length > 0 ? (
+          <Animated.View entering={FadeInDown.delay(140).springify()} className="mt-6">
+            <View className="flex-row items-center px-5 mb-2">
+              <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#FF0000', alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: '#fff', fontSize: 11 }}>♪</Text>
+              </View>
+              <Text className="text-white text-xl font-bold ml-2">From YouTube Music</Text>
+            </View>
+            <Text className="text-white/50 text-sm px-5 mb-4">Fresh tracks to explore</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }} style={{ flexGrow: 0 }}>
+              {ytmTracksFeed.map(t => {
+                const queue: Track[] = ytmTracksFeed.map(x => ({
+                  id: `ytm-${x.videoId}`, title: x.title, artist: x.channelName,
+                  artistId: '', album: '', albumId: '',
+                  artwork: x.thumbnailUrl, duration: 0, isLiked: false,
+                  source: 'youtube_music' as const, youtubeMusicId: x.videoId, youtubeId: x.videoId, audioUrl: '',
+                }));
+                const track = queue.find(q => q.id === `ytm-${t.videoId}`)!;
+                return (
+                  <Pressable key={track.id} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, queue); }} className="mr-4">
+                    <Image source={{ uri: t.thumbnailUrl }} style={{ width: 140, height: 140, borderRadius: 8 }} contentFit="cover" />
+                    <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>{t.title}</Text>
+                    <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 140 }}>{t.channelName}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </Animated.View>
+        ) : null}
+
+        {/* From SoundCloud — hidden gems (backend cached 1h) */}
+        {scTracksFeed.length > 0 ? (
+          <Animated.View entering={FadeInDown.delay(160).springify()} className="mt-6">
+            <View className="flex-row items-center px-5 mb-2">
+              <View style={{ width: 20, height: 20, borderRadius: 4, backgroundColor: '#FF5500', alignItems: 'center', justifyContent: 'center' }}>
+                <Cloud size={12} color="#fff" />
+              </View>
+              <Text className="text-white text-xl font-bold ml-2">From SoundCloud</Text>
+            </View>
+            <Text className="text-white/50 text-sm px-5 mb-4">Underground tracks waiting to be discovered</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }} style={{ flexGrow: 0 }}>
+              {scTracksFeed.map(t => {
+                const queue: Track[] = scTracksFeed.map(x => ({
+                  id: `sc-${x.trackId}`, title: x.title, artist: x.artist,
+                  artistId: '', album: '', albumId: '',
+                  artwork: x.artwork, duration: x.duration, isLiked: false,
+                  source: 'soundcloud' as const, soundcloudUrl: x.soundcloudUrl, audioUrl: '',
+                }));
+                const track = queue.find(q => q.id === `sc-${t.trackId}`)!;
+                return (
+                  <Pressable key={track.id} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, queue); }} className="mr-4">
+                    <Image source={{ uri: t.artwork }} style={{ width: 140, height: 140, borderRadius: 8 }} contentFit="cover" />
+                    <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>{t.title}</Text>
+                    <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 140 }}>{t.artist}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </Animated.View>
+        ) : null}
+
         {/* Late Night Mix — from saved tracks */}
-        <Animated.View entering={FadeInDown.delay(150).springify()} className="mt-6">
+        <Animated.View entering={FadeInDown.delay(180).springify()} className="mt-6">
           <View className="flex-row items-center px-5 mb-2">
             <Moon size={20} color="#8B5CF6" />
             <Text className="text-white text-xl font-bold ml-2">Late Night</Text>
