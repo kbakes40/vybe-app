@@ -39,10 +39,66 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { DiscoverCard } from '@/components/DiscoverCard';
-import { useDiscoverFeedStore, DiscoverItem } from '@/stores/discoverFeedStore';
+import { useDiscoverFeedStore, DiscoverItem, DiscoverSection } from '@/stores/discoverFeedStore';
 import { useDownloadsStore } from '@/stores/downloadsStore';
 import { usePlaybackController } from '@/stores/playbackController';
-import { Track } from '@/types/music';
+import { MixDefinition, Track } from '@/types/music';
+import { createMMKVCache, TTL } from '@/lib/mmkv-cache';
+import { api } from '@/lib/api/api';
+
+// Curated playlist types — match home screen backend response shapes
+interface PlaylistTrack {
+  videoId: string;
+  title: string;
+  channelName: string;
+  thumbnailUrl: string;
+  publishedAt: string;
+}
+interface CuratedPlaylist {
+  playlistId: string;
+  name: string;
+  thumbnailUrl: string;
+  tracks: PlaylistTrack[];
+  category?: string;
+  section?: string;
+}
+interface SpotifyPlaylistTrack {
+  videoId: string;
+  title: string;
+  channelName: string;
+  thumbnailUrl: string;
+  durationMs: number;
+}
+interface SpotifyPlaylist {
+  playlistId: string;
+  name: string;
+  thumbnailUrl: string;
+  tracks: SpotifyPlaylistTrack[];
+}
+
+// Top Spotify playlist IDs — same curated set used on home tab
+const SPOTIFY_DISCOVER_IDS = [
+  '4eqLPb9xwuPk2CyECDyH3X',
+  '37i9dQZF1DX0XUsuxWHRQd',
+  '37i9dQZF1EQnqst5TRi17F',
+  '37i9dQZF1EIezQcATIWbSB',
+  '37i9dQZF1DWZFV9Asvj1J9',
+  '1D3oAiNwFiZq0eXT8dVBmH',
+];
+
+// MMKV last-known-good cache for the discover tab. Additive: the zustand
+// store (persisted to AsyncStorage) is still the source of truth for the
+// session. On cold app start, if the zustand hydration hasn't populated yet,
+// we seed the zustand store synchronously from MMKV so the feed paints on
+// first frame instead of waiting for network + AsyncStorage hydration.
+const discoverMMKV = createMMKVCache('vybe-discover');
+const DISCOVER_KEYS = {
+  sections: 'sections',
+  vybeBeats: 'vybeBeats',
+  ytCuratedPlaylists: 'ytCuratedPlaylists',
+  scMixes: 'scMixes',
+  spotifyPlaylists: 'spotifyPlaylists',
+} as const;
 
 // ─── Vybe Beats Card ─────────────────────────────────────────────────────────
 const BEATS_GRID = 200;
@@ -158,6 +214,33 @@ function VybeBeatsCard({ items, onPress }: { items: DiscoverItem[]; onPress: () 
  *
  * If user hasn't completed onboarding, redirects to preferences screen.
  */
+// Module-level synchronous hydration from MMKV into the zustand store.
+// Runs once on first import of this screen. If the store is already populated
+// (via its AsyncStorage persist) this is a no-op.
+let _discoverMMKVHydrated = false;
+function hydrateDiscoverFromMMKV() {
+  if (_discoverMMKVHydrated) return;
+  _discoverMMKVHydrated = true;
+  try {
+    const state = useDiscoverFeedStore.getState();
+    if (state.sections.length === 0) {
+      const hit = discoverMMKV.get<DiscoverSection[]>(DISCOVER_KEYS.sections, TTL.CURATED);
+      if (hit?.value?.length) {
+        useDiscoverFeedStore.setState({ sections: hit.value });
+      }
+    }
+    if (state.vybeBeats.length === 0) {
+      const beatsHit = discoverMMKV.get<DiscoverItem[]>(DISCOVER_KEYS.vybeBeats, TTL.CURATED);
+      if (beatsHit?.value?.length) {
+        useDiscoverFeedStore.setState({ vybeBeats: beatsHit.value });
+      }
+    }
+  } catch {
+    /* silent — best-effort */
+  }
+}
+hydrateDiscoverFromMMKV();
+
 export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -177,21 +260,66 @@ export default function DiscoverScreen() {
   const fetchPreferences = useDiscoverFeedStore((s) => s.fetchPreferences);
   const completeOnboardingWithInstantFeed = useDiscoverFeedStore((s) => s.completeOnboardingWithInstantFeed);
 
-  // Debug: log the current state whenever the screen gains focus
-  useEffect(() => {
-    console.log('[Discover] State snapshot:', {
-      sectionCount: sections.length,
-      itemCounts: sections.map(s => ({ id: s.id, items: s.items?.length ?? 0 })),
-      onboardingComplete: preferences?.onboardingComplete,
-      isLoadingFeed,
-      feedError,
-    });
-  }, [sections, preferences, isLoadingFeed, feedError]);
+  // Debug logging removed — was causing excessive re-renders
 
   // State
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const vybeBeats = useDiscoverFeedStore((s) => s.vybeBeats);
   const setVybeBeats = useDiscoverFeedStore((s) => s.setVybeBeats);
+
+  // Curated backend playlists — lazy-seed from MMKV so they paint instantly on cold launch
+  const [ytCuratedPlaylists, setYtCuratedPlaylists] = useState<CuratedPlaylist[]>(() => {
+    const hit = discoverMMKV.get<CuratedPlaylist[]>(DISCOVER_KEYS.ytCuratedPlaylists, TTL.CURATED);
+    return hit?.value ?? [];
+  });
+  const [scMixes, setScMixes] = useState<MixDefinition[]>(() => {
+    const hit = discoverMMKV.get<MixDefinition[]>(DISCOVER_KEYS.scMixes, TTL.CURATED);
+    return hit?.value ?? [];
+  });
+  const [spotifyPlaylists, setSpotifyPlaylists] = useState<SpotifyPlaylist[]>(() => {
+    const hit = discoverMMKV.get<SpotifyPlaylist[]>(DISCOVER_KEYS.spotifyPlaylists, TTL.CURATED);
+    return hit?.value ?? [];
+  });
+
+  // Fetch curated playlists from backend (cached 24h, so hits are <100ms)
+  useEffect(() => {
+    (async () => {
+      const [yt, sc, sp] = await Promise.all([
+        api.get<CuratedPlaylist[]>('/api/youtube/playlists').catch(() => null),
+        api.get<MixDefinition[]>('/api/soundcloud/mixes').catch(() => null),
+        Promise.all(SPOTIFY_DISCOVER_IDS.map(id =>
+          api.get<SpotifyPlaylist>(`/api/spotify/playlist/${id}`).catch(() => null)
+        )),
+      ]);
+      if (yt && yt.length > 0) {
+        const filtered = yt.filter(p => p.tracks.length > 0);
+        setYtCuratedPlaylists(filtered);
+        discoverMMKV.set(DISCOVER_KEYS.ytCuratedPlaylists, filtered);
+      }
+      if (sc && sc.length > 0) {
+        setScMixes(sc);
+        discoverMMKV.set(DISCOVER_KEYS.scMixes, sc);
+      }
+      const validSp = sp.filter((r): r is SpotifyPlaylist => !!r && r.tracks.length > 0);
+      if (validSp.length > 0) {
+        setSpotifyPlaylists(validSp);
+        discoverMMKV.set(DISCOVER_KEYS.spotifyPlaylists, validSp);
+      }
+    })();
+  }, []);
+
+  // Persist sections + vybeBeats to MMKV whenever they change so the next
+  // cold start can paint instantly from disk (before AsyncStorage hydrates).
+  useEffect(() => {
+    if (sections.length > 0) {
+      discoverMMKV.set(DISCOVER_KEYS.sections, sections);
+    }
+  }, [sections]);
+  useEffect(() => {
+    if (vybeBeats.length > 0) {
+      discoverMMKV.set(DISCOVER_KEYS.vybeBeats, vybeBeats);
+    }
+  }, [vybeBeats]);
 
   // Client-side fallback: when preferences are set but sections are empty
   // (e.g. backend /api/discover is auth-gated and failing), build a Vybe Beats
@@ -429,7 +557,7 @@ export default function DiscoverScreen() {
             </Pressable>
           </View>
           <Text className="text-white/60 mt-1">
-            Personalized picks from YouTube and SoundCloud
+            Personalized picks from Vybe Music and Vybe Waves
           </Text>
         </View>
 
@@ -479,8 +607,103 @@ export default function DiscoverScreen() {
           );
         })() : null}
 
+        {/* Vybe Music Playlists — curated YouTube Music playlists (backend cached 24h) */}
+        {ytCuratedPlaylists.length > 0 ? (
+          <Animated.View entering={FadeInDown.delay(0).springify()} className="mt-6">
+            <View className="flex-row items-center px-5 mb-2">
+              <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#FF0000', alignItems: 'center', justifyContent: 'center' }}>
+                <Play size={11} color="#fff" fill="#fff" />
+              </View>
+              <Text className="text-white text-xl font-bold ml-2">Vybe Music Playlists</Text>
+            </View>
+            <Text className="text-white/50 text-sm px-5 mb-4">Top picks from YouTube Music</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }} style={{ flexGrow: 0 }}>
+              {ytCuratedPlaylists.map(pl => {
+                const queue: Track[] = pl.tracks.map(t => ({
+                  id: `ytm-${t.videoId}`,
+                  title: t.title,
+                  artist: t.channelName,
+                  artistId: '', album: pl.name, albumId: `ytm-pl-${pl.playlistId}`,
+                  artwork: t.thumbnailUrl,
+                  duration: 0, isLiked: false,
+                  source: 'youtube_music' as const,
+                  youtubeMusicId: t.videoId, youtubeId: t.videoId,
+                  audioUrl: '',
+                }));
+                if (queue.length === 0) return null;
+                return (
+                  <Pressable key={pl.playlistId} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(queue[0], queue); }} className="mr-4">
+                    <Image source={{ uri: pl.thumbnailUrl }} style={{ width: 160, height: 160, borderRadius: 10 }} contentFit="cover" />
+                    <Text className="text-white font-semibold text-sm mt-2" numberOfLines={2} style={{ width: 160 }}>{pl.name}</Text>
+                    <Text className="text-white/50 text-xs mt-0.5" numberOfLines={1}>{pl.tracks.length} tracks</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </Animated.View>
+        ) : null}
+
+        {/* Vybe Waves Mixes — curated SoundCloud mixes (backend cached 24h) */}
+        {scMixes.length > 0 ? (
+          <Animated.View entering={FadeInDown.delay(50).springify()} className="mt-6">
+            <View className="flex-row items-center px-5 mb-2">
+              <View style={{ width: 20, height: 20, borderRadius: 4, backgroundColor: '#FF5500', alignItems: 'center', justifyContent: 'center' }}>
+                <Cloud size={12} color="#fff" />
+              </View>
+              <Text className="text-white text-xl font-bold ml-2">Vybe Waves Mixes</Text>
+            </View>
+            <Text className="text-white/50 text-sm px-5 mb-4">Top mixes from SoundCloud</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }} style={{ flexGrow: 0 }}>
+              {scMixes.map(mix => (
+                <Pressable key={mix.id} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); router.push(`/(app)/vybe-mix?mixId=${mix.id}` as never); }} className="mr-4">
+                  <Image source={{ uri: mix.coverImage }} style={{ width: 160, height: 160, borderRadius: 10, backgroundColor: '#1a1a1a' }} contentFit="cover" />
+                  <Text className="text-white font-semibold text-sm mt-2" numberOfLines={2} style={{ width: 160 }}>{mix.name}</Text>
+                  {mix.description ? <Text className="text-white/50 text-xs mt-0.5" numberOfLines={1}>{mix.description}</Text> : null}
+                </Pressable>
+              ))}
+            </ScrollView>
+          </Animated.View>
+        ) : null}
+
+        {/* Stream Library — curated Spotify playlists bridged to in-app playback */}
+        {spotifyPlaylists.length > 0 ? (
+          <Animated.View entering={FadeInDown.delay(100).springify()} className="mt-6">
+            <View className="flex-row items-center px-5 mb-2">
+              <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#1DB954', alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: '#000', fontSize: 11, fontWeight: '900' }}>♫</Text>
+              </View>
+              <Text className="text-white text-xl font-bold ml-2">Stream Library Picks</Text>
+            </View>
+            <Text className="text-white/50 text-sm px-5 mb-4">Curated playlists, streamed in-app</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }} style={{ flexGrow: 0 }}>
+              {spotifyPlaylists.map(pl => {
+                const queue: Track[] = pl.tracks.map(t => ({
+                  id: `sp-yt-${t.videoId}`,
+                  title: t.title,
+                  artist: t.channelName,
+                  artistId: '', album: pl.name, albumId: `sp-${pl.playlistId}`,
+                  artwork: t.thumbnailUrl,
+                  duration: Math.round((t.durationMs ?? 0) / 1000),
+                  isLiked: false,
+                  source: 'youtube_music' as const,
+                  youtubeId: t.videoId, youtubeMusicId: t.videoId,
+                  audioUrl: '',
+                }));
+                if (queue.length === 0) return null;
+                return (
+                  <Pressable key={pl.playlistId} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(queue[0], queue); }} className="mr-4">
+                    <Image source={{ uri: pl.thumbnailUrl }} style={{ width: 160, height: 160, borderRadius: 10 }} contentFit="cover" />
+                    <Text className="text-white font-semibold text-sm mt-2" numberOfLines={2} style={{ width: 160 }}>{pl.name}</Text>
+                    <Text className="text-white/50 text-xs mt-0.5" numberOfLines={1}>{pl.tracks.length} tracks</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </Animated.View>
+        ) : null}
+
         {/* Late Night Mix — from saved tracks */}
-        <Animated.View entering={FadeInDown.delay(0).springify()} className="mt-6">
+        <Animated.View entering={FadeInDown.delay(150).springify()} className="mt-6">
           <View className="flex-row items-center px-5 mb-2">
             <Moon size={20} color="#8B5CF6" />
             <Text className="text-white text-xl font-bold ml-2">Late Night</Text>
@@ -586,7 +809,7 @@ export default function DiscoverScreen() {
             <View className="bg-white/5 rounded-xl p-4">
               <Text className="text-white/60 text-sm text-center">
                 Recommendations update based on your preferences and listening history.
-                Tap a card to open in YouTube or SoundCloud.
+                Tap a card to open in Vybe Music or Vybe Waves.
               </Text>
             </View>
           </View>
