@@ -42,7 +42,9 @@ async function runYtDlpSearch(prefix: string, query: string, maxResults: number)
         '--flat-playlist',
         '--quiet',
         '--no-warnings',
-        // NO cookies — newer yt-dlp skips ios when cookies are passed.
+        '--extractor-args', 'youtube:player_client=tv_embedded',
+        '--js-runtimes', 'node',
+        ...cookieArgs(),
       ],
       {},
       controller.signal
