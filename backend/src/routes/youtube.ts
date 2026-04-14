@@ -55,6 +55,30 @@ const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), "youtube-cookies.txt");
     } else {
       console.warn("[yt-dlp] YOUTUBE_COOKIES not set — YouTube may block requests");
     }
+
+    // yt-dlp's web clients need a JS runtime to solve YouTube's n-challenge
+    // (signature decoding). Railway provides 'bun', not 'node', so create a
+    // /tmp/node wrapper that delegates to bun, then prepend /tmp to PATH so
+    // yt-dlp finds it when invoked with --js-runtimes node.
+    const { execSync } = require("child_process");
+    try {
+      execSync("node --version 2>/dev/null", { stdio: "ignore" });
+      console.log("[yt-dlp] node already available for JS challenge solving");
+    } catch {
+      try {
+        const bunPath = execSync("which bun 2>/dev/null", { encoding: "utf-8" }).trim();
+        if (bunPath) {
+          fs.writeFileSync("/tmp/node", `#!/bin/sh\nexec "${bunPath}" "$@"\n`);
+          fs.chmodSync("/tmp/node", 0o755);
+          if (!process.env.PATH?.startsWith("/tmp:")) {
+            process.env.PATH = `/tmp:${process.env.PATH}`;
+          }
+          console.log("[yt-dlp] created /tmp/node → bun shim for JS challenge solving");
+        }
+      } catch (shimErr: any) {
+        console.warn("[yt-dlp] could not create node shim:", shimErr.message);
+      }
+    }
   } catch (e: any) {
     console.error("[yt-dlp] startup error:", e.message);
   }
