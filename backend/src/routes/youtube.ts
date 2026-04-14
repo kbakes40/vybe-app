@@ -91,6 +91,10 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
   try {
+    // NO cookies — newer yt-dlp skips the ios client when cookies are passed
+    // ("Skipping client ios since it does not support cookies"). ios client
+    // works unauthenticated for public YT/YT Music tracks via the mobile API
+    // and bypasses Railway-IP rate limiting. See commit a8fcedc.
     const output = await ytDlp.execPromise([
       `https://www.youtube.com/watch?v=${videoId}`,
       "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio[acodec^=mp4a]/bestaudio[ext!=webm][ext!=opus][acodec!=opus]",
@@ -98,7 +102,6 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
       "--no-playlist",
       "--quiet",
       "--extractor-args", "youtube:player_client=ios",
-      ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
     const url = output.trim().split("\n")[0];
@@ -256,7 +259,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
         "--no-part",
         "--print", "after_move:filepath",
         "--extractor-args", `youtube:player_client=${client}`,
-        ...cookieArgs(),
+        // NO cookies — newer yt-dlp skips ios when cookies are passed.
       ], {}, controller.signal);
       clearTimeout(timer);
       const finalPath = output.trim().split("\n").pop()?.trim() ?? "";
@@ -506,7 +509,7 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
       const output = await ytDlp.execPromise([
         ...baseArgs,
         "--extractor-args", `youtube:player_client=${client}`,
-        ...cookieArgs(),
+        // NO cookies — see resolveAudioUrl comment.
       ]);
       const lines = output.trim().split("\n");
       if (lines.length < 3) throw new Error(`yt-dlp info returned insufficient output`);
