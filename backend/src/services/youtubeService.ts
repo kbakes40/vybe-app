@@ -289,6 +289,19 @@ export async function searchYouTube(
 
       if (!response.ok) {
         const body = await response.text().catch(() => '<unreadable body>');
+        // 400 API_KEY_INVALID / badRequest → key is broken, rotate to next key
+        // (same pattern as 403 quotaExceeded above)
+        if (
+          response.status === 400 &&
+          (body.includes('API_KEY_INVALID') ||
+           body.includes('API key not valid') ||
+           body.includes('keyInvalid'))
+        ) {
+          console.warn(`[YouTube] 400 API_KEY_INVALID on key ${activeKeyIndex + 1} — rotating`);
+          const rotated = rotateKey(`400 API_KEY_INVALID on key ${activeKeyIndex + 1}`);
+          if (!rotated) return getCachedSearch(query, maxResults) ?? [];
+          continue; // retry with new key
+        }
         console.error(`[YouTube] Search failed: ${response.status} — query=${JSON.stringify(query)} body=${body.slice(0, 500)}`);
         return [];
       }

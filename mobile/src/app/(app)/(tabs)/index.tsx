@@ -3,7 +3,7 @@ import { View, Text, ScrollView, Pressable, Dimensions, ActivityIndicator, Refre
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { Play, ChevronRight, Moon, Brain, Cloud, Sparkles, MoreHorizontal } from 'lucide-react-native';
+import { Play, ChevronRight, Moon, Brain, Cloud, Sparkles, MoreHorizontal, Radio, Music, Headphones } from 'lucide-react-native';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import Animated, {
@@ -40,6 +40,8 @@ import { useRecentsStore } from '@/stores/recentsStore';
 import { useDownloadsStore } from '@/stores/downloadsStore';
 import { api } from '@/lib/api/api';
 import { MixDefinition, RelatedTrack, Track } from '@/types/music';
+import { prefetchHeroColors } from '@/lib/usePlaylistHeroColors';
+import { createMMKVCache, TTL } from '@/lib/mmkv-cache';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const AnimatedText = Animated.createAnimatedComponent(Text);
@@ -55,33 +57,31 @@ function formatPlayCount(id: string): string {
 }
 
 function SourceIcon({ source }: { source: string | undefined }) {
-  if (source === 'soundcloud') {
+  const s = source ?? '';
+  if (s === 'soundcloud') {
     return (
       <View style={{ width: 16, height: 16, borderRadius: 3, backgroundColor: '#FF5500', alignItems: 'center', justifyContent: 'center', marginRight: 6 }}>
-        <Text style={{ color: '#fff', fontSize: 7, fontWeight: '900', letterSpacing: -0.5 }}>)))</Text>
+        <Radio size={10} color="#fff" strokeWidth={2.5} />
       </View>
     );
   }
-  if (source === 'youtube_music') {
-    // Red circle with music note — YouTube Music
+  if (s === 'youtube_music') {
     return (
       <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: '#FF0000', alignItems: 'center', justifyContent: 'center', marginRight: 6 }}>
-        <Text style={{ color: '#fff', fontSize: 9, lineHeight: 10 }}>♪</Text>
+        <Music size={9} color="#fff" strokeWidth={2.5} />
       </View>
     );
   }
-  if (source === 'youtube') {
-    // Red rounded rect with play triangle
+  if (s === 'youtube') {
     return (
       <View style={{ width: 16, height: 16, borderRadius: 3, backgroundColor: '#FF0000', alignItems: 'center', justifyContent: 'center', marginRight: 6 }}>
-        <View style={{ width: 0, height: 0, borderTopWidth: 4, borderBottomWidth: 4, borderLeftWidth: 6, borderTopColor: 'transparent', borderBottomColor: 'transparent', borderLeftColor: '#fff', marginLeft: 1 }} />
+        <Play size={9} color="#fff" fill="#fff" />
       </View>
     );
   }
-  // Default: Vybe purple
   return (
     <View style={{ width: 16, height: 16, borderRadius: 3, backgroundColor: '#8B5CF6', alignItems: 'center', justifyContent: 'center', marginRight: 6 }}>
-      <Text style={{ color: '#fff', fontSize: 8, fontWeight: '800' }}>V</Text>
+      <Headphones size={9} color="#fff" strokeWidth={2.5} />
     </View>
   );
 }
@@ -449,18 +449,80 @@ const GENRE_CATALOG: { name: string; keywords: string[]; query: string }[] = [
   { name: 'Emo',         keywords: ['emo', 'post-hardcore'],       query: 'emo music playlist' },
 ];
 
+// MMKV last-known-good cache for the home screen. Additive tier on top of the
+// in-memory React state — lets the UI paint instantly on app open while a
+// fresh fetch runs in the background.
+const homeMMKV = createMMKVCache('vybe-home');
+const HOME_KEYS = {
+  mixes: 'mixes',
+  curatedPlaylists: 'curatedPlaylists',
+  spotifyPlaylists: 'spotifyPlaylists',
+  ytmTracks: 'ytmTracks',
+  ytmQueryLabel: 'ytmQueryLabel',
+  discoverGenreTracks: 'discoverGenreTracks',
+  discoverGenreLabel: 'discoverGenreLabel',
+  // Backend-sourced track feeds for From YouTube / From SoundCloud sections
+  ytTrendingTracks: 'ytTrendingTracks',
+  scTrendingTracks: 'scTrendingTracks',
+} as const;
+
+// SoundCloud track shape returned by /api/soundcloud/search
+interface SCApiTrack {
+  trackId: string;
+  title: string;
+  artist: string;
+  artwork: string;
+  duration: number;
+  soundcloudUrl: string;
+}
+
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const playTrack = usePlaybackController(s => s.playTrack);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
-  const [mixes, setMixes] = useState<MixDefinition[]>([]);
-  const [curatedPlaylists, setCuratedPlaylists] = useState<CuratedPlaylist[]>([]);
-  const [spotifyPlaylists, setSpotifyPlaylists] = useState<SpotifyPlaylist[]>([]);
-  const [ytmTracks, setYtmTracks] = useState<PlaylistTrack[]>([]);
-  const [ytmQueryLabel, setYtmQueryLabel] = useState('');
-  const [discoverGenreTracks, setDiscoverGenreTracks] = useState<(PlaylistTrack & { genre: string })[]>([]);
-  const [discoverGenreLabel, setDiscoverGenreLabel] = useState('');
+
+  // Synchronous MMKV reads (lazy initializers) seed state from disk on mount.
+  // This means if the cache is warm, the UI paints immediately — no spinner
+  // gap while the network fetch runs. The existing fetch still runs below and
+  // refreshes state + disk cache.
+  const [mixes, setMixes] = useState<MixDefinition[]>(() => {
+    const hit = homeMMKV.get<MixDefinition[]>(HOME_KEYS.mixes, TTL.CURATED);
+    return hit?.value ?? [];
+  });
+  const [curatedPlaylists, setCuratedPlaylists] = useState<CuratedPlaylist[]>(() => {
+    const hit = homeMMKV.get<CuratedPlaylist[]>(HOME_KEYS.curatedPlaylists, TTL.CURATED);
+    return hit?.value ?? [];
+  });
+  const [spotifyPlaylists, setSpotifyPlaylists] = useState<SpotifyPlaylist[]>(() => {
+    const hit = homeMMKV.get<SpotifyPlaylist[]>(HOME_KEYS.spotifyPlaylists, TTL.CURATED);
+    return hit?.value ?? [];
+  });
+  const [ytmTracks, setYtmTracks] = useState<PlaylistTrack[]>(() => {
+    const hit = homeMMKV.get<PlaylistTrack[]>(HOME_KEYS.ytmTracks, TTL.GENRE);
+    return hit?.value ?? [];
+  });
+  const [ytmQueryLabel, setYtmQueryLabel] = useState(() => {
+    const hit = homeMMKV.get<string>(HOME_KEYS.ytmQueryLabel, TTL.GENRE);
+    return hit?.value ?? '';
+  });
+  const [discoverGenreTracks, setDiscoverGenreTracks] = useState<(PlaylistTrack & { genre: string })[]>(() => {
+    const hit = homeMMKV.get<(PlaylistTrack & { genre: string })[]>(HOME_KEYS.discoverGenreTracks, TTL.GENRE);
+    return hit?.value ?? [];
+  });
+  const [discoverGenreLabel, setDiscoverGenreLabel] = useState(() => {
+    const hit = homeMMKV.get<string>(HOME_KEYS.discoverGenreLabel, TTL.GENRE);
+    return hit?.value ?? '';
+  });
+  // Backend-sourced tracks for From YouTube / From SoundCloud sections
+  const [ytTrendingTracks, setYtTrendingTracks] = useState<PlaylistTrack[]>(() => {
+    const hit = homeMMKV.get<PlaylistTrack[]>(HOME_KEYS.ytTrendingTracks, TTL.GENRE);
+    return hit?.value ?? [];
+  });
+  const [scTrendingTracks, setScTrendingTracks] = useState<SCApiTrack[]>(() => {
+    const hit = homeMMKV.get<SCApiTrack[]>(HOME_KEYS.scTrendingTracks, TTL.GENRE);
+    return hit?.value ?? [];
+  });
   const [isLoadingMixes, setIsLoadingMixes] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -581,12 +643,15 @@ export default function HomeScreen() {
       const mixesResponse = await api.get<MixDefinition[]>('/api/soundcloud/mixes');
       if (mixesResponse) {
         setMixes(mixesResponse);
+        homeMMKV.set(HOME_KEYS.mixes, mixesResponse);
       }
 
       // Fetch curated YouTube Music playlists
       const playlistsResponse = await api.get<CuratedPlaylist[]>('/api/youtube/playlists');
       if (playlistsResponse) {
-        setCuratedPlaylists(playlistsResponse.filter(p => p.tracks.length > 0));
+        const filtered = playlistsResponse.filter(p => p.tracks.length > 0);
+        setCuratedPlaylists(filtered);
+        homeMMKV.set(HOME_KEYS.curatedPlaylists, filtered);
       }
 
       // Fetch Spotify playlists (bridged to YouTube for playback)
@@ -602,20 +667,28 @@ export default function HomeScreen() {
         spotifyIds.map(id => api.get<SpotifyPlaylist>(`/api/spotify/playlist/${id}`).catch(() => null))
       );
       const validSpotify = spotifyResults.filter((r): r is SpotifyPlaylist => !!r && r.tracks.length > 0);
-      if (validSpotify.length > 0) setSpotifyPlaylists(validSpotify);
+      if (validSpotify.length > 0) {
+        setSpotifyPlaylists(validSpotify);
+        homeMMKV.set(HOME_KEYS.spotifyPlaylists, validSpotify);
+      }
 
       // Fetch personalized YouTube Music tracks based on listening history
       const ytmQuery = buildYTMQuery();
-      setYtmQueryLabel(ytmQuery.replace(/ music$| new music$/, '').trim());
+      const ytmLabel = ytmQuery.replace(/ music$| new music$/, '').trim();
+      setYtmQueryLabel(ytmLabel);
+      homeMMKV.set(HOME_KEYS.ytmQueryLabel, ytmLabel);
       const ytmResponse = await api.get<PlaylistTrack[]>(`/api/youtube/search?q=${encodeURIComponent(ytmQuery)}&maxResults=10`);
       if (ytmResponse && ytmResponse.length > 0) {
         setYtmTracks(ytmResponse);
+        homeMMKV.set(HOME_KEYS.ytmTracks, ytmResponse);
       }
 
       // Fetch tracks for genres the user hasn't explored
       const absentGenres = getAbsentGenres();
       if (absentGenres.length > 0) {
-        setDiscoverGenreLabel(absentGenres.map(g => g.name).join(' & '));
+        const genreLabel = absentGenres.map(g => g.name).join(' & ');
+        setDiscoverGenreLabel(genreLabel);
+        homeMMKV.set(HOME_KEYS.discoverGenreLabel, genreLabel);
         const genreResults = await Promise.all(
           absentGenres.map(g =>
             api.get<PlaylistTrack[]>(`/api/youtube/search?q=${encodeURIComponent(g.query)}&maxResults=5`)
@@ -630,6 +703,21 @@ export default function HomeScreen() {
           genreResults.forEach(r => { if (r[i]) interleaved.push(r[i]); });
         }
         setDiscoverGenreTracks(interleaved);
+        homeMMKV.set(HOME_KEYS.discoverGenreTracks, interleaved);
+      }
+
+      // From YouTube — trending music videos from backend (cached 1h)
+      const ytTrending = await api.get<PlaylistTrack[]>(`/api/youtube/search?q=${encodeURIComponent('trending music videos')}&maxResults=15`).catch(() => null);
+      if (ytTrending && ytTrending.length > 0) {
+        setYtTrendingTracks(ytTrending);
+        homeMMKV.set(HOME_KEYS.ytTrendingTracks, ytTrending);
+      }
+
+      // From SoundCloud — trending tracks from backend (cached 1h)
+      const scTrending = await api.get<SCApiTrack[]>(`/api/soundcloud/search?q=${encodeURIComponent('trending')}&maxResults=15`).catch(() => null);
+      if (scTrending && scTrending.length > 0) {
+        setScTrendingTracks(scTrending);
+        homeMMKV.set(HOME_KEYS.scTrendingTracks, scTrending);
       }
 
       // SoundCloud tracks no longer use embedded playback - they open externally via search handoff
@@ -685,6 +773,13 @@ export default function HomeScreen() {
     [...new Set(quickPicks.slice(0, 3).map(t => t.artist))].join(', '),
     [quickPicks]
   );
+
+  // Prefetch Vybe Mix artwork + colors so it loads instantly when tapped
+  useEffect(() => {
+    const arts = quickPicks.slice(0, 4).map(t => t.artwork).filter(Boolean);
+    arts.forEach(uri => { if (uri) Image.prefetch(uri); });
+    if (arts[0]) prefetchHeroColors(arts[0]);
+  }, [quickPicks.slice(0, 4).map(t => t.artwork).join()]);
 
   return (
     <View className="flex-1 bg-[#0A0A0A]">
@@ -1396,8 +1491,8 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* YouTube Music */}
-        {youtubeTracks.length > 0 ? (
+        {/* From YouTube — trending music videos from backend */}
+        {ytTrendingTracks.length > 0 ? (
           <View className="mt-8">
             <SectionHeader title="From YouTube" />
             <Text className="text-white/50 text-sm px-5 mb-4">
@@ -1409,68 +1504,86 @@ export default function HomeScreen() {
               contentContainerStyle={{ paddingHorizontal: 20 }}
               style={{ flexGrow: 0 }}
             >
-              {youtubeTracks.map(track => (
-                <Pressable
-                  key={track.id}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    playTrack(track, youtubeTracks);
-                  }}
-                  className="mr-4"
-                >
-                  <View className="relative">
-                    <Image
-                      source={{ uri: track.artwork }}
-                      style={{ width: 160, height: 90, borderRadius: 8 }}
-                      contentFit="cover"
-                    />
-                    {/* YouTube badge */}
-                    <View
-                      className="absolute top-2 left-2 flex-row items-center bg-black/70 rounded px-1.5 py-0.5"
-                    >
+              {ytTrendingTracks.map(t => {
+                const track = {
+                  id: `yt-${t.videoId}`,
+                  title: t.title,
+                  artist: t.channelName,
+                  artistId: '',
+                  album: '',
+                  albumId: '',
+                  artwork: t.thumbnailUrl,
+                  duration: 0,
+                  isLiked: false,
+                  source: 'youtube' as const,
+                  youtubeId: t.videoId,
+                  audioUrl: '',
+                };
+                const queueTracks = ytTrendingTracks.map(x => ({
+                  id: `yt-${x.videoId}`,
+                  title: x.title,
+                  artist: x.channelName,
+                  artistId: '',
+                  album: '',
+                  albumId: '',
+                  artwork: x.thumbnailUrl,
+                  duration: 0,
+                  isLiked: false,
+                  source: 'youtube' as const,
+                  youtubeId: x.videoId,
+                  audioUrl: '',
+                }));
+                return (
+                  <Pressable
+                    key={track.id}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      playTrack(track, queueTracks);
+                    }}
+                    className="mr-4"
+                  >
+                    <View className="relative">
+                      <Image
+                        source={{ uri: track.artwork }}
+                        style={{ width: 160, height: 90, borderRadius: 8 }}
+                        contentFit="cover"
+                      />
+                      {/* Vybe Video badge */}
                       <View
-                        style={{
-                          width: 14,
-                          height: 14,
-                          backgroundColor: '#FF0000',
-                          borderRadius: 3,
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
+                        className="absolute top-2 left-2 flex-row items-center bg-black/70 rounded px-1.5 py-0.5"
                       >
                         <View
                           style={{
-                            width: 0,
-                            height: 0,
-                            borderLeftWidth: 5,
-                            borderTopWidth: 3,
-                            borderBottomWidth: 3,
-                            borderLeftColor: '#fff',
-                            borderTopColor: 'transparent',
-                            borderBottomColor: 'transparent',
-                            marginLeft: 1,
+                            width: 14,
+                            height: 14,
+                            backgroundColor: '#FF0000',
+                            borderRadius: 3,
+                            alignItems: 'center',
+                            justifyContent: 'center',
                           }}
-                        />
+                        >
+                          <Play size={8} color="#fff" fill="#fff" />
+                        </View>
+                        <Text className="text-white text-[10px] font-medium ml-1">
+                          Vybe Video
+                        </Text>
                       </View>
-                      <Text className="text-white text-[10px] font-medium ml-1">
-                        YouTube
-                      </Text>
-                    </View>
-                    {/* Play overlay */}
-                    <View className="absolute inset-0 items-center justify-center">
-                      <View className="w-10 h-10 bg-white/90 rounded-full items-center justify-center">
-                        <Play size={20} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 2 }} />
+                      {/* Play overlay */}
+                      <View className="absolute inset-0 items-center justify-center">
+                        <View className="w-10 h-10 bg-white/90 rounded-full items-center justify-center">
+                          <Play size={20} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 2 }} />
+                        </View>
                       </View>
                     </View>
-                  </View>
-                  <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 160 }}>
-                    {track.title}
-                  </Text>
-                  <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 160 }}>
-                    {track.artist}
-                  </Text>
-                </Pressable>
-              ))}
+                    <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 160 }}>
+                      {track.title}
+                    </Text>
+                    <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 160 }}>
+                      {track.artist}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </ScrollView>
           </View>
         ) : null}
@@ -1553,8 +1666,8 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
-        {/* SoundCloud */}
-        {soundcloudTracks.length > 0 ? (
+        {/* From SoundCloud — trending from backend */}
+        {scTrendingTracks.length > 0 ? (
           <View className="mt-8">
             <SectionHeader title="From SoundCloud" />
             <Text className="text-white/50 text-sm px-5 mb-4">
@@ -1566,50 +1679,80 @@ export default function HomeScreen() {
               contentContainerStyle={{ paddingHorizontal: 20 }}
               style={{ flexGrow: 0 }}
             >
-              {soundcloudTracks.map(track => (
-                <Pressable
-                  key={track.id}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    playTrack(track, soundcloudTracks);
-                  }}
-                  className="mr-4"
-                >
-                  <View className="relative">
-                    <Image
-                      source={{ uri: track.artwork }}
-                      style={{ width: 140, height: 140, borderRadius: 8 }}
-                      contentFit="cover"
-                    />
-                    {/* SoundCloud badge */}
-                    <View
-                      className="absolute top-2 left-2 flex-row items-center bg-black/70 rounded px-1.5 py-0.5"
-                    >
+              {scTrendingTracks.map(t => {
+                const track = {
+                  id: `sc-${t.trackId}`,
+                  title: t.title,
+                  artist: t.artist,
+                  artistId: '',
+                  album: '',
+                  albumId: '',
+                  artwork: t.artwork,
+                  duration: t.duration,
+                  isLiked: false,
+                  source: 'soundcloud' as const,
+                  soundcloudUrl: t.soundcloudUrl,
+                  audioUrl: '',
+                };
+                const queueTracks = scTrendingTracks.map(x => ({
+                  id: `sc-${x.trackId}`,
+                  title: x.title,
+                  artist: x.artist,
+                  artistId: '',
+                  album: '',
+                  albumId: '',
+                  artwork: x.artwork,
+                  duration: x.duration,
+                  isLiked: false,
+                  source: 'soundcloud' as const,
+                  soundcloudUrl: x.soundcloudUrl,
+                  audioUrl: '',
+                }));
+                return (
+                  <Pressable
+                    key={track.id}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      playTrack(track, queueTracks);
+                    }}
+                    className="mr-4"
+                  >
+                    <View className="relative">
+                      <Image
+                        source={{ uri: track.artwork }}
+                        style={{ width: 140, height: 140, borderRadius: 8 }}
+                        contentFit="cover"
+                      />
+                      {/* Vybe Waves badge */}
                       <View
-                        style={{
-                          width: 14,
-                          height: 14,
-                          backgroundColor: '#FF5500',
-                          borderRadius: 3,
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
+                        className="absolute top-2 left-2 flex-row items-center bg-black/70 rounded px-1.5 py-0.5"
                       >
-                        <Text className="text-white text-[8px] font-bold">SC</Text>
+                        <View
+                          style={{
+                            width: 14,
+                            height: 14,
+                            backgroundColor: '#FF5500',
+                            borderRadius: 3,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <Radio size={8} color="#fff" strokeWidth={2.5} />
+                        </View>
+                        <Text className="text-white text-[10px] font-medium ml-1">
+                          Vybe Waves
+                        </Text>
                       </View>
-                      <Text className="text-white text-[10px] font-medium ml-1">
-                        SoundCloud
-                      </Text>
                     </View>
-                  </View>
-                  <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>
-                    {track.title}
-                  </Text>
-                  <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 140 }}>
-                    {track.artist}
-                  </Text>
-                </Pressable>
-              ))}
+                    <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>
+                      {track.title}
+                    </Text>
+                    <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 140 }}>
+                      {track.artist}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </ScrollView>
           </View>
         ) : null}
