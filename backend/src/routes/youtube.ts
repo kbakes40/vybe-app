@@ -89,27 +89,43 @@ function setCachedUrl(videoId: string, url: string): void {
  * Prefers m4a (AAC) which iOS AVPlayer can decode natively.
  */
 async function resolveAudioUrl(videoId: string): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30_000);
-  try {
-    const output = await ytDlp.execPromise([
-      `https://www.youtube.com/watch?v=${videoId}`,
-      "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio[acodec^=mp4a]/bestaudio[ext!=webm][ext!=opus][acodec!=opus]",
-      "--get-url",
-      "--no-playlist",
-      "--quiet",
-      "--extractor-args", "youtube:player_client=ios",
-      ...cookieArgs(),
-    ], {}, controller.signal);
-    clearTimeout(timer);
-    const url = output.trim().split("\n")[0];
-    if (!url.startsWith("http")) throw new Error(`yt-dlp returned invalid URL`);
-    return url;
-  } catch (e: any) {
-    clearTimeout(timer);
-    console.error("[yt-dlp] resolveAudioUrl error:", e.message);
-    throw new Error(`yt-dlp failed: ${e.message}`);
+  // Cycle through multiple player clients. Cookies bypass bot detection but
+  // yt-dlp skips the `ios` client when cookies are passed ("ios does not
+  // support cookies"). So when cookies are available we start with clients
+  // that DO support them. Falls back through the same list the download path
+  // uses. Matches the pattern in getVideoInfo() below.
+  const args = cookieArgs();
+  const hasCookies = args.length > 0;
+  const clients = hasCookies
+    ? ["web_safari", "mweb", "tv_embedded", "android", "ios"]
+    : ["ios", "android", "web_safari", "mweb", "tv_embedded"];
+
+  let lastError: Error | null = null;
+  for (const client of clients) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const output = await ytDlp.execPromise([
+        `https://www.youtube.com/watch?v=${videoId}`,
+        "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio[acodec^=mp4a]/bestaudio[ext!=webm][ext!=opus][acodec!=opus]",
+        "--get-url",
+        "--no-playlist",
+        "--quiet",
+        "--extractor-args", `youtube:player_client=${client}`,
+        ...args,
+      ], {}, controller.signal);
+      clearTimeout(timer);
+      const url = output.trim().split("\n")[0];
+      if (!url.startsWith("http")) throw new Error(`yt-dlp returned invalid URL`);
+      return url;
+    } catch (e: any) {
+      clearTimeout(timer);
+      lastError = e instanceof Error ? e : new Error(String(e));
+      // Continue to next client
+    }
   }
+  console.error("[yt-dlp] resolveAudioUrl error after trying all clients:", lastError?.message);
+  throw new Error(`yt-dlp failed: ${lastError?.message ?? "all clients failed"}`);
 }
 
 // Track in-flight resolutions so concurrent requests for the same video
