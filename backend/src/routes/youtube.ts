@@ -49,12 +49,13 @@ const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), "youtube-cookies.txt");
   }
 })();
 
-// Returns cookie args if the cookie file was written, otherwise empty array
+// Cookies are intentionally disabled: recent yt-dlp builds refuse the `ios`
+// player client when cookies are present ("Skipping client 'ios' since it
+// does not support cookies"), which leaves only image formats available and
+// breaks every audio request. We keep the cookie file on disk (in case we
+// want to re-enable for specific clients later) but never pass --cookies.
 function cookieArgs(): string[] {
-  try {
-    const fs = require("fs");
-    return fs.existsSync(YTDLP_COOKIES_PATH) ? ["--cookies", YTDLP_COOKIES_PATH] : [];
-  } catch { return []; }
+  return [];
 }
 
 // Cache resolved CDN URLs so repeated range requests don't re-run yt-dlp
