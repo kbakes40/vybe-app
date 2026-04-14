@@ -88,6 +88,7 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
       "--no-playlist",
       "--quiet",
       "--extractor-args", "youtube:player_client=ios",
+      "--js-runtimes", "node",
       ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
@@ -246,6 +247,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
         "--no-part",
         "--print", "after_move:filepath",
         "--extractor-args", `youtube:player_client=${client}`,
+        "--js-runtimes", "node",
         ...cookieArgs(),
       ], {}, controller.signal);
       clearTimeout(timer);
