@@ -489,6 +489,7 @@ const CURATED_PLAYLISTS_META: { id: string; name: string; category?: string; sec
   { id: 'OLAK5uy_lOObWACxntfFYF4g_NOhFNEsk6nHdWhCM', name: "Today's 50 Global Top Hits 2024/2025", section: 'popular', category: 'Hits / Mainstream' },
   { id: 'PLplXQ2cg9B_qrCVd1J_iId5SvP8Kf_BfS', name: 'Top Songs of the Decade (2010-2019)', section: 'popular', category: 'Hits / Mainstream' },
   { id: 'RDWNyduKrT_qI', name: 'Trending Pop Hits 2026 — Top Music Mix', section: 'popular', category: 'Hits / Mainstream' },
+  { id: 'PLbEsl-Fehk-XxnkXFzjkN_yp5krDQMUoi', name: 'Top Hits 2025 — Best Pop Playlist', section: 'popular', category: 'Hits / Mainstream' },
   // ── Country ────────────────────────────────────────────────────────────────
   { id: 'PLMmqTuUsDkRKv4ulZiAYRoWLu1184CAkt', name: "Today's Country Hits 2026 — New Country Songs", section: 'popular', category: 'Country' },
   { id: 'PLN_YZjgdIDCfYxxFZW4TFKiFNraH6d9hK', name: 'Country Music 2018-2026 — Best Country Songs', section: 'popular', category: 'Country' },
