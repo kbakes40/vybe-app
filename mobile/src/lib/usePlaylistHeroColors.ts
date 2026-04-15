@@ -84,14 +84,55 @@ function isTooDark(color: { r: number; g: number; b: number }): boolean {
  * The returned gradient always ends at #0A0A0A so the hero blends into
  * the track list area below, which also has backgroundColor #0A0A0A.
  */
+// In-memory cache so revisiting a screen is instant
+const colorCache = new Map<string, PlaylistHeroColors>();
+const prefetchInFlight = new Set<string>();
+
+/**
+ * Prefetch colors for an artwork URL in the background.
+ * Call this on the home screen so playlist screens load instantly.
+ */
+export function prefetchHeroColors(artworkUrl: string | undefined | null): void {
+  if (!artworkUrl || colorCache.has(artworkUrl) || prefetchInFlight.has(artworkUrl)) return;
+  prefetchInFlight.add(artworkUrl);
+  getColors(artworkUrl, { fallback: '#3B1F6E', cache: true, key: artworkUrl })
+    .then((result) => {
+      let picked: string | null = null;
+      if (result.platform === 'ios') {
+        picked = result.primary ?? result.background ?? result.detail ?? null;
+      } else if (result.platform === 'android') {
+        picked = result.dominant ?? result.vibrant ?? result.average ?? null;
+      } else if (result.platform === 'web') {
+        picked = result.dominant ?? result.vibrant ?? null;
+      }
+      if (picked) {
+        const parsed = parseColor(picked);
+        if (parsed && !isTooDark(parsed)) {
+          colorCache.set(artworkUrl, paletteFromDominant(toHex(parsed)));
+        }
+      }
+    })
+    .catch(() => {})
+    .finally(() => prefetchInFlight.delete(artworkUrl));
+}
+
 export function usePlaylistHeroColors(artworkUrl: string | undefined | null): PlaylistHeroColors {
-  const [palette, setPalette] = useState<PlaylistHeroColors>(DEFAULT_PALETTE);
+  const cached = artworkUrl ? colorCache.get(artworkUrl) : undefined;
+  const [palette, setPalette] = useState<PlaylistHeroColors>(cached ?? DEFAULT_PALETTE);
 
   useEffect(() => {
     if (!artworkUrl) {
       setPalette(DEFAULT_PALETTE);
       return;
     }
+
+    // Return cached result instantly
+    const hit = colorCache.get(artworkUrl);
+    if (hit) {
+      setPalette(hit);
+      return;
+    }
+
     let cancelled = false;
     (async () => {
       try {
@@ -124,7 +165,9 @@ export function usePlaylistHeroColors(artworkUrl: string | undefined | null): Pl
           return;
         }
 
-        setPalette(paletteFromDominant(toHex(parsed)));
+        const p = paletteFromDominant(toHex(parsed));
+        colorCache.set(artworkUrl, p);
+        setPalette(p);
       } catch {
         if (!cancelled) setPalette(DEFAULT_PALETTE);
       }

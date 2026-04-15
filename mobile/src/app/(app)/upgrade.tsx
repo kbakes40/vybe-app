@@ -11,6 +11,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+  withDelay,
+  FadeIn,
+} from 'react-native-reanimated';
 import {
   Zap,
   Music2,
@@ -20,6 +28,12 @@ import {
   Crown,
   Shield,
   Infinity,
+  Check,
+  Star,
+  Radio,
+  Heart,
+  BarChart2,
+  Globe,
 } from 'lucide-react-native';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import { useUpgradePromptStore } from '@/stores/upgradePromptStore';
@@ -27,25 +41,100 @@ import { useVybePopup } from '@/components/VybePopup';
 import {
   getVybePackages,
   purchasePackage,
-  isPremiumActive,
-  isLifetimePurchase,
   VybePackages,
 } from '@/lib/purchases';
-
-const CTA_BUTTON_HEIGHT = 56;
-const CTA_CONTAINER_PADDING = 16;
 
 const BENEFITS = [
   { icon: Shield, text: 'No ads, ever' },
   { icon: Zap, text: 'Unlimited skips' },
   { icon: Music2, text: 'High quality audio' },
   { icon: Headphones, text: 'Lossless when supported' },
-  { icon: Download, text: 'Offline downloads for VYBE music' },
+  { icon: Download, text: 'Offline downloads' },
   { icon: Sparkles, text: 'Early AI releases' },
-  { icon: Crown, text: 'Advanced discovery controls' },
+  { icon: Crown, text: 'Advanced discovery' },
+  { icon: Star, text: 'Exclusive releases' },
+  { icon: Radio, text: 'Artist radio stations' },
+  { icon: Globe, text: '500M+ songs' },
+  { icon: Heart, text: 'Unlimited favorites' },
+  { icon: BarChart2, text: 'Listening insights' },
 ];
 
 type PlanType = 'monthly' | 'lifetime';
+
+// ── Success overlay ───────────────────────────────────────────────────────────
+
+function SuccessOverlay({ onContinue }: { onContinue: () => void }) {
+  const insets = useSafeAreaInsets();
+  const crownScale = useSharedValue(0);
+  const crownRotate = useSharedValue(-15);
+
+  useEffect(() => {
+    crownScale.value = withSpring(1, { damping: 12, stiffness: 180 });
+    crownRotate.value = withSpring(0, { damping: 14, stiffness: 160 });
+  }, []);
+
+  const crownStyle = useAnimatedStyle(() => ({
+    transform: [
+      { scale: crownScale.value },
+      { rotate: `${crownRotate.value}deg` },
+    ],
+  }));
+
+  return (
+    <Animated.View entering={FadeIn.duration(250)} style={[StyleSheet.absoluteFill, styles.successOverlay]}>
+      <LinearGradient colors={['#1a0a2e', '#0F0A1A', '#0A0A0A']} style={StyleSheet.absoluteFill} />
+
+      <View style={[styles.successContent, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 32 }]}>
+        {/* Crown */}
+        <Animated.View style={[styles.successCrownWrap, crownStyle]}>
+          <LinearGradient
+            colors={['#F59E0B', '#8B5CF6']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.successCrownGradient}
+          >
+            <Crown size={52} color="#fff" />
+          </LinearGradient>
+        </Animated.View>
+
+        <Animated.Text entering={FadeIn.delay(200).duration(300)} style={styles.successTitle}>
+          You're Vybe+
+        </Animated.Text>
+        <Animated.Text entering={FadeIn.delay(300).duration(300)} style={styles.successSubtitle}>
+          Welcome to the good stuff.
+        </Animated.Text>
+
+        {/* Feature checks */}
+        <Animated.View entering={FadeIn.delay(400).duration(300)} style={styles.successFeatures}>
+          {['Unlimited skips', 'Zero ads', 'Offline downloads', 'High quality audio'].map((f, i) => (
+            <View key={i} style={styles.successFeatureRow}>
+              <View style={styles.successCheck}>
+                <Check size={14} color="#fff" strokeWidth={3} />
+              </View>
+              <Text style={styles.successFeatureText}>{f}</Text>
+            </View>
+          ))}
+        </Animated.View>
+
+        {/* CTA */}
+        <Animated.View entering={FadeIn.delay(550).duration(300)} style={styles.successCtaWrap}>
+          <Pressable onPress={onContinue} style={styles.successCta}>
+            <LinearGradient
+              colors={['#8B5CF6', '#6366F1']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.successCtaGradient}
+            >
+              <Text style={styles.successCtaText}>Start Listening</Text>
+            </LinearGradient>
+          </Pressable>
+        </Animated.View>
+      </View>
+    </Animated.View>
+  );
+}
+
+// ── Pricing card ──────────────────────────────────────────────────────────────
 
 interface PricingCardProps {
   plan: PlanType;
@@ -96,6 +185,8 @@ function PricingCard({ plan, price, subtext, badge, badgeColor = '#8B5CF6', isSe
   );
 }
 
+// ── Main screen ───────────────────────────────────────────────────────────────
+
 export default function UpgradeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -104,13 +195,11 @@ export default function UpgradeScreen() {
   const setHasSeenPrompt = useUpgradePromptStore(s => s.setHasSeenPrompt);
   const [selectedPlan, setSelectedPlan] = useState<PlanType>('lifetime');
   const [packages, setPackages] = useState<VybePackages>({ monthly: null, lifetime: null });
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [isPurchasing, setIsPurchasing] = useState(false);
-
-  const bottomPadding = CTA_BUTTON_HEIGHT + CTA_CONTAINER_PADDING * 2 + insets.bottom + 24;
+  const [showSuccess, setShowSuccess] = useState(false);
 
   useEffect(() => {
-    setIsLoading(true);
     getVybePackages()
       .then(setPackages)
       .finally(() => setIsLoading(false));
@@ -118,9 +207,17 @@ export default function UpgradeScreen() {
 
   const handleNotNow = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setTier('free');
     setHasSeenPrompt(true);
-    router.replace('/(app)/(tabs)');
+    router.back();
+  };
+
+  const grantPremium = () => {
+    setTier('plus');
+    setHasSeenPrompt(true);
+    // Double haptic burst — impact then success notification
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    setTimeout(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success), 200);
+    setShowSuccess(true);
   };
 
   const handleSubscribe = async () => {
@@ -129,22 +226,19 @@ export default function UpgradeScreen() {
     const pkg = selectedPlan === 'lifetime' ? packages.lifetime : packages.monthly;
 
     if (!pkg) {
-      // RevenueCat not configured yet — mock for testing
-      setTier('plus');
-      setHasSeenPrompt(true);
-      router.replace('/(app)/(tabs)');
+      // No RevenueCat products available
+      showVybePopup({
+        title: 'Store Unavailable',
+        message: 'Could not load plans from the store. Please check your connection and try again.',
+        type: 'error',
+      });
       return;
     }
 
     setIsPurchasing(true);
     try {
-      const info = await purchasePackage(pkg);
-      if (isPremiumActive(info)) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        setTier('plus');
-        setHasSeenPrompt(true);
-        router.replace('/(app)/(tabs)');
-      }
+      await purchasePackage(pkg);
+      grantPremium();
     } catch (error: any) {
       if (error?.userCancelled) return;
       showVybePopup({
@@ -174,32 +268,27 @@ export default function UpgradeScreen() {
         </Pressable>
       </View>
 
-      {/* Scrollable content */}
+      {/* Scrollable content + CTA all in one scroll view */}
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: bottomPadding }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 24 }]}
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}
         <View style={styles.headerSection}>
           <View style={styles.crownContainer}>
-            <Crown size={48} color="#8B5CF6" />
+            <Crown size={36} color="#8B5CF6" />
           </View>
           <Text style={styles.title}>Try VYBE Plus</Text>
           <Text style={styles.subtitle}>break the loop</Text>
-          <Text style={styles.supportingText}>
-            Upgrade anytime. Cancel anytime.
-          </Text>
         </View>
 
-        {/* Benefits */}
-        <View style={styles.benefitsContainer}>
+        {/* Benefits — clean 2-col grid */}
+        <View style={styles.benefitsGrid}>
           {BENEFITS.map((benefit, index) => (
-            <View key={index} style={styles.benefitItem}>
-              <View style={styles.benefitIconContainer}>
-                <benefit.icon size={18} color="#8B5CF6" />
-              </View>
-              <Text style={styles.benefitText}>{benefit.text}</Text>
+            <View key={index} style={styles.benefitChip}>
+              <benefit.icon size={15} color="#8B5CF6" />
+              <Text style={styles.benefitChipText}>{benefit.text}</Text>
             </View>
           ))}
         </View>
@@ -227,44 +316,43 @@ export default function UpgradeScreen() {
         <Text style={styles.limitedNote}>
           Lifetime price increases after launch promotion ends.
         </Text>
+
+        {/* CTA button — inside scroll so it's never cut off */}
+        <View style={styles.ctaSection}>
+          <Pressable
+            onPress={handleSubscribe}
+            disabled={isPurchasing || isLoading}
+            style={[styles.ctaButton, (isPurchasing || isLoading) && { opacity: 0.7 }]}
+          >
+            <LinearGradient
+              colors={selectedPlan === 'lifetime' ? ['#E11D48', '#8B5CF6'] : ['#8B5CF6', '#6366F1']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.ctaGradientButton}
+            >
+              {isPurchasing || isLoading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.ctaText}>
+                  {selectedPlan === 'lifetime'
+                    ? `Get Lifetime · ${lifetimePrice}`
+                    : `Start Monthly · ${monthlyPrice}/mo`}
+                </Text>
+              )}
+            </LinearGradient>
+          </Pressable>
+
+          <Text style={styles.footerText}>
+            Free includes ads and limited skips.{'\n'}
+            Downloads apply only to VYBE music.
+          </Text>
+        </View>
       </ScrollView>
 
-      {/* Fixed CTA */}
-      <View style={[styles.ctaContainer, { paddingBottom: insets.bottom + CTA_CONTAINER_PADDING }]}>
-        <LinearGradient
-          colors={['transparent', '#0A0A0A']}
-          style={styles.ctaGradient}
-          pointerEvents="none"
-        />
-
-        <Pressable
-          onPress={handleSubscribe}
-          disabled={isPurchasing || isLoading}
-          style={styles.ctaButton}
-        >
-          <LinearGradient
-            colors={selectedPlan === 'lifetime' ? ['#E11D48', '#8B5CF6'] : ['#8B5CF6', '#6366F1']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.ctaGradientButton}
-          >
-            {isPurchasing ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.ctaText}>
-                {selectedPlan === 'lifetime'
-                  ? `Get Lifetime · ${lifetimePrice}`
-                  : `Start Monthly · ${monthlyPrice}/mo`}
-              </Text>
-            )}
-          </LinearGradient>
-        </Pressable>
-
-        <Text style={styles.footerText}>
-          Free includes ads and limited skips.{'\n'}
-          Downloads apply only to VYBE music.
-        </Text>
-      </View>
+      {/* Success overlay */}
+      {showSuccess && (
+        <SuccessOverlay onContinue={() => router.back()} />
+      )}
     </View>
   );
 }
@@ -280,32 +368,38 @@ const styles = StyleSheet.create({
   notNowText: { color: 'rgba(255,255,255,0.7)', fontSize: 16, fontWeight: '500' },
   scrollView: { flex: 1 },
   scrollContent: { paddingHorizontal: 24 },
-  headerSection: { alignItems: 'center', paddingTop: 24, paddingBottom: 32 },
+  headerSection: { alignItems: 'center', paddingTop: 16, paddingBottom: 16 },
   crownContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     backgroundColor: 'rgba(139, 92, 246, 0.15)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 20,
+    marginBottom: 12,
   },
-  title: { color: '#FFFFFF', fontSize: 32, fontWeight: '700', letterSpacing: -0.5, marginBottom: 8 },
-  subtitle: { color: '#8B5CF6', fontSize: 18, fontWeight: '500', marginBottom: 8 },
-  supportingText: { color: 'rgba(255,255,255,0.5)', fontSize: 14 },
-  benefitsContainer: { paddingBottom: 24 },
-  benefitItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
-  benefitIconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+  title: { color: '#FFFFFF', fontSize: 26, fontWeight: '700', letterSpacing: -0.5, marginBottom: 4 },
+  subtitle: { color: '#8B5CF6', fontSize: 15, fontWeight: '500' },
+  benefitsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  benefitChip: {
+    width: '48%',
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 16,
+    gap: 8,
+    backgroundColor: 'rgba(139, 92, 246, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.2)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
-  benefitText: { color: '#FFFFFF', fontSize: 16, fontWeight: '500', flex: 1 },
-  pricingSection: { gap: 12 },
+  benefitChipText: { color: 'rgba(255,255,255,0.85)', fontSize: 12, fontWeight: '500', flex: 1 },
+  pricingSection: { gap: 8 },
   pricingCard: {
     backgroundColor: '#1A1A1A',
     borderRadius: 12,
@@ -318,7 +412,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 16,
+    padding: 12,
   },
   pricingLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   radioOuter: {
@@ -343,22 +437,14 @@ const styles = StyleSheet.create({
   pricingPrice: { color: '#FFFFFF', fontSize: 20, fontWeight: '700' },
   limitedNote: {
     color: 'rgba(255,255,255,0.35)',
-    fontSize: 12,
+    fontSize: 11,
     textAlign: 'center',
-    marginTop: 12,
-    marginBottom: 4,
+    marginTop: 8,
+    marginBottom: 0,
   },
-  ctaContainer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    paddingHorizontal: 24,
-    paddingTop: CTA_CONTAINER_PADDING,
-  },
-  ctaGradient: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 150 },
+  ctaSection: { marginTop: 16 },
   ctaButton: { borderRadius: 28, overflow: 'hidden' },
-  ctaGradientButton: { height: CTA_BUTTON_HEIGHT, alignItems: 'center', justifyContent: 'center' },
+  ctaGradientButton: { height: 52, alignItems: 'center', justifyContent: 'center' },
   ctaText: { color: '#FFFFFF', fontSize: 18, fontWeight: '700' },
   footerText: {
     color: 'rgba(255,255,255,0.35)',
@@ -367,4 +453,53 @@ const styles = StyleSheet.create({
     marginTop: 16,
     lineHeight: 18,
   },
+
+  // ── Success overlay ──────────────────────────────────────────────────────────
+  successOverlay: { zIndex: 100 },
+  successContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  successCrownWrap: { marginBottom: 28 },
+  successCrownGradient: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  successTitle: {
+    color: '#FFFFFF',
+    fontSize: 36,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+    marginBottom: 8,
+  },
+  successSubtitle: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 17,
+    marginBottom: 36,
+  },
+  successFeatures: { width: '100%', marginBottom: 40 },
+  successFeatureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  successCheck: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#8B5CF6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
+  successFeatureText: { color: '#FFFFFF', fontSize: 16, fontWeight: '500' },
+  successCtaWrap: { width: '100%' },
+  successCta: { borderRadius: 28, overflow: 'hidden' },
+  successCtaGradient: { height: 56, alignItems: 'center', justifyContent: 'center' },
+  successCtaText: { color: '#FFFFFF', fontSize: 18, fontWeight: '700' },
 });

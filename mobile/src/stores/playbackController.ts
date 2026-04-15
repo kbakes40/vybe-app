@@ -143,16 +143,55 @@ async function triggerCrossfade(fadeSecs: number) {
       playbackState: 'playing',
     });
 
+    // Same duration-override setup as playTrack — the m4a containers from
+    // YouTube downloads / streams sometimes report ~2× the real audio length.
+    // Without this the crossfaded-in track would play silence at the end and
+    // never advance properly.
+    const nextYtId = (nextTrack as Track & { youtubeId?: string; youtubeMusicId?: string }).youtubeId
+      || (nextTrack as Track & { youtubeId?: string; youtubeMusicId?: string }).youtubeMusicId;
+    const nextIsYt = (nextSource === 'youtube' || nextSource === 'youtube_music') && !!nextYtId;
+    let nextRealDurationSec = nextTrack.duration || 0;
+    if (nextIsYt && nextYtId) {
+      fetch(`${backendBase}/api/youtube/info/${nextYtId}`)
+        .then(r => r.ok ? r.json() : null)
+        .then((j: any) => {
+          const d = j?.data?.duration ?? 0;
+          if (d > 0 && (nextRealDurationSec === 0 || d < nextRealDurationSec * 0.75)) {
+            nextRealDurationSec = d;
+            if (usePlaybackController.getState().currentTrack?.id === nextTrack.id) {
+              usePlaybackController.setState({ duration: d });
+            }
+          }
+        })
+        .catch(() => {});
+    }
+
     // Wire status updates for the incoming track
     newSound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
       const { currentTrack } = usePlaybackController.getState();
       if (currentTrack?.id !== nextTrack.id) return;
       if (status.isLoaded) {
+        const progressSec = status.positionMillis / 1000;
+        const rawDurationSec = (status.durationMillis ?? 0) / 1000;
+        const overrideDuration =
+          nextIsYt && nextRealDurationSec > 0 && rawDurationSec > nextRealDurationSec * 1.5;
+        const durationSec = overrideDuration ? nextRealDurationSec : rawDurationSec;
         usePlaybackController.setState({
-          progress: status.positionMillis / 1000,
-          duration: (status.durationMillis ?? 0) / 1000,
+          progress: progressSec,
+          duration: durationSec,
           playbackState: status.isPlaying ? 'playing' : 'paused',
         });
+        // Force-advance when the real audio has run out but AVPlayer is still
+        // playing silence inside the inflated container.
+        if (overrideDuration && progressSec >= nextRealDurationSec - 0.5) {
+          const { repeatMode: rm } = usePlaybackController.getState();
+          if (rm === 'one') { newSound.setPositionAsync(0).catch(() => {}); }
+          else {
+            usePlaybackController.setState({ playbackState: 'ended' });
+            usePlaybackController.getState().next();
+          }
+          return;
+        }
         if (status.didJustFinish) {
           const { repeatMode: rm } = usePlaybackController.getState();
           if (rm === 'one') {
@@ -367,6 +406,10 @@ interface PlaybackControllerState {
   lastProgressTime: number;
   silentRetryCount: number;
 
+  // AirPlay route state — set by the native onAirPlayConnected/Disconnected
+  // events. Used by the top-right AirPlay pill on the root layout.
+  isAirPlayConnected: boolean;
+
   // Actions
   playTrack: (track: Track, queue?: Track[]) => Promise<void>;
   play: () => Promise<void>;
@@ -472,12 +515,13 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
   isShuffled: false,
   repeatMode: 'off',
   volume: 1,
-  likedTracks: new Set(['t1', 't3', 't5', 't7', 't9', 't11', 't13', 't15', 't17', 't19', 't21', 'yt2', 'yt4', 'sc2', 'sc4']),
+  likedTracks: new Set<string>(),
   preparedTrackId: null,
   pendingTrackAfterAd: null,
   pendingQueueAfterAd: null,
   lastProgressTime: 0,
   silentRetryCount: 0,
+  isAirPlayConnected: false,
 
   playTrack: async (track: Track, queue?: Track[]) => {
     // Guard against event objects being passed as track
@@ -576,8 +620,31 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     if (track.audioUrl?.startsWith('file://')) {
       const ytVideoIdForDownload = track.youtubeId || track.youtubeMusicId;
       const isYt = (source === 'youtube' || source === 'youtube_music') && !!ytVideoIdForDownload;
-      const realDurationSec = track.duration || 0;
+      // Mutable so the background /info fetch below can correct an inflated
+      // value without re-creating the sound. The status callback reads this
+      // by closure so updates take effect on the next status tick.
+      let realDurationSec = track.duration || 0;
       if (isYt && realDurationSec > 0) set({ duration: realDurationSec });
+
+      // YouTube/YT Music downloads sometimes store an inflated duration that
+      // matches the m4a container's bogus mvhd value. Fetch the truth from
+      // /info in the background — non-blocking so play is still instant.
+      // If we get a real duration that's clearly smaller (<0.75× stored),
+      // overwrite realDurationSec so the override logic in the status
+      // callback can trigger end-of-track at the correct point.
+      if (isYt && ytVideoIdForDownload) {
+        const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
+        fetch(`${backendBase}/api/youtube/info/${ytVideoIdForDownload}`)
+          .then(r => r.ok ? r.json() : null)
+          .then((j: any) => {
+            const d = j?.data?.duration ?? 0;
+            if (d > 0 && (realDurationSec === 0 || d < realDurationSec * 0.75)) {
+              realDurationSec = d;
+              if (get().currentTrack?.id === track.id) set({ duration: d });
+            }
+          })
+          .catch(() => {});
+      }
 
       try {
         const { sound, status } = await Audio.Sound.createAsync(
@@ -1365,6 +1432,7 @@ if (Platform.OS === 'ios') {
       airplayEmitter.addListener('onAirPlayConnected', () => {
         const { currentTrack, progress, duration, playbackState } = usePlaybackController.getState();
         console.log('[AirPlay] 🎵 onAirPlayConnected fired. currentTrack:', currentTrack?.title, 'artwork:', currentTrack?.artwork);
+        usePlaybackController.setState({ isAirPlayConnected: true });
         if (currentTrack) {
           console.log('[AirPlay] Connected — re-pushing full Now Playing info + artwork');
           updateNowPlaying({
@@ -1379,6 +1447,10 @@ if (Platform.OS === 'ios') {
             setNowPlayingArtwork(currentTrack.artwork);
           }
         }
+      });
+      airplayEmitter.addListener('onAirPlayDisconnected', () => {
+        console.log('[AirPlay] 🔇 onAirPlayDisconnected fired');
+        usePlaybackController.setState({ isAirPlayConnected: false });
       });
     }
   } catch (e) {

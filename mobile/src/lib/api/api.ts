@@ -7,12 +7,32 @@ interface ApiResponse<T> {
 }
 
 const baseUrl = process.env.EXPO_PUBLIC_BACKEND_URL!;
+const contentUrl = process.env.EXPO_PUBLIC_CONTENT_URL || baseUrl;
+
+// Routes that hit the content-only backend (playlists, discover, auth, etc).
+// Anything not in this list goes to the original backend (yt-dlp playback).
+const CONTENT_PREFIXES = [
+  "/api/auth/",
+  "/api/me",
+  "/api/user/",
+  "/api/vip/",
+  "/api/spotify/",
+  "/api/freepd/",
+  "/api/discover/",
+  "/api/discovery/",
+  "/api/youtube/playlists",
+  "/api/youtube/playlist-tracks",
+  "/api/soundcloud/mixes",
+];
+
+const resolveBase = (url: string) =>
+  CONTENT_PREFIXES.some(p => url.startsWith(p)) ? contentUrl : baseUrl;
 
 const request = async <T>(
   url: string,
   options: { method?: string; body?: string } = {}
 ): Promise<T> => {
-  const response = await fetch(`${baseUrl}${url}`, {
+  const response = await fetch(`${resolveBase(url)}${url}`, {
     ...options,
     credentials: "include",
     headers: {

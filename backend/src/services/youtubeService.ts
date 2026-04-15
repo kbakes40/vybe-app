@@ -489,8 +489,14 @@ const CURATED_PLAYLISTS_META: { id: string; name: string; category?: string; sec
   { id: 'PL2CBngpmiUgUJEyRPTK46HjIUhAGV8v9m', name: 'Chill Pop Playlist', section: 'popular', category: 'Chill / Relaxed' },
   { id: 'PLMmqTuUsDkRJKVeUDJVjR9IRQRLTLrfu9', name: 'Chill Pop 2026', section: 'popular', category: 'Chill / Relaxed' },
   { id: 'PL4QNnZJr8sRPmuz_d87ygGR6YAYEF-fmw', name: 'Best Relaxing Pop', section: 'popular', category: 'Chill / Relaxed' },
+  { id: 'RDCLAK5uy_mSaYvcoVvag_GrAc593WX3MoxTLvUXYT8', name: 'Relaxing Energy', section: 'popular', category: 'Chill / Relaxed' },
   // Workout / Energy
   { id: 'PLnfcpZm6el8i_u-S_T4Uz-NdVs4xkPS8V', name: 'Workout Songs 2026', section: 'popular', category: 'Workout / Energy' },
+  { id: 'RDTMAK5uy_n_5IN6hzAOwdCnM8D8rzrs3vDl12UcZpA', name: 'Discover Mix', section: 'popular', category: 'Workout / Energy' },
+  { id: 'RDCLAK5uy_mjFIQx6np0uEk0EFQnkGFxqR3OMxReYv0', name: 'Hip-Hop Energy', section: 'popular', category: 'Workout / Energy' },
+  { id: 'PLnfcpZm6el8gpyIi4gP-vk5kQ4J9NY55e', name: "Best 2000's Workout Throwback", section: 'popular', category: 'Workout / Energy' },
+  { id: 'PL-QvSRz8uhNGYmSIKDF57Ak5SAXQ6TKvl', name: 'Greatest Rock Workout Songs', section: 'popular', category: 'Workout / Energy' },
+  { id: 'PLu0ocO48LFms5WsI1ipaeanxqRjn2fC_5', name: 'Workout Playlist 2026 — Cardio', section: 'popular', category: 'Workout / Energy' },
 ];
 
 export interface PlaylistTrack {

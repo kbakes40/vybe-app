@@ -6,6 +6,8 @@ import {
   Pressable,
   ActivityIndicator,
   Dimensions,
+  Share,
+  Modal,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -16,10 +18,12 @@ import {
   ChevronLeft,
   Play,
   Download,
-  Bookmark,
   Share2,
   MoreVertical,
   Music,
+  Shuffle,
+  ListPlus,
+  X,
 } from 'lucide-react-native';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useDownloadsStore, downloadYouTubeTrack } from '@/stores/downloadsStore';
@@ -71,7 +75,7 @@ function toTrack(t: PlaylistTrack, playlist: CuratedPlaylist): Track {
   };
 }
 
-function YouTubeMusicBadge() {
+function VybeMusicBadge() {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
       <View style={{
@@ -86,7 +90,7 @@ function YouTubeMusicBadge() {
         }} />
       </View>
       <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15, marginLeft: 8 }}>
-        YouTube Music
+        Vybe Music
       </Text>
     </View>
   );
@@ -100,6 +104,11 @@ export default function PlaylistDetailScreen() {
   const [playlist, setPlaylist] = useState<CuratedPlaylist | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloadingAll, setDownloadingAll] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  // Recommended SoundCloud tracks based on the playlist's name keywords.
+  const [recommended, setRecommended] = useState<Track[]>([]);
+  const [recommendedLoading, setRecommendedLoading] = useState(false);
 
   const playTrack = usePlaybackController(s => s.playTrack);
   const currentTrack = usePlaybackController(s => s.currentTrack);
@@ -118,10 +127,32 @@ export default function PlaylistDetailScreen() {
           const hit = list?.find(p => p.playlistId === id);
           if (hit) { setPlaylist(hit); setLoading(false); return; }
         }
-        // 2. Fall back to fresh API.
+        // 2. Try the curated playlists endpoint (only knows about the hand-picked
+        // ones in the backend config).
         const all = await api.get<CuratedPlaylist[]>('/api/youtube/playlists');
         const found = all?.find(p => p.playlistId === id);
-        if (found) setPlaylist(found);
+        if (found) { setPlaylist(found); return; }
+
+        // 3. Fall back to /playlist-tracks for arbitrary YouTube playlist IDs
+        // (Era Hits cards, anything else passed through). Uses yt-dlp on the
+        // backend so it works for any public YouTube/YT Music playlist.
+        const tracksData = await api.get<Array<{ videoId: string; title: string; channel: string; thumbnail: string; duration: number }>>(`/api/youtube/playlist-tracks?listId=${encodeURIComponent(id)}`);
+        if (tracksData && tracksData.length > 0) {
+          // Reshape to the CuratedPlaylist contract this screen expects.
+          const reshaped: CuratedPlaylist = {
+            playlistId: id,
+            name: 'Playlist',
+            thumbnailUrl: tracksData[0]?.thumbnail ?? '',
+            tracks: tracksData.map(t => ({
+              videoId: t.videoId,
+              title: t.title,
+              channelName: t.channel,
+              thumbnailUrl: t.thumbnail,
+              publishedAt: '',
+            })),
+          };
+          setPlaylist(reshaped);
+        }
       } catch (e) {
         console.error('[PlaylistDetail] load error:', e);
       } finally {
@@ -132,6 +163,45 @@ export default function PlaylistDetailScreen() {
   }, [id]);
 
   const tracks = playlist ? playlist.tracks.map(t => toTrack(t, playlist)) : [];
+
+  // Lazy-fetch SoundCloud recommendations once playlist name is known.
+  useEffect(() => {
+    if (!playlist?.name) return;
+    let cancelled = false;
+    setRecommendedLoading(true);
+    // Drop common filler words ("essentials", "playlist", "mix", etc.) so we
+    // pass the actual genre/vibe terms to SoundCloud.
+    const cleaned = playlist.name
+      .toLowerCase()
+      .replace(/essentials|playlist|mix|hits|classics|greatest|the best of/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim() || playlist.name;
+
+    const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
+    fetch(`${backendBase}/api/soundcloud/search?q=${encodeURIComponent(cleaned)}&maxResults=20`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(json => {
+        if (cancelled) return;
+        const items = (json?.data ?? []) as Array<{ trackId: string; title: string; artist: string; artwork: string; duration: number; soundcloudUrl: string }>;
+        const mapped: Track[] = items.map(t => ({
+          id: `sc-${t.trackId}`,
+          title: t.title,
+          artist: t.artist,
+          artwork: t.artwork,
+          duration: t.duration,
+          isLiked: false,
+          source: 'soundcloud' as const,
+          soundcloudUrl: t.soundcloudUrl,
+          audioUrl: '',
+          artistId: '', album: '', albumId: '',
+        }));
+        setRecommended(mapped);
+      })
+      .catch(() => { /* silent — non-essential */ })
+      .finally(() => { if (!cancelled) setRecommendedLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [playlist?.name]);
 
   // Pre-warm CDN URL cache for the first 8 tracks so playback is instant
   useEffect(() => {
@@ -145,18 +215,45 @@ export default function PlaylistDetailScreen() {
     });
   }, [tracks.length]);
 
+  // No more auto-push to the full-screen nowPlaying view on play. Music
+  // starts in the background, the MiniPlayer shows at the bottom, and the
+  // user stays on whatever screen they were on (matches Spotify's behavior
+  // and keeps Apple TV / AirPlay from being interrupted by a black screen).
   const handlePlayAll = useCallback(() => {
     if (tracks.length === 0) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     playTrack(tracks[0], tracks);
-    router.push('/nowPlaying');
-  }, [tracks, playTrack, router]);
+  }, [tracks, playTrack]);
 
   const handlePlayTrack = useCallback((track: Track) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     playTrack(track, tracks);
-    router.push('/nowPlaying');
-  }, [tracks, playTrack, router]);
+  }, [tracks, playTrack]);
+
+  const handleShare = useCallback(async () => {
+    if (!playlist) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try {
+      const url = `https://music.youtube.com/playlist?list=${playlist.playlistId}`;
+      await Share.share({ message: `${playlist.name}\n${url}`, url });
+    } catch {}
+  }, [playlist]);
+
+  const addToQueue = usePlaybackController(s => s.addToQueue);
+  const handleShuffle = useCallback(() => {
+    if (tracks.length === 0) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setMoreOpen(false);
+    const shuffled = [...tracks].sort(() => Math.random() - 0.5);
+    playTrack(shuffled[0], shuffled);
+  }, [tracks, playTrack]);
+
+  const handleAddAllToQueue = useCallback(() => {
+    if (tracks.length === 0) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setMoreOpen(false);
+    tracks.forEach(t => addToQueue(t));
+  }, [tracks, addToQueue]);
 
   const handleDownloadAll = useCallback(async () => {
     if (!playlist || downloadingAll) return;
@@ -268,7 +365,7 @@ export default function PlaylistDetailScreen() {
           </Text>
 
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 10 }}>
-            <YouTubeMusicBadge />
+            <VybeMusicBadge />
           </View>
 
           <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginTop: 6 }}>
@@ -293,18 +390,6 @@ export default function PlaylistDetailScreen() {
               }
             </Pressable>
 
-            {/* Save */}
-            <Pressable
-              onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-              style={{
-                width: 44, height: 44, borderRadius: 22,
-                backgroundColor: 'rgba(255,255,255,0.1)',
-                alignItems: 'center', justifyContent: 'center',
-              }}
-            >
-              <Bookmark size={20} color="#fff" />
-            </Pressable>
-
             {/* Play all — big center button */}
             <Pressable
               onPress={handlePlayAll}
@@ -323,7 +408,7 @@ export default function PlaylistDetailScreen() {
 
             {/* Share */}
             <Pressable
-              onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+              onPress={handleShare}
               style={{
                 width: 44, height: 44, borderRadius: 22,
                 backgroundColor: 'rgba(255,255,255,0.1)',
@@ -335,7 +420,7 @@ export default function PlaylistDetailScreen() {
 
             {/* More */}
             <Pressable
-              onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setMoreOpen(true); }}
               style={{
                 width: 44, height: 44, borderRadius: 22,
                 backgroundColor: 'rgba(255,255,255,0.1)',
@@ -346,6 +431,32 @@ export default function PlaylistDetailScreen() {
             </Pressable>
           </View>
         </View>
+
+        {/* More-actions bottom sheet */}
+        <Modal visible={moreOpen} transparent animationType="slide" onRequestClose={() => setMoreOpen(false)}>
+          <Pressable style={{ flex: 1, backgroundColor: 'transparent' }} onPress={() => setMoreOpen(false)}>
+            <View style={{ flex: 1 }} />
+            <Pressable onPress={() => {}} style={{ backgroundColor: '#1a1a1a', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingBottom: insets.bottom + 16 }}>
+              <View style={{ width: 36, height: 4, backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 2, alignSelf: 'center', marginTop: 10, marginBottom: 8 }} />
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12 }}>
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }} numberOfLines={1}>{playlist.name}</Text>
+                <Pressable onPress={() => setMoreOpen(false)} hitSlop={10}><X size={22} color="rgba(255,255,255,0.6)" /></Pressable>
+              </View>
+              <Pressable onPress={handleShuffle} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 18 }}>
+                <Shuffle size={22} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '500', marginLeft: 16 }}>Shuffle play</Text>
+              </Pressable>
+              <Pressable onPress={handleAddAllToQueue} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 18 }}>
+                <ListPlus size={22} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '500', marginLeft: 16 }}>Add all to queue</Text>
+              </Pressable>
+              <Pressable onPress={() => { setMoreOpen(false); handleShare(); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 18 }}>
+                <Share2 size={22} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '500', marginLeft: 16 }}>Share playlist</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
 
         {/* Track List */}
         <View style={{ marginTop: 24, paddingHorizontal: 16 }}>
@@ -400,6 +511,41 @@ export default function PlaylistDetailScreen() {
             );
           })}
         </View>
+
+        {/* Recommended — SoundCloud tracks similar to this playlist */}
+        {recommended.length > 0 || recommendedLoading ? (
+          <View style={{ marginTop: 32, paddingHorizontal: 16 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+              <View style={{ width: 18, height: 18, borderRadius: 4, backgroundColor: '#FF5500', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+                <Music size={11} color="#fff" strokeWidth={2.5} />
+              </View>
+              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Recommended</Text>
+            </View>
+            <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginBottom: 12 }}>Similar tracks from Vybe Waves</Text>
+            {recommendedLoading && recommended.length === 0 ? (
+              <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                <ActivityIndicator color="#FF5500" />
+              </View>
+            ) : (
+              recommended.map((track) => (
+                <Pressable
+                  key={track.id}
+                  onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, recommended); }}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 4, borderRadius: 8 }}
+                >
+                  <Image source={{ uri: track.artwork }} style={{ width: 50, height: 50, borderRadius: 6 }} contentFit="cover" />
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={{ color: '#fff', fontWeight: '500', fontSize: 14 }} numberOfLines={1}>{track.title}</Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{track.artist}</Text>
+                  </View>
+                  <View style={{ padding: 4 }}>
+                    <DownloadButton track={track} size={26} />
+                  </View>
+                </Pressable>
+              ))
+            )}
+          </View>
+        ) : null}
       </ScrollView>
 
     </View>
