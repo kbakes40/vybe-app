@@ -482,8 +482,17 @@ const CURATED_PLAYLISTS_META: { id: string; name: string; category?: string; sec
 
   // ── Popular Playlists ──────────────────────────────────────────────────────
   // Hits / Mainstream
+  { id: 'PLDIoUOhQQPlXr63I_vwF9GD8sAKh77dWU', name: 'Top Songs 2026', section: 'popular', category: 'Hits / Mainstream' },
   { id: 'RDCLAK5uy_kmPRjHDECIcuVwnKsx2Ng7fyNgFKWNJFs', name: 'The Hit List', section: 'popular', category: 'Hits / Mainstream' },
   { id: 'PLC5bCqVUrpkI9d7ATvKLY5b7v66zGbH2a', name: 'Top 100 Pop Hits 2026', section: 'popular', category: 'Hits / Mainstream' },
+  { id: 'PLmXxqSJJq-yUvMWKuZQAB_8yxnjZaOZUp', name: '90s Hits — Best 90s Music', section: 'popular', category: 'Hits / Mainstream' },
+  { id: 'OLAK5uy_lOObWACxntfFYF4g_NOhFNEsk6nHdWhCM', name: "Today's 50 Global Top Hits 2024/2025", section: 'popular', category: 'Hits / Mainstream' },
+  { id: 'PLplXQ2cg9B_qrCVd1J_iId5SvP8Kf_BfS', name: 'Top Songs of the Decade (2010-2019)', section: 'popular', category: 'Hits / Mainstream' },
+  { id: 'RDWNyduKrT_qI', name: 'Trending Pop Hits 2026 — Top Music Mix', section: 'popular', category: 'Hits / Mainstream' },
+  // ── Country ────────────────────────────────────────────────────────────────
+  { id: 'PLMmqTuUsDkRKv4ulZiAYRoWLu1184CAkt', name: "Today's Country Hits 2026 — New Country Songs", section: 'popular', category: 'Country' },
+  { id: 'PLN_YZjgdIDCfYxxFZW4TFKiFNraH6d9hK', name: 'Country Music 2018-2026 — Best Country Songs', section: 'popular', category: 'Country' },
+  { id: 'RDYbLV7QSD0TE', name: 'Country Music 2025 — Stapleton, Combs, Wallen', section: 'popular', category: 'Country' },
   // Chill / Relaxed — Smooth Jazz Saxophone single-video mix intentionally
   // listed first so it appears at the top of the Chill row on home.
   { id: 'RDD_uLM5i0Z4c', name: 'Endless Sunday 😌', section: 'popular', category: 'Chill / Relaxed' },
@@ -495,7 +504,7 @@ const CURATED_PLAYLISTS_META: { id: string; name: string; category?: string; sec
   { id: 'OLAK5uy_lIdOeAmiobsELW2bY-02s66FMNYS8lzRo', name: 'The Echo of the Big Bang — Lofi Chillhop', section: 'popular', category: 'Chill / Relaxed' },
   { id: 'PL2CBngpmiUgUJEyRPTK46HjIUhAGV8v9m', name: 'Chill Pop Playlist', section: 'popular', category: 'Chill / Relaxed' },
   { id: 'PLMmqTuUsDkRJKVeUDJVjR9IRQRLTLrfu9', name: 'Chill Pop 2026', section: 'popular', category: 'Chill / Relaxed' },
-  { id: 'PL4QNnZJr8sRPmuz_d87ygGR6YAYEF-fmw', name: 'Best Relaxing Pop', section: 'popular', category: 'Chill / Relaxed' },
+  { id: 'PL4QNnZJr8sRPmuz_d87ygGR6YAYEF-fmw', name: 'Chill Songs 2026 — Best Relaxing Pop Hits', section: 'popular', category: 'Chill / Relaxed' },
   { id: 'RDCLAK5uy_mSaYvcoVvag_GrAc593WX3MoxTLvUXYT8', name: 'Relaxing Energy', section: 'popular', category: 'Chill / Relaxed' },
   // Workout / Energy
   { id: 'PLnfcpZm6el8i_u-S_T4Uz-NdVs4xkPS8V', name: 'Workout Songs 2026', section: 'popular', category: 'Workout / Energy' },
