@@ -452,7 +452,6 @@ export async function getHiddenGems(
 const CURATED_PLAYLISTS_META: { id: string; name: string; category?: string; section?: string }[] = [
   // ── All-time Essentials (default section) ─────────────────────────────────
   { id: 'RDCLAK5uy_m7EF_vYZXBhXNuduyXmhT00DYapc8cobs', name: 'Pop Essentials' },
-  { id: 'RDCLAK5uy_nZiG9ehz_MQoWQxY5yElsLHCcG0tv9PRg', name: 'Hip-Hop Essentials' },
   { id: 'RDCLAK5uy_kZFOUXnpa_oJMql3vYc-jq6yVxwqhdkrM', name: 'Rock Classics' },
   { id: 'RDCLAK5uy_mv1P2oVguxLCIDXavV-jcDG1lQyukfSpo', name: 'R&B Essentials' },
   { id: 'RDCLAK5uy_kP2172rQNb3KFXz880xp6M98R_ME5CIKA', name: '80s Hits' },
@@ -485,7 +484,15 @@ const CURATED_PLAYLISTS_META: { id: string; name: string; category?: string; sec
   // Hits / Mainstream
   { id: 'RDCLAK5uy_kmPRjHDECIcuVwnKsx2Ng7fyNgFKWNJFs', name: 'The Hit List', section: 'popular', category: 'Hits / Mainstream' },
   { id: 'PLC5bCqVUrpkI9d7ATvKLY5b7v66zGbH2a', name: 'Top 100 Pop Hits 2026', section: 'popular', category: 'Hits / Mainstream' },
-  // Chill / Relaxed
+  // Chill / Relaxed — Smooth Jazz Saxophone single-video mix intentionally
+  // listed first so it appears at the top of the Chill row on home.
+  { id: 'RDD_uLM5i0Z4c', name: 'Endless Sunday 😌', section: 'popular', category: 'Chill / Relaxed' },
+  { id: 'RDU3n31M81RpE', name: 'Smooth Jazz Saxophone — Cool Cafe Vibes', section: 'popular', category: 'Chill / Relaxed' },
+  { id: 'PLiy0XOfUv4hFHmPs0a8RqkDzfT-2nw7WV', name: 'Smooth Jazz Instrumentals', section: 'popular', category: 'Chill / Relaxed' },
+  { id: 'PLWtAfhR9YD1wdKOTDqCFYoFUcThRCfAjp', name: 'Best Jazz Tracks — Super Smooth Jazz', section: 'popular', category: 'Chill / Relaxed' },
+  { id: 'OLAK5uy_nwlgAj-NnMLvn28RwExWNHnvAY1WW4HHQ', name: 'Chillhop Lofi Beats — Lofi Study Bandit', section: 'popular', category: 'Chill / Relaxed' },
+  { id: 'OLAK5uy_lim2kF6cTIAODUmvwQiqLMZzN3-lHg1kk', name: 'Lofi Hip-Hop Beats', section: 'popular', category: 'Chill / Relaxed' },
+  { id: 'OLAK5uy_lIdOeAmiobsELW2bY-02s66FMNYS8lzRo', name: 'The Echo of the Big Bang — Lofi Chillhop', section: 'popular', category: 'Chill / Relaxed' },
   { id: 'PL2CBngpmiUgUJEyRPTK46HjIUhAGV8v9m', name: 'Chill Pop Playlist', section: 'popular', category: 'Chill / Relaxed' },
   { id: 'PLMmqTuUsDkRJKVeUDJVjR9IRQRLTLrfu9', name: 'Chill Pop 2026', section: 'popular', category: 'Chill / Relaxed' },
   { id: 'PL4QNnZJr8sRPmuz_d87ygGR6YAYEF-fmw', name: 'Best Relaxing Pop', section: 'popular', category: 'Chill / Relaxed' },
