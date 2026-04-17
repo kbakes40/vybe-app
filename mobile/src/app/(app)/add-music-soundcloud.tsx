@@ -1,22 +1,61 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View, Text, Pressable, TextInput, ScrollView,
   ActivityIndicator, KeyboardAvoidingView, Platform, Keyboard,
+  Modal, StyleSheet, Share,
 } from 'react-native';
+import { BlurView } from 'expo-blur';
+import { Svg, Circle } from 'react-native-svg';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
-import { X, Link2, Search, Play } from 'lucide-react-native';
+import { X, Link2, Search, Play, Download, Share2, MoreVertical, Library, User, FileText } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
-import { DownloadButton } from '@/components/DownloadButton';
+import { DownloadButton, GhostSweepRing } from '@/components/DownloadButton';
+import { useDownloadsStore, downloadSoundCloudTrack } from '@/stores/downloadsStore';
+import { useUserPlaylistStore } from '@/stores/userPlaylistStore';
 import { LoadingRing } from '@/components/LoadingRing';
 import { Track } from '@/types/music';
 import { usePlaybackController } from '@/stores/playbackController';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
+const WAVES_ACTION = 48;
+
+function MiniShadowProgressRing({ size, progress }: { size: number; progress: number }) {
+  const STROKE = Math.max(1, size * 0.045);
+  const R = (size - STROKE) / 2;
+  const C = 2 * Math.PI * R;
+  const clamped = Math.min(1, Math.max(0, progress));
+  const strokeDashoffset = C * (1 - clamped);
+  return (
+    <View style={{ width: size, height: size }}>
+      <Svg width={size} height={size}>
+        <Circle cx={size / 2} cy={size / 2} r={R} stroke="rgba(255,255,255,0.1)" strokeWidth={STROKE} fill="none" />
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={R}
+          stroke="rgba(255,255,255,0.68)"
+          strokeWidth={STROKE}
+          fill="none"
+          strokeDasharray={`${C}`}
+          strokeDashoffset={strokeDashoffset}
+          strokeLinecap="round"
+          rotation="-90"
+          origin={`${size / 2}, ${size / 2}`}
+        />
+      </Svg>
+    </View>
+  );
+}
+
+const wavesSheetStyles = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 16 },
+  label: { color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.5, marginLeft: 16 },
+});
 
 // ── Icon ──────────────────────────────────────────────────────────────────────
 
@@ -61,7 +100,11 @@ function PasteSection() {
   const [playlistTracks, setPlaylistTracks] = useState<SCImportTrack[]>([]);
   const [playlistTitle, setPlaylistTitle] = useState('');
   const playTrack = usePlaybackController(s => s.playTrack);
-  const router = useRouter();
+  const isTrackDownloaded = useDownloadsStore(s => s.isTrackDownloaded);
+  const [wavesDlAll, setWavesDlAll] = useState(false);
+  const [wavesDlProgress, setWavesDlProgress] = useState(0);
+  const [wavesMoreOpen, setWavesMoreOpen] = useState(false);
+  const [wavesCreditsOpen, setWavesCreditsOpen] = useState(false);
 
   const clear = () => { setScInfo(null); setError(null); setRelatedTracks([]); setPlayingId(null); setPlaylistTracks([]); setPlaylistTitle(''); };
 
@@ -71,7 +114,7 @@ function PasteSection() {
     clear(); setLoading(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      if (!target.includes('soundcloud.com/')) throw new Error('Paste a SoundCloud URL');
+      if (!target.includes('soundcloud.com/')) throw new Error('Paste a Vybe Waves URL');
 
       const isPlaylistUrl = target.includes('/sets/');
 
@@ -97,7 +140,7 @@ function PasteSection() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url: target, tags: [] }),
         });
-        if (!resp.ok) throw new Error('Failed to import SoundCloud track');
+        if (!resp.ok) throw new Error('Failed to import track');
         const json = await resp.json();
         const track: SCImportTrack = json.data?.track ?? json.track;
         setScInfo(track);
@@ -138,6 +181,78 @@ function PasteSection() {
     soundcloudUrl: scInfo.soundcloudUrl ?? url,
   } : null;
 
+  const wavesQueue = useMemo((): Track[] => {
+    if (playlistTracks.length === 0) return [];
+    return playlistTracks.map(t => ({
+      ...t,
+      artistId: '',
+      album: '',
+      albumId: '',
+      isLiked: false,
+      source: 'soundcloud' as const,
+      audioUrl: t.soundcloudUrl ?? '',
+    } as Track));
+  }, [playlistTracks]);
+
+  const handleWavesDownloadAll = useCallback(async () => {
+    if (wavesQueue.length === 0 || wavesDlAll) return;
+    const toDownload = wavesQueue
+      .filter(t => !isTrackDownloaded(t.id) && !!t.soundcloudUrl)
+      .slice(0, 20);
+    if (toDownload.length === 0) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setWavesDlAll(true);
+    setWavesDlProgress(0);
+    const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL!;
+    const n = toDownload.length;
+    try {
+      for (let i = 0; i < n; i++) {
+        const track = toDownload[i];
+        setWavesDlProgress(i / n);
+        try {
+          await downloadSoundCloudTrack(
+            track as Track & { soundcloudUrl: string },
+            backendUrl,
+            p => setWavesDlProgress((i + p) / n),
+          );
+        } catch (err) {
+          console.warn('[VybeWaves] batch download failed', track.title, err);
+        }
+      }
+      setWavesDlProgress(1);
+    } finally {
+      setWavesDlAll(false);
+      setWavesDlProgress(0);
+    }
+  }, [wavesQueue, wavesDlAll, isTrackDownloaded]);
+
+  const handleWavesPlayAll = useCallback(() => {
+    if (wavesQueue.length === 0) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    playTrack(wavesQueue[0], wavesQueue);
+  }, [wavesQueue, playTrack]);
+
+  const handleWavesShare = useCallback(async () => {
+    if (wavesQueue.length === 0) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try {
+      const lines = wavesQueue.slice(0, 12).map(t => `• ${t.title} — ${t.artist}`).join('\n');
+      const more = wavesQueue.length > 12 ? `\n…and ${wavesQueue.length - 12} more` : '';
+      await Share.share({ message: `${playlistTitle}\n${lines}${more}` });
+    } catch { /* user cancelled */ }
+  }, [wavesQueue, playlistTitle]);
+
+  const handleWavesAddLibrary = useCallback(() => {
+    if (wavesQueue.length === 0) return;
+    const { playlists, createPlaylist, addTracksToPlaylist } = useUserPlaylistStore.getState();
+    const libName = `Library · ${playlistTitle}`;
+    const existing = playlists.find(p => p.name === libName);
+    if (existing) addTracksToPlaylist(existing.id, wavesQueue);
+    else createPlaylist(libName, wavesQueue);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setWavesMoreOpen(false);
+  }, [wavesQueue, playlistTitle]);
+
   return (
     <View style={{ marginBottom: 8 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12 }}>
@@ -146,7 +261,7 @@ function PasteSection() {
         </View>
         <View>
           <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>Paste a Link</Text>
-          <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>SoundCloud track URL</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>Vybe Waves track URL</Text>
         </View>
       </View>
       <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, gap: 8 }}>
@@ -183,7 +298,6 @@ function PasteSection() {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
               setPlayingId(scTrack.id);
               playTrack(scTrack, [scTrack]);
-              router.push('/(app)/nowPlaying' as never);
             }}
             style={{ flexDirection: 'row', alignItems: 'center', padding: 12 }}
           >
@@ -223,8 +337,7 @@ function PasteSection() {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                       setPlayingId(t.id);
                       playTrack(t, [t]);
-                      router.push('/(app)/nowPlaying' as never);
-                    }}
+                            }}
                     style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 7 }}
                   >
                     <View style={{ position: 'relative' }}>
@@ -251,42 +364,99 @@ function PasteSection() {
       ) : null}
 
       {playlistTracks.length > 0 ? (
+        <>
         <View style={{ marginHorizontal: 16, marginTop: 12, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 12, overflow: 'hidden' }}>
-          {/* Playlist header */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', padding: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.07)' }}>
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15, textTransform: 'capitalize' }} numberOfLines={1}>{playlistTitle}</Text>
-              <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12, marginTop: 2 }}>{playlistTracks.length} tracks</Text>
-            </View>
+          <View style={{ paddingHorizontal: 12, paddingTop: 12, paddingBottom: 24, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.07)' }}>
+            <Text style={{ color: '#fff', fontWeight: '800', fontSize: 16, textTransform: 'capitalize' }} numberOfLines={2}>{playlistTitle}</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12, marginTop: 6 }}>{playlistTracks.length} tracks</Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 14, gap: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.07)' }}>
             <Pressable
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                const queue: Track[] = playlistTracks.map(t => ({
-                  ...t,
-                  artistId: '', album: '', albumId: '', isLiked: false,
-                  source: 'soundcloud' as const,
-                  audioUrl: t.soundcloudUrl ?? '',
-                }));
-                playTrack(queue[0], queue);
-                router.push('/(app)/nowPlaying' as never);
+              onPress={handleWavesDownloadAll}
+              disabled={wavesDlAll}
+              style={{
+                width: WAVES_ACTION,
+                height: WAVES_ACTION,
+                borderRadius: WAVES_ACTION / 2,
+                backgroundColor: 'rgba(255,255,255,0.1)',
+                alignItems: 'center',
+                justifyContent: 'center',
               }}
-              style={{ backgroundColor: '#FF5500', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', gap: 4 }}
             >
-              <Play size={12} color="#fff" fill="#fff" />
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Play All</Text>
+              {wavesDlAll ? (
+                wavesDlProgress <= 0.02 ? (
+                  <GhostSweepRing size={24} />
+                ) : (
+                  <MiniShadowProgressRing size={24} progress={wavesDlProgress} />
+                )
+              ) : (
+                <Download size={20} color="#FFFFFF" strokeWidth={2} />
+              )}
+            </Pressable>
+            <Pressable
+              onPress={handleWavesPlayAll}
+              style={{
+                flex: 1,
+                height: WAVES_ACTION,
+                borderRadius: WAVES_ACTION / 2,
+                backgroundColor: 'rgba(255,255,255,0.9)',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexDirection: 'row',
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.3,
+                shadowRadius: 10,
+                elevation: 10,
+              }}
+            >
+              <Play size={20} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 2 }} />
+              <Text style={{ color: '#0A0A0A', fontWeight: '800', fontSize: 14, marginLeft: 8 }}>Play All</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleWavesShare}
+              style={{
+                width: WAVES_ACTION,
+                height: WAVES_ACTION,
+                borderRadius: WAVES_ACTION / 2,
+                backgroundColor: 'rgba(255,255,255,0.1)',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Share2 size={20} color="#FFFFFF" strokeWidth={2} />
+            </Pressable>
+            <Pressable
+              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setWavesMoreOpen(true); }}
+              style={{
+                width: WAVES_ACTION,
+                height: WAVES_ACTION,
+                borderRadius: WAVES_ACTION / 2,
+                backgroundColor: 'rgba(255,255,255,0.1)',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <MoreVertical size={20} color="#FFFFFF" strokeWidth={2} />
             </Pressable>
           </View>
           {/* Track list */}
           {playlistTracks.map((t, i) => {
             const track: Track = {
               ...t,
-              artistId: '', album: '', albumId: '', isLiked: false,
+              artistId: '',
+              album: '',
+              albumId: '',
+              isLiked: false,
               source: 'soundcloud' as const,
               audioUrl: t.soundcloudUrl ?? '',
             };
             const queue: Track[] = playlistTracks.map(pt => ({
               ...pt,
-              artistId: '', album: '', albumId: '', isLiked: false,
+              artistId: '',
+              album: '',
+              albumId: '',
+              isLiked: false,
               source: 'soundcloud' as const,
               audioUrl: pt.soundcloudUrl ?? '',
             }));
@@ -297,8 +467,7 @@ function PasteSection() {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   setPlayingId(t.id);
                   playTrack(track, queue);
-                  router.push('/(app)/nowPlaying' as never);
-                }}
+                    }}
                 style={({ pressed }) => ({
                   flexDirection: 'row', alignItems: 'center',
                   paddingHorizontal: 12, paddingVertical: 8,
@@ -325,6 +494,84 @@ function PasteSection() {
             );
           })}
         </View>
+
+        <Modal visible={wavesMoreOpen} transparent animationType="slide" onRequestClose={() => setWavesMoreOpen(false)}>
+          <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+            <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setWavesMoreOpen(false)}>
+              <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.5)' }]} />
+            </Pressable>
+            <View style={{ borderTopLeftRadius: 20, borderTopRightRadius: 20, overflow: 'hidden', paddingBottom: 32, backgroundColor: '#121212' }}>
+              <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFillObject} />
+              <View style={{ backgroundColor: 'rgba(18,18,18,0.92)' }}>
+                <View style={{ width: 40, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, alignSelf: 'center', marginTop: 10, marginBottom: 10 }} />
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 }}>
+                  <Text style={{ color: '#fff', fontSize: 17, fontWeight: '800', flex: 1, marginRight: 12 }} numberOfLines={1}>{playlistTitle}</Text>
+                  <Pressable onPress={() => setWavesMoreOpen(false)} hitSlop={12}><X size={22} color="rgba(255,255,255,0.55)" /></Pressable>
+                </View>
+                <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.1)', marginHorizontal: 16 }} />
+                <Pressable onPress={handleWavesAddLibrary} style={wavesSheetStyles.row}>
+                  <Library size={22} color="#fff" strokeWidth={2} />
+                  <Text style={wavesSheetStyles.label}>Add to Library</Text>
+                </Pressable>
+                <Pressable style={wavesSheetStyles.row} disabled>
+                  <User size={22} color="rgba(255,255,255,0.3)" strokeWidth={2} />
+                  <Text style={[wavesSheetStyles.label, { color: 'rgba(255,255,255,0.35)' }]}>Go to Artist</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    setWavesMoreOpen(false);
+                    setWavesCreditsOpen(true);
+                  }}
+                  style={wavesSheetStyles.row}
+                >
+                  <FileText size={22} color="#fff" strokeWidth={2} />
+                  <Text style={wavesSheetStyles.label}>Show Credits</Text>
+                </Pressable>
+                <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.1)', marginHorizontal: 16, marginVertical: 4 }} />
+                <Pressable
+                  onPress={() => {
+                    setWavesMoreOpen(false);
+                    handleWavesShare();
+                  }}
+                  style={wavesSheetStyles.row}
+                >
+                  <Share2 size={22} color="#fff" strokeWidth={2} />
+                  <Text style={wavesSheetStyles.label}>Share playlist</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal visible={wavesCreditsOpen} transparent animationType="fade" onRequestClose={() => setWavesCreditsOpen(false)}>
+          <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }}>
+            <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setWavesCreditsOpen(false)}>
+              <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.65)' }]} />
+            </Pressable>
+            <View style={{ maxHeight: '70%', backgroundColor: '#121212', borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.12)', overflow: 'hidden' }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.1)' }}>
+                <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>Credits</Text>
+                <Pressable onPress={() => setWavesCreditsOpen(false)} hitSlop={12}><X size={22} color="rgba(255,255,255,0.55)" /></Pressable>
+              </View>
+              <ScrollView style={{ paddingHorizontal: 16, paddingVertical: 12 }} showsVerticalScrollIndicator={false}>
+                {playlistTracks.map((t, i) => (
+                  <View
+                    key={t.id}
+                    style={{
+                      paddingVertical: 10,
+                      borderBottomWidth: i < playlistTracks.length - 1 ? StyleSheet.hairlineWidth : 0,
+                      borderBottomColor: 'rgba(255,255,255,0.08)',
+                    }}
+                  >
+                    <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }} numberOfLines={2}>{t.title}</Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 4 }}>{t.artist}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+        </>
       ) : null}
     </View>
   );
@@ -367,7 +614,7 @@ function SearchSection() {
             onChangeText={setQuery}
             onSubmitEditing={handleSearch}
             returnKeyType="search"
-            placeholder="Search SoundCloud..."
+            placeholder="Search Vybe Waves..."
             placeholderTextColor="rgba(255,255,255,0.3)"
             autoCapitalize="none" autoCorrect={false}
             style={{ flex: 1, color: '#fff', fontSize: 13, marginLeft: 8 }}
@@ -449,7 +696,7 @@ export default function AddMusicSoundCloudScreen() {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <SoundCloudIcon size={28} />
           <View>
-            <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>SoundCloud</Text>
+            <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>Vybe Waves</Text>
             <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginTop: 1 }}>Search and download tracks</Text>
           </View>
         </View>

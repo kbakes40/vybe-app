@@ -1,5 +1,6 @@
 import "@vibecodeapp/proxy"; // DO NOT REMOVE OTHERWISE VIBECODE PROXY WILL NOT WORK
 import { Hono } from "hono";
+import { compress } from "hono/compress";
 import { cors } from "hono/cors";
 import "./env";
 import { auth } from "./auth";
@@ -14,6 +15,7 @@ import { youtubeRouter } from "./routes/youtube";
 import { spotifyRouter } from "./routes/spotify";
 import { appleMusicRouter } from "./routes/appleMusic";
 import { vipRouter } from "./routes/vip";
+import { libraryRouter } from "./routes/library";
 import { logger } from "hono/logger";
 
 // Type the Hono app with user/session variables
@@ -41,6 +43,9 @@ app.use(
     credentials: true,
   })
 );
+
+// Gzip/deflate JSON and text responses (skips tiny payloads via default threshold).
+app.use("*", compress());
 
 // Logging
 app.use("*", logger());
@@ -123,6 +128,7 @@ app.get("/api/youtube-test", (c) => c.json({ mounted: true }));
 app.route("/api/spotify", spotifyRouter);
 app.route("/api/apple-music", appleMusicRouter);
 app.route("/api/vip", vipRouter);
+app.route("/api/library", libraryRouter);
 
 const port = Number(process.env.PORT) || 3000;
 

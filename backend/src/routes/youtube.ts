@@ -75,7 +75,8 @@ function setCachedUrl(videoId: string, url: string): void {
 
 /**
  * Resolve a YouTube videoId to a direct CDN audio URL using yt-dlp.
- * Prefers m4a (AAC) which iOS AVPlayer can decode natively.
+ * Prefers smallest/fastest audio-only formats: AAC/m4a first (native iOS),
+ * then Opus in webm, then any bestaudio — no video mux.
  */
 async function resolveAudioUrl(videoId: string): Promise<string> {
   const controller = new AbortController();
@@ -83,12 +84,18 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
   try {
     const output = await ytDlp.execPromise([
       `https://www.youtube.com/watch?v=${videoId}`,
-      "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio",
+      "-f",
+      "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio[acodec=aac]/bestaudio[acodec^=opus]/bestaudio/ba",
       "--get-url",
       "--no-playlist",
+      "--no-warnings",
       "--quiet",
-      "--extractor-args", "youtube:player_client=tv_embedded",
-      "--js-runtimes", "node",
+      // ios + web clients tend to return playable audio manifests fastest;
+      // tv_embedded is a slower fallback path for restricted videos.
+      "--extractor-args",
+      "youtube:player_client=ios,web,tv_embedded",
+      "--js-runtimes",
+      "node",
       ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
@@ -500,6 +507,25 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
   throw lastError ?? new Error("yt-dlp info failed for all player clients");
 }
 
+/** List-view row: minimal fields for clients (id + playback URL). */
+function toPlaylistTrackSlim(t: {
+  videoId: string;
+  title: string;
+  channel: string;
+  thumbnail: string;
+  duration: number;
+}) {
+  const id = t.videoId;
+  return {
+    id,
+    title: t.title,
+    artist: t.channel,
+    artwork: t.thumbnail,
+    url: `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`,
+    duration: Math.floor(Number(t.duration)) || 0,
+  };
+}
+
 /**
  * GET /api/youtube/playlist-tracks?listId=
  */
@@ -509,11 +535,16 @@ youtubeRouter.get("/playlist-tracks", async (c) => {
     return c.json({ error: "Invalid playlist ID" }, 400);
   }
 
+  const cacheHeaders = () => {
+    c.header("Cache-Control", "public, max-age=3600, stale-while-revalidate=86400");
+  };
+
   // 1. Prefer the YouTube Data API v3.
   if (isYouTubeApiAvailable()) {
     const apiTracks = await getPlaylistTracksViaApi(listId);
     if (apiTracks && apiTracks.length > 0) {
-      return c.json({ data: apiTracks });
+      cacheHeaders();
+      return c.json({ data: apiTracks.map(toPlaylistTrackSlim) });
     }
     console.warn("[YouTube] API playlist fallback — empty or unavailable, trying yt-dlp");
   }
@@ -521,7 +552,8 @@ youtubeRouter.get("/playlist-tracks", async (c) => {
   // 2. Fall back to yt-dlp.
   try {
     const tracks = await getPlaylistTracks(listId);
-    return c.json({ data: tracks });
+    cacheHeaders();
+    return c.json({ data: tracks.map(toPlaylistTrackSlim) });
   } catch (e) {
     console.error("[YouTube] playlist-tracks error:", e);
     const msg = e instanceof Error ? e.message : "Failed to fetch playlist";

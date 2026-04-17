@@ -1,50 +1,109 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { View, Pressable, Animated, Dimensions } from 'react-native';
-import { Svg, Circle } from 'react-native-svg';
-import { Check, XCircle } from 'lucide-react-native';
+import { View, Pressable, Animated, StyleSheet, Easing } from 'react-native';
+import { Svg, Circle, Path } from 'react-native-svg';
+import { XCircle } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { downloadYouTubeTrack, downloadSoundCloudTrack, useDownloadsStore, enqueueDownload } from '@/stores/downloadsStore';
-import { triggerFlyAnimation } from '@/lib/flyAnimationEmitter';
+import { ensurePrefetchListeners, usePrefetchStore } from '@/stores/prefetchStore';
 import { Track } from '@/types/music';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
 
-// ── LoadingRing ───────────────────────────────────────────────────────────────
-// Smooth blue SVG ring that fills 0→90% over ~2.5s. Used as an indeterminate
-// placeholder before real download progress starts arriving.
-function LoadingRing({ size = 28 }: { size?: number }) {
-  const STROKE_WIDTH = 2.5;
-  const RADIUS = (size - STROKE_WIDTH) / 2;
-  const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
-  const [progress, setProgress] = useState(0);
+/** “Shadow” palette — stealth, not corporate blue/green */
+const SHADOW = {
+  pillBg: 'rgba(6,6,8,0.92)',
+  pillBorder: 'rgba(255,255,255,0.14)',
+  vStroke: 'rgba(255,255,255,0.48)',
+  ringTrack: 'rgba(255,255,255,0.1)',
+  ringSweep: 'rgba(255,255,255,0.52)',
+  ringProgress: 'rgba(255,255,255,0.65)',
+  prefetchAccent: 'rgba(255,255,255,0.38)',
+} as const;
 
-  useEffect(() => {
-    const start = Date.now();
-    const DURATION_MS = 2500;
-    const TARGET = 0.9;
-    const interval = setInterval(() => {
-      const elapsed = Date.now() - start;
-      const next = Math.min(TARGET, (elapsed / DURATION_MS) * TARGET);
-      setProgress(next);
-      if (next >= TARGET) clearInterval(interval);
-    }, 50);
-    return () => clearInterval(interval);
-  }, []);
-
-  const strokeDashoffset = CIRCUMFERENCE * (1 - progress);
+// ── ShadowSavedMark ───────────────────────────────────────────────────────────
+/** Dark pill + minimal V (story-led / “machinery” — not a social check badge) */
+export function ShadowSavedMark({ size }: { size: number }) {
+  const stroke = Math.max(1.15, size * 0.085);
+  const glyph = size * 0.42;
   return (
-    <View style={{ width: size, height: size }}>
-      <Svg width={size} height={size}>
-        <Circle cx={size / 2} cy={size / 2} r={RADIUS}
-          stroke="rgba(255,255,255,0.15)" strokeWidth={STROKE_WIDTH} fill="none" />
-        <Circle cx={size / 2} cy={size / 2} r={RADIUS}
-          stroke="#3B82F6" strokeWidth={STROKE_WIDTH} fill="none"
-          strokeDasharray={`${CIRCUMFERENCE}`}
-          strokeDashoffset={strokeDashoffset}
-          strokeLinecap="round" rotation="-90"
-          origin={`${size / 2}, ${size / 2}`} />
+    <View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        backgroundColor: SHADOW.pillBg,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: SHADOW.pillBorder,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <Svg width={glyph} height={glyph} viewBox="0 0 24 24">
+        <Path
+          d="M5.5 12.5 L10 17 L18.5 8.5"
+          fill="none"
+          stroke={SHADOW.vStroke}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
       </Svg>
     </View>
+  );
+}
+
+// ── GhostSweepRing ─────────────────────────────────────────────────────────────
+/** Indeterminate thin ring — white segment sweeps (radar / precision instrument) */
+export function GhostSweepRing({ size = 28 }: { size?: number }) {
+  const STROKE = Math.max(1, size * 0.045);
+  const R = (size - STROKE) / 2;
+  const C = 2 * Math.PI * R;
+  const arc = C * 0.24;
+  const rot = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(rot, {
+        toValue: 1,
+        duration: 1050,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [rot]);
+
+  const spin = rot.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  return (
+    <Animated.View style={{ width: size, height: size, transform: [{ rotate: spin }] }}>
+      <Svg width={size} height={size}>
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={R}
+          stroke={SHADOW.ringTrack}
+          strokeWidth={STROKE}
+          fill="none"
+        />
+        <Circle
+          cx={size / 2}
+          cy={size / 2}
+          r={R}
+          stroke={SHADOW.ringSweep}
+          strokeWidth={STROKE}
+          fill="none"
+          strokeDasharray={`${arc} ${C}`}
+          strokeLinecap="round"
+          rotation="-90"
+          origin={`${size / 2}, ${size / 2}`}
+        />
+      </Svg>
+    </Animated.View>
   );
 }
 
@@ -67,26 +126,23 @@ interface DownloadButtonProps {
 export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor }: DownloadButtonProps) {
   const isTrackDownloaded = useDownloadsStore(s => s.isTrackDownloaded);
   const downloaded = isTrackDownloaded(track.id);
+  const prefetchReady = usePrefetchStore(s => s.byTrackId[track.id]?.ready ?? false);
+  const prefetchProgress = usePrefetchStore(s => s.byTrackId[track.id]?.progress ?? 0);
+
+  useEffect(() => {
+    ensurePrefetchListeners();
+  }, []);
+
+  useEffect(() => {
+    if (downloaded) {
+      usePrefetchStore.getState().removeTrack(track.id);
+    }
+  }, [downloaded, track.id]);
 
   const [progress, setProgress] = useState(0);
   const [isDownloading, setIsDownloading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [animating, setAnimating] = useState(false);
-
-  // Cached screen position — measured on layout so it's ready synchronously on press
-  const containerRef = useRef<View>(null);
-  const cachedPos = useRef<{ x: number; y: number }>({
-    x: Dimensions.get('window').width / 2,
-    y: Dimensions.get('window').height * 0.65,
-  });
-
-  const measurePosition = useCallback(() => {
-    containerRef.current?.measure((_x, _y, w, h, pageX, pageY) => {
-      if (pageX !== undefined && pageY !== undefined) {
-        cachedPos.current = { x: pageX + w / 2, y: pageY + h / 2 };
-      }
-    });
-  }, []);
 
   // Spin (0→1 = 0°→360°)
   const spinAnim = useRef(new Animated.Value(0)).current;
@@ -134,10 +190,10 @@ export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor
         }),
       ]),
       Animated.delay(100),
-      Animated.spring(checkScale, {
+      Animated.timing(checkScale, {
         toValue: 1,
-        speed: 14,
-        bounciness: 14,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
     ]).start(() => {
@@ -158,9 +214,6 @@ export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor
     setIsDownloading(true);
     setProgress(0);
     setFailed(false);
-
-    // Trigger root-level overlay — fires immediately, no Modal delay
-    triggerFlyAnimation(cachedPos.current.x, cachedPos.current.y);
 
     enqueueDownload(track.id, async () => {
       let succeeded = false;
@@ -201,13 +254,8 @@ export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor
     // Already downloaded (static)
     if (downloaded && !animating) {
       return (
-        <Animated.View style={{
-          width: size, height: size, borderRadius: size / 2,
-          backgroundColor: '#22C55E',
-          alignItems: 'center', justifyContent: 'center',
-          transform: [{ scale: checkScale }],
-        }}>
-          <Check size={size * 0.55} color="#fff" strokeWidth={3} />
+        <Animated.View style={{ transform: [{ scale: checkScale }] }}>
+          <ShadowSavedMark size={size} />
         </Animated.View>
       );
     }
@@ -228,29 +276,28 @@ export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor
             }}>
               <View style={{
                 width: size, height: size, borderRadius: size / 2,
-                borderWidth: 1.5, borderColor: '#3B82F6',
+                borderWidth: 1.25, borderColor: 'rgba(255,255,255,0.35)',
                 alignItems: 'center', justifyContent: 'center',
               }}>
                 <View style={{ alignItems: 'center' }}>
-                  <View style={{ width: 1.5, height: size * 0.27, backgroundColor: '#3B82F6', borderRadius: 1 }} />
+                  <View style={{ width: 1.25, height: size * 0.27, backgroundColor: 'rgba(255,255,255,0.55)', borderRadius: 1 }} />
                   <View style={{
                     width: 0, height: 0,
                     borderLeftWidth: size * 0.18, borderRightWidth: size * 0.18, borderTopWidth: size * 0.18,
                     borderLeftColor: 'transparent', borderRightColor: 'transparent',
-                    borderTopColor: '#3B82F6',
+                    borderTopColor: 'rgba(255,255,255,0.55)',
                   }} />
                 </View>
               </View>
             </Animated.View>
           </Animated.View>
-          <Animated.View style={{
-            position: 'absolute',
-            width: size, height: size, borderRadius: size / 2,
-            backgroundColor: '#22C55E',
-            alignItems: 'center', justifyContent: 'center',
-            transform: [{ scale: checkScale }],
-          }}>
-            <Check size={size * 0.55} color="#fff" strokeWidth={3} />
+          <Animated.View
+            style={{
+              position: 'absolute',
+              transform: [{ scale: checkScale }],
+            }}
+          >
+            <ShadowSavedMark size={size} />
           </Animated.View>
         </View>
       );
@@ -265,20 +312,61 @@ export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor
       );
     }
 
-    // Downloading
-    if (isDownloading) {
-      if (progress < 0.02) {
-        return <LoadingRing size={size} />;
-      }
-      const strokeDashoffset = CIRCUMFERENCE * (1 - Math.min(progress, 1));
+    // Native prefetch finished (instant-play buffer) — full file not saved yet
+    if (prefetchReady && !downloaded && !animating) {
+      return (
+        <Pressable
+          onPress={handleDownload}
+          style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <ShadowSavedMark size={size} />
+        </Pressable>
+      );
+    }
+
+    // Prefetch in flight (Gold Gate ring)
+    const prefetching =
+      !downloaded &&
+      !animating &&
+      prefetchProgress > 0 &&
+      prefetchProgress < 1 &&
+      !prefetchReady;
+    if (prefetching) {
+      const strokeDashoffset = CIRCUMFERENCE * (1 - Math.min(Math.max(prefetchProgress, 0.06), 0.98));
       return (
         <View style={{ width: size, height: size }}>
           <Svg width={size} height={size}>
             <Circle cx={size / 2} cy={size / 2} r={RADIUS}
-              stroke="rgba(255,255,255,0.15)" strokeWidth={2.5} fill="none" />
+              stroke={SHADOW.ringTrack} strokeWidth={1.35} fill="none" />
             <Circle cx={size / 2} cy={size / 2} r={RADIUS}
-              stroke="#3B82F6" strokeWidth={2.5} fill="none"
+              stroke={SHADOW.prefetchAccent} strokeWidth={1.35} fill="none"
               strokeDasharray={`${CIRCUMFERENCE}`}
+              strokeDashoffset={strokeDashoffset}
+              strokeLinecap="round" rotation="-90"
+              origin={`${size / 2}, ${size / 2}`} />
+          </Svg>
+        </View>
+      );
+    }
+
+    // Downloading
+    if (isDownloading) {
+      if (progress < 0.02) {
+        return <GhostSweepRing size={size} />;
+      }
+      const strokeW = Math.max(1, size * 0.045);
+      const rProg = (size - strokeW) / 2;
+      const circProg = 2 * Math.PI * rProg;
+      const strokeDashoffset = circProg * (1 - Math.min(progress, 1));
+      return (
+        <View style={{ width: size, height: size }}>
+          <Svg width={size} height={size}>
+            <Circle cx={size / 2} cy={size / 2} r={rProg}
+              stroke={SHADOW.ringTrack} strokeWidth={strokeW} fill="none" />
+            <Circle cx={size / 2} cy={size / 2} r={rProg}
+              stroke={SHADOW.ringProgress} strokeWidth={strokeW} fill="none"
+              strokeDasharray={`${circProg}`}
               strokeDashoffset={strokeDashoffset}
               strokeLinecap="round" rotation="-90"
               origin={`${size / 2}, ${size / 2}`} />
@@ -302,6 +390,7 @@ export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor
     return (
       <Pressable
         onPress={handleDownload}
+        accessibilityLabel="Keep offline"
         style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       >
@@ -324,9 +413,5 @@ export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor
     );
   };
 
-  return (
-    <View ref={containerRef} onLayout={measurePosition} collapsable={false}>
-      {renderContent()}
-    </View>
-  );
+  return <>{renderContent()}</>;
 }

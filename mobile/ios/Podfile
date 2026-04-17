@@ -97,6 +97,16 @@ target 'vibecode' do
         existing_defs << 'FMT_USE_CONSTEVAL=0' unless existing_defs.include?('FMT_USE_CONSTEVAL=0')
         existing_defs << 'FMT_USE_NONTYPE_TEMPLATE_ARGS=0' unless existing_defs.include?('FMT_USE_NONTYPE_TEMPLATE_ARGS=0')
         config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = existing_defs
+
+        # Xcode 26 appintentsmetadataprocessor silently deadlocks when scanning
+        # 70+ Pod targets. App doesn't use AppIntents, so skip the extraction.
+        config.build_settings['APP_INTENTS_METADATA_EXTRACTION_ENABLED'] = 'NO'
+        config.build_settings['APPINTENTS_DEPLOYMENT_POSTPROCESSING'] = 'NO'
+
+        # Xcode 16+: explicit Swift modules make clang scan for Pod .modulemap files
+        # in DerivedData before those targets have built, producing hundreds of
+        # "module map file ... not found" / false "Unable to resolve Foundation" errors.
+        config.build_settings['SWIFT_ENABLE_EXPLICIT_MODULES'] = 'NO'
       end
 
       if target.name == 'fmt'
@@ -127,6 +137,18 @@ target 'vibecode' do
           end
         end
       end
+    end
+
+    installer.aggregate_targets.each do |aggregate_target|
+      user_project = aggregate_target.user_project
+      next unless user_project
+
+      user_project.native_targets.each do |target|
+        target.build_configurations.each do |config|
+          config.build_settings['SWIFT_ENABLE_EXPLICIT_MODULES'] = 'NO'
+        end
+      end
+      user_project.save
     end
   end
 end

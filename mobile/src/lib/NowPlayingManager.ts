@@ -1,111 +1,93 @@
 import { NativeModules, NativeEventEmitter, Platform, EmitterSubscription } from 'react-native';
 
+/**
+ * Thin JS wrapper around the native VybeNowPlaying module (ios/vibecode/
+ * VybeNowPlayingModule.swift). Handles MPNowPlayingInfoCenter, lock-screen
+ * remote events, the keep-alive timer so Apple TV / AirPlay displays stay
+ * populated when the JS is backgrounded, and the system AirPlay route picker.
+ */
 const { VybeNowPlaying } = NativeModules;
 
-// Only active on iOS where the native module exists
-const isAvailable = Platform.OS === 'ios' && !!VybeNowPlaying;
-
 let emitter: NativeEventEmitter | null = null;
-const subscriptions: EmitterSubscription[] = [];
-
-if (isAvailable) {
+if (Platform.OS === 'ios' && VybeNowPlaying) {
   emitter = new NativeEventEmitter(VybeNowPlaying);
 }
 
 export interface NowPlayingInfo {
   trackTitle: string;
   artistName: string;
-  artworkUrl?: string;
+  artworkUrl: string;
   duration: number;
   currentTime: number;
   isPlaying: boolean;
 }
 
-/**
- * Push full track metadata to the iOS Now Playing Info Center.
- * Call this when the track changes. Also starts the native keep-alive
- * timer so Apple TV / AirPlay displays stay populated even when the JS
- * thread is throttled in the background.
- */
+/** Push the current track into iOS Now Playing Center (lock screen, control
+ *  center, Dynamic Island, AirPlay displays). */
 export function updateNowPlaying(info: NowPlayingInfo): void {
-  if (!isAvailable) return;
+  if (Platform.OS !== 'ios' || !VybeNowPlaying) return;
   VybeNowPlaying.updateNowPlaying(
     info.trackTitle,
     info.artistName,
-    info.artworkUrl ?? '',
+    info.artworkUrl,
     info.duration,
     info.currentTime,
-    info.isPlaying
+    info.isPlaying,
   );
-  // Start the native 1-second keep-alive timer. It runs on the main
-  // RunLoop (not the JS timer queue) so it keeps ticking even when the
-  // app is backgrounded or AirPlaying. Without this, Apple TV clears
-  // the Now Playing card after ~5 seconds of silence from JS.
   VybeNowPlaying.startKeepAlive(info.currentTime, info.isPlaying);
 }
 
-/**
- * Update only the playback position (cheap — no artwork re-download).
- * Call this every few seconds while playing. Also re-syncs the native
- * keep-alive timer's baseline so the elapsed-time counter stays accurate.
- */
+/** Update just the progress + play/pause state. Cheaper than a full
+ *  updateNowPlaying and re-anchors the native keep-alive timer so the
+ *  system Now Playing card keeps ticking even if JS is backgrounded. */
 export function updateNowPlayingProgress(currentTime: number, isPlaying: boolean): void {
-  if (!isAvailable) return;
+  if (Platform.OS !== 'ios' || !VybeNowPlaying) return;
   VybeNowPlaying.updateProgress(currentTime, isPlaying);
-  // Re-anchor the native timer so drift doesn't accumulate.
   VybeNowPlaying.startKeepAlive(currentTime, isPlaying);
 }
 
-/**
- * Clear Now Playing (call on stop/unload). Also stops the keep-alive
- * timer so Apple TV shows nothing when no track is active.
- */
+/** Tear down Now Playing + keep-alive. Call on stop/unload. */
 export function clearNowPlaying(): void {
-  if (!isAvailable) return;
+  if (Platform.OS !== 'ios' || !VybeNowPlaying) return;
   VybeNowPlaying.stopKeepAlive();
   VybeNowPlaying.clearNowPlaying();
 }
 
-/**
- * Force-set the artwork from a URL. Useful for re-pushing artwork
- * after AirPlay connects (Apple TV needs the image data in the info
- * dict — it can't fetch URLs on its own).
- */
+/** Re-push the album artwork specifically. Used after AirPlay connect
+ *  (Apple TV can't fetch URLs on its own — it needs the image data). */
 export function setNowPlayingArtwork(artworkUrl: string): void {
-  if (!isAvailable || !artworkUrl) return;
+  if (Platform.OS !== 'ios' || !VybeNowPlaying || !artworkUrl) return;
   VybeNowPlaying.setArtwork(artworkUrl);
 }
 
-/**
- * Register handlers for lock screen / Control Center hardware buttons.
- * Returns a cleanup function — call it when the player unmounts.
- */
-export function registerRemoteHandlers(handlers: {
-  onPlay: () => void;
-  onPause: () => void;
-  onNext: () => void;
-  onPrevious: () => void;
-  onSeek: (position: number) => void;
-}): () => void {
-  if (!isAvailable || !emitter) return () => {};
-
-  // Clear any existing subscriptions first
-  clearRemoteHandlers();
-
-  subscriptions.push(emitter.addListener('onRemotePlay', handlers.onPlay));
-  subscriptions.push(emitter.addListener('onRemotePause', handlers.onPause));
-  subscriptions.push(emitter.addListener('onRemoteNext', handlers.onNext));
-  subscriptions.push(emitter.addListener('onRemotePrevious', handlers.onPrevious));
-  subscriptions.push(
-    emitter.addListener('onRemoteSeek', (e: { position: number }) => {
-      handlers.onSeek(e.position);
-    })
-  );
-
-  return clearRemoteHandlers;
+/** Present the system AirPlay / Bluetooth audio route picker. Backed by
+ *  AVRoutePickerView — the only public API that actually shows the chooser
+ *  sheet. Tap the Airplay icon on the nowPlaying screen to open this. */
+export function showRoutePicker(): void {
+  if (Platform.OS !== 'ios' || !VybeNowPlaying) return;
+  VybeNowPlaying.showRoutePicker();
 }
 
-function clearRemoteHandlers(): void {
-  subscriptions.forEach(s => s.remove());
-  subscriptions.length = 0;
+/** Subscribe to remote transport events (play/pause/next/prev/seek) fired
+ *  from lock screen, Control Center, AirPlay, CarPlay, and Bluetooth
+ *  remotes. Returns an unregister function. */
+export function registerRemoteHandlers(handlers: {
+  onPlay?: () => void;
+  onPause?: () => void;
+  onNext?: () => void;
+  onPrevious?: () => void;
+  onSeek?: (positionSec: number) => void;
+}): () => void {
+  if (!emitter) return () => {};
+  const subs: EmitterSubscription[] = [];
+  if (handlers.onPlay)     subs.push(emitter.addListener('onRemotePlay',     handlers.onPlay));
+  if (handlers.onPause)    subs.push(emitter.addListener('onRemotePause',    handlers.onPause));
+  if (handlers.onNext)     subs.push(emitter.addListener('onRemoteNext',     handlers.onNext));
+  if (handlers.onPrevious) subs.push(emitter.addListener('onRemotePrevious', handlers.onPrevious));
+  if (handlers.onSeek) {
+    subs.push(emitter.addListener('onRemoteSeek', (e: { position: number }) => {
+      handlers.onSeek!(e.position);
+    }));
+  }
+  return () => subs.forEach(s => s.remove());
 }

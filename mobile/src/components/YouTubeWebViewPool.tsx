@@ -60,18 +60,20 @@ const WARM_WEBVIEW_HTML = `
       if (timeUpdateInterval) { clearInterval(timeUpdateInterval); timeUpdateInterval = null; }
     }
 
+    function postTimeUpdate() {
+      if (!player || !player.getCurrentTime) return;
+      try {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'timeUpdate',
+          currentTime: player.getCurrentTime(),
+          duration: player.getDuration()
+        }));
+      } catch (e) {}
+    }
+
     function startTimeUpdates() {
       clearTimeInterval();
-      timeUpdateInterval = setInterval(function() {
-        if (!player || !player.getCurrentTime) return;
-        try {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'timeUpdate',
-            currentTime: player.getCurrentTime(),
-            duration: player.getDuration()
-          }));
-        } catch (e) {}
-      }, 500);
+      timeUpdateInterval = setInterval(postTimeUpdate, 250);
     }
 
     function onPlayerReady() {
@@ -187,7 +189,12 @@ const WARM_WEBVIEW_HTML = `
     };
 
     window.seekTo = function(seconds) {
-      if (player && isPlayerReady) { try { player.seekTo(seconds, true); } catch (e) {} }
+      if (!player || !isPlayerReady) return;
+      try {
+        player.seekTo(seconds, true);
+        postTimeUpdate();
+        setTimeout(postTimeUpdate, 70);
+      } catch (e) {}
     };
 
     window.setVolume = function(value) {

@@ -7,12 +7,13 @@
     "dev": "bun run --hot src/index.ts",
     "build": "bunx prisma generate",
     "start": "bunx prisma generate && bun run src/index.ts",
+    "start:content": "bun run src/contentServer.ts",
     "studio": "cloud-studio --port 3001 --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "prisma": "6",
+    "prisma": "^6.19.3",
     "typescript": "5.8.3"
   },
   "dependencies": {
@@ -21,7 +22,7 @@
     "@hono/zod-validator": "^0.7.6",
     "@libsql/client": "^0.17.2",
     "@prisma/adapter-libsql": "6",
-    "@prisma/client": "6",
+    "@prisma/client": "^6.19.3",
     "@vibecodeapp/backend-sdk": "^1.0.1",
     "@vibecodeapp/cloud-studio": "^0.2.4",
     "@vibecodeapp/proxy": "^2.0.3",

@@ -16,6 +16,8 @@ import {
 import { getPlatformColor } from '@/lib/openExternal';
 import { usePlaybackController } from '@/stores/playbackController';
 import { Track } from '@/types/music';
+import { PreResolveOnView } from '@/components/PreResolveOnView';
+import { preResolveYoutubeVideoId } from '@/lib/youtubeResolvePreloadCache';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -90,9 +92,15 @@ export function DiscoverCard({ item, queue, onVisible }: DiscoverCardProps) {
   };
 
   const platformColor = getPlatformColor(item.sourcePlatform);
+  const ytPreId =
+    item.sourcePlatform === 'YOUTUBE' ? item.id.replace(/^yt-/, '') : null;
 
   return (
+    <PreResolveOnView youtubeVideoId={ytPreId} style={{ marginRight: 16 }}>
     <AnimatedPressable
+      onPressIn={() => {
+        if (ytPreId) preResolveYoutubeVideoId(ytPreId);
+      }}
       onPress={handlePress}
       onPressIn={() => {
         scale.value = withSpring(0.97);
@@ -101,7 +109,6 @@ export function DiscoverCard({ item, queue, onVisible }: DiscoverCardProps) {
         scale.value = withSpring(1);
       }}
       style={animatedStyle}
-      className="mr-4"
     >
       <View style={{ width: 160 }}>
         {/* Thumbnail with platform badge */}
@@ -158,6 +165,7 @@ export function DiscoverCard({ item, queue, onVisible }: DiscoverCardProps) {
         </Text>
       </View>
     </AnimatedPressable>
+    </PreResolveOnView>
   );
 }
 

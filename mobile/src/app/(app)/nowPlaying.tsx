@@ -3,7 +3,7 @@ import { View, Text, Pressable, Dimensions, Linking, ActivityIndicator, Share, M
 import { WebView } from 'react-native-webview';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
+import { useRouter, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import {
@@ -27,6 +27,9 @@ import {
   Check,
   Music,
   Radio,
+  X,
+  Trash2,
+  ListPlus,
 } from 'lucide-react-native';
 import { Svg, Circle } from 'react-native-svg';
 import Animated, {
@@ -38,22 +41,33 @@ import Animated, {
   interpolate,
   runOnJS,
   Easing,
+  Extrapolation,
+  SharedValue,
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useDownloadsStore, downloadYouTubeTrack, downloadSoundCloudTrack } from '@/stores/downloadsStore';
+import { useLikedSongsStore } from '@/stores/likedSongsStore';
 import { DownloadButton } from '@/components/DownloadButton';
 import { LoadingRing } from '@/components/LoadingRing';
 import { openInSoundCloud } from '@/lib/soundcloudHandoff';
 import { showRoutePicker } from '@/lib/NowPlayingManager';
+import { shareSong } from '@/lib/share-helpers';
 import { formatDuration } from '@/data/mockData';
+import { BlurView } from 'expo-blur';
 import { usePlaylistHeroColors } from '@/lib/usePlaylistHeroColors';
-import { useAdBreakStore } from '@/lib/ads/use-ad-break';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
+import { usePiPStore } from '@/components/PiPVideoOverlay';
+import { useNowPlayingSheetStore } from '@/stores/nowPlayingSheetStore';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const ARTWORK_SIZE = SCREEN_WIDTH - 80;
 const VIDEO_HEIGHT = Math.round(ARTWORK_SIZE * (9 / 16));
+
+/** No cross-fade / slide when skipping or picking another track — UI updates immediately */
+const ARTWORK_STATIC_STYLE = { opacity: 1, transform: [{ scale: 1 }] as const };
+const INFO_STATIC_STYLE = { opacity: 1, transform: [{ translateY: 0 }] as const };
 
 // YouTube hqdefault/maxresdefault thumbnails are 16:9 with black letterbox bars baked in.
 // Detecting these URLs lets us display them in a 16:9 container so cover-fit crops the bars out.
@@ -68,6 +82,54 @@ const normalizePlaybackSeconds = (value: number): number => {
 };
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+// ─── Swipe actions (Trash + Queue) ───────────────────────────────────────────
+function SwipeActions({
+  progress,
+  onDelete,
+  onQueue,
+}: {
+  progress: SharedValue<number>;
+  onDelete?: () => void;
+  onQueue?: () => void;
+}) {
+  const actionCount = (onDelete ? 1 : 0) + (onQueue ? 1 : 0);
+  const width = actionCount * 72;
+  const style = useAnimatedStyle(() => ({
+    opacity: interpolate(progress.value, [0, 0.5, 1], [0, 0.8, 1], Extrapolation.CLAMP),
+    transform: [{ translateX: interpolate(progress.value, [0, 1], [16, 0], Extrapolation.CLAMP) }],
+  }));
+  return (
+    <Animated.View style={[style, { width, flexDirection: 'row' }]}>
+      {onQueue ? (
+        <Pressable
+          onPress={onQueue}
+          style={{
+            width: 64, marginLeft: 4,
+            backgroundColor: '#3B82F6', borderRadius: 10,
+            alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <ListPlus size={20} color="#fff" />
+          <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700', marginTop: 2 }}>Queue</Text>
+        </Pressable>
+      ) : null}
+      {onDelete ? (
+        <Pressable
+          onPress={onDelete}
+          style={{
+            width: 64, marginLeft: 4,
+            backgroundColor: '#EF4444', borderRadius: 10,
+            alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          <Trash2 size={20} color="#fff" />
+          <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700', marginTop: 2 }}>Delete</Text>
+        </Pressable>
+      ) : null}
+    </Animated.View>
+  );
+}
 
 // ─── YouTube Inline Video Player ─────────────────────────────────────────────
 
@@ -264,198 +326,36 @@ function YouTubeMusicIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-// ─── Ad break countdown — isolated to avoid re-rendering the whole screen ───
-function AdCountdownNumber() {
-  const countdown = useAdBreakStore(s => s.countdown);
-  return <Text style={{ color: '#8B5CF6', fontSize: 22, fontWeight: '800' }}>{countdown}</Text>;
-}
-
-function AdCountdownLabel() {
-  const countdown = useAdBreakStore(s => s.countdown);
-  return <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11, marginTop: 8 }}>Ad ends in {countdown}s</Text>;
-}
-
-// ─── Main screen ─────────────────────────────────────────────────────────────
-
-export default function NowPlayingScreen() {
-  const router = useRouter();
-  const insets = useSafeAreaInsets();
-
-  const [showQueue, setShowQueue] = useState(false);
-
-  const currentTrack = usePlaybackController(s => s.currentTrack);
-  const heroColors = usePlaylistHeroColors(currentTrack?.artwork ?? null);
-
-  // Ad break state — only subscribe to isAdBreak (not countdown)
-  // so the screen doesn't re-render every second during ad breaks.
-  // The AdCountdown component reads countdown directly.
-  const isAdBreak = useAdBreakStore(s => s.isAdBreak);
-
-  // Related tracks for the queue sheet
-  interface RelatedYT { videoId: string; title: string; channelName: string; thumbnailUrl: string; duration?: number; }
-  interface RelatedSC { trackId: string; title: string; artist: string; artwork: string; duration: number; soundcloudUrl: string; }
-  const [ytRelated, setYtRelated] = useState<RelatedYT[]>([]);
-  const [scRelated, setScRelated] = useState<RelatedSC[]>([]);
-  const [relatedLoading, setRelatedLoading] = useState(false);
-  const lastFetchedArtist = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!showQueue || !currentTrack?.artist) return;
-    if (lastFetchedArtist.current === currentTrack.artist) return;
-    lastFetchedArtist.current = currentTrack.artist;
-    const artist = currentTrack.artist;
-    const base = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
-    setRelatedLoading(true);
-    setYtRelated([]);
-    setScRelated([]);
-    Promise.all([
-      fetch(`${base}/api/youtube/search?q=${encodeURIComponent(artist + ' music')}&maxResults=10`)
-        .then(r => r.ok ? r.json() : { data: [] })
-        .then(j => setYtRelated((j.data ?? []) as RelatedYT[]))
-        .catch(() => {}),
-      fetch(`${base}/api/soundcloud/search?q=${encodeURIComponent(artist)}&maxResults=10`)
-        .then(r => r.ok ? r.json() : { data: [] })
-        .then(j => setScRelated((j.data ?? []) as RelatedSC[]))
-        .catch(() => {}),
-    ]).finally(() => setRelatedLoading(false));
-  }, [showQueue, currentTrack?.artist]);
-  const playbackState = usePlaybackController(s => s.playbackState);
-  const isPlaying = playbackState === 'playing';
-  const shouldPause = playbackState === 'playing' || playbackState === 'buffering' || playbackState === 'loading';
-  const isLoading = playbackState === 'loading';
-  const isError = playbackState === 'error';
+/** Scrubber + time labels only — subscribes to progress so the rest of Now Playing does not re-render every tick. */
+function NowPlayingScrubberRow() {
   const progress = usePlaybackController(s => s.progress);
   const duration = usePlaybackController(s => s.duration);
-  const error = usePlaybackController(s => s.error);
-  const isShuffled = usePlaybackController(s => s.isShuffled);
-  const repeatMode = usePlaybackController(s => s.repeatMode);
-  const likedTracks = usePlaybackController(s => s.likedTracks);
-  const currentSource = usePlaybackController(s => s.currentSource);
-  const queue = usePlaybackController(s => s.queue);
-  const queueIndex = usePlaybackController(s => s.queueIndex);
-  const playTrack = usePlaybackController(s => s.playTrack);
-  const upNext = queue.slice(queueIndex + 1);
-
-  const isPlayButtonBusy = isLoading;
-
-  const pause = usePlaybackController(s => s.pause);
-  const play = usePlaybackController(s => s.play);
-  const next = usePlaybackController(s => s.next);
-  const previous = usePlaybackController(s => s.previous);
-
-  const skipsRemaining = useSubscriptionStore(s => s.skipsRemaining());
-
-  const handleSkip = useCallback(() => {
-    if (skipsRemaining === 0) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      router.push('/upgrade');
-      return;
-    }
-    next();
-  }, [skipsRemaining, next, router]);
   const seekTo = usePlaybackController(s => s.seekTo);
-  const setProgress = usePlaybackController(s => s.setProgress);
-  const toggleShuffle = usePlaybackController(s => s.toggleShuffle);
-  const toggleRepeat = usePlaybackController(s => s.toggleRepeat);
-  const toggleLike = usePlaybackController(s => s.toggleLike);
 
-  const playScale = useSharedValue(1);
-  const translateY = useSharedValue(0);
-
-  // Track-change transition
-  const artworkOpacity = useSharedValue(1);
-  const artworkScale = useSharedValue(1);
-  const infoOpacity = useSharedValue(1);
-  const infoTranslateY = useSharedValue(0);
-
-  useEffect(() => {
-    // Artwork: quick fade out + scale down, then spring back in
-    artworkOpacity.value = withSequence(
-      withTiming(0, { duration: 180, easing: Easing.out(Easing.quad) }),
-      withTiming(1, { duration: 350, easing: Easing.out(Easing.quad) }),
-    );
-    artworkScale.value = withSequence(
-      withTiming(0.94, { duration: 180, easing: Easing.out(Easing.quad) }),
-      withSpring(1, { damping: 14, stiffness: 180 }),
-    );
-    // Title/artist: slide up from below + fade in
-    infoOpacity.value = withSequence(
-      withTiming(0, { duration: 150 }),
-      withTiming(1, { duration: 280 }),
-    );
-    infoTranslateY.value = withSequence(
-      withTiming(12, { duration: 0 }),
-      withTiming(0, { duration: 280, easing: Easing.out(Easing.quad) }),
-    );
-  }, [currentTrack?.id]);
-
-  const artworkAnimStyle = useAnimatedStyle(() => ({
-    opacity: artworkOpacity.value,
-    transform: [{ scale: artworkScale.value }],
-  }));
-  const infoAnimStyle = useAnimatedStyle(() => ({
-    opacity: infoOpacity.value,
-    transform: [{ translateY: infoTranslateY.value }],
-  }));
-
-  // Scrubber state
   const scrubberWidth = SCREEN_WIDTH - 64;
   const isScrubbing = useSharedValue(false);
   const scrubPercent = useSharedValue(0);
   const thumbScale = useSharedValue(1);
-  // After a seek, block status-callback renders from snapping the thumb back
   const seekLockUntil = useRef(0);
 
-  // Download fly animation
-  const flyX = useSharedValue(0);
-  const flyY = useSharedValue(0);
-  const flyScale = useSharedValue(1);
-  const flyOpacity = useSharedValue(0);
-  const [flyVisible, setFlyVisible] = useState(false);
-
-  const isLiked = currentTrack ? likedTracks.has(currentTrack.id) : false;
-  const isYouTube = currentSource === 'youtube';
-  const isYouTubeMusic = currentSource === 'youtube_music';
-  const isSoundCloud = currentSource === 'soundcloud';
-  const isExternalPlayback = isYouTube || isYouTubeMusic || isSoundCloud;
-  const ytVideoId = currentTrack?.youtubeId || currentTrack?.youtubeMusicId || null;
-  // Use 16:9 for YouTube thumbnails (bars baked in); keep square for proper album art
-  const ytmArtworkIsThumb = isYouTubeThumbnail(currentTrack?.artwork ?? '');
-  const ytmArtworkHeight = ytmArtworkIsThumb ? VIDEO_HEIGHT : ARTWORK_SIZE;
-  const scTrackUrl = currentTrack?.soundcloudUrl || null;
-
-  const isTrackDownloaded = useDownloadsStore(s => s.isTrackDownloaded);
-  const isDownloaded = currentTrack ? isTrackDownloaded(currentTrack.id) : false;
-  const importProgress = useDownloadsStore(s => s.importProgress);
-  const [isDownloadPending, setIsDownloadPending] = useState(false);
-
-  const playButtonStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: playScale.value }],
-  }));
-
-  const flyStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: flyX.value },
-      { translateY: flyY.value },
-      { scale: flyScale.value },
-    ],
-    opacity: flyOpacity.value,
-  }));
-
-  const displayProgress = normalizePlaybackSeconds(progress);
-  const displayDuration = normalizePlaybackSeconds(duration);
+  const displayDuration = Math.max(0, normalizePlaybackSeconds(duration));
+  const rawProgress = Math.max(0, normalizePlaybackSeconds(progress));
+  const displayProgress = displayDuration > 0 ? Math.min(rawProgress, displayDuration) : rawProgress;
   const trackPercent = displayDuration > 0 ? Math.min(displayProgress / displayDuration, 1) : 0;
 
-  // Keep shared values in sync with JS-side values so worklets can read them
   const trackPercentSV = useSharedValue(trackPercent);
-  // Only update from status callbacks if no seek is in flight — prevents snap-back
-  if (Date.now() >= seekLockUntil.current) {
-    trackPercentSV.value = trackPercent;
-  }
   const durationSV = useSharedValue(displayDuration);
-  durationSV.value = displayDuration;
 
-  // Scrubber animated styles — pixel values only (no % strings in worklets)
+  useEffect(() => {
+    if (Date.now() >= seekLockUntil.current) {
+      trackPercentSV.value = trackPercent;
+    }
+  }, [trackPercent, trackPercentSV]);
+
+  useEffect(() => {
+    durationSV.value = Math.max(0, displayDuration);
+  }, [displayDuration, durationSV]);
+
   const scrubFillStyle = useAnimatedStyle(() => ({
     width: (isScrubbing.value ? scrubPercent.value : trackPercentSV.value) * scrubberWidth,
   }));
@@ -466,29 +366,14 @@ export default function NowPlayingScreen() {
     ],
   }));
 
-  // Accepts raw seconds
-  const handleSeek = (seconds: number) => {
-    seekTo(seconds);
-  };
-
-  // Accepts 0–1 percentage; converts to seconds on JS thread where duration is live.
-  // Also updates trackPercentSV optimistically so the thumb stays put, then releases
-  // isScrubbing — doing this here (not in the worklet) prevents the snap-back race.
-  // MUST be defined before gesture definitions so Reanimated worklets capture a valid ref.
-  const handleSeekPct = (pct: number, seekSeconds?: number) => {
-    const secs = seekSeconds ?? (pct * displayDuration);
-    console.log('[Scrub] pct:', pct.toFixed(3), 'seekSeconds:', seekSeconds?.toFixed(1), 'displayDuration:', displayDuration, 'secs:', secs.toFixed(1));
-    seekLockUntil.current = Date.now() + 1000; // block status-callback snap-back for 1s
-    seekTo(secs);
+  const handleSeekPct = useCallback((pct: number, seekSeconds: number) => {
+    seekLockUntil.current = Date.now() + 1000;
+    seekTo(seekSeconds);
     trackPercentSV.value = pct;
     isScrubbing.value = false;
-  };
+  }, [seekTo]);
 
-  const handleClose = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.back();
-  };
-
+  // Built each render so `runOnJS(handleSeekPct)` stays fresh; avoids useMemo + Fast Refresh hook-order bugs.
   const scrubGesture = Gesture.Pan()
     .minDistance(0)
     .onBegin((e) => {
@@ -518,25 +403,218 @@ export default function NowPlayingScreen() {
 
   const scrubCombined = Gesture.Simultaneous(scrubGesture, scrubTapGesture);
 
+  return (
+    <View style={{ marginTop: 24 }}>
+      <GestureDetector gesture={scrubCombined}>
+        <View style={{ paddingVertical: 10 }}>
+          <View style={{ height: 3, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, overflow: 'hidden' }}>
+            <Animated.View style={[{ height: 3, backgroundColor: '#fff', borderRadius: 2 }, scrubFillStyle]} />
+          </View>
+          <Animated.View style={[{
+            position: 'absolute',
+            top: 4,
+            left: 0,
+            width: 12,
+            height: 12,
+            borderRadius: 6,
+            backgroundColor: '#fff',
+            shadowColor: '#000',
+            shadowOpacity: 0.35,
+            shadowRadius: 4,
+            shadowOffset: { width: 0, height: 2 },
+          }, scrubThumbStyle]} />
+        </View>
+      </GestureDetector>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 }}>
+        <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>
+          {formatDuration(Math.floor(displayProgress))}
+        </Text>
+        <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>
+          {displayDuration > 0 ? `-${formatDuration(Math.max(0, Math.floor(displayDuration - displayProgress)))}` : '--:--'}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+// ─── Main screen ─────────────────────────────────────────────────────────────
+
+export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?: boolean } = {}) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const insets = useSafeAreaInsets();
+
+  const [showQueue, setShowQueue] = useState(false);
+
+  const currentTrack = usePlaybackController(s => s.currentTrack);
+  const heroColors = usePlaylistHeroColors(currentTrack?.artwork ?? null);
+
+  // Related tracks for the queue sheet
+  interface RelatedYT { videoId: string; title: string; channelName: string; thumbnailUrl: string; duration?: number; }
+  interface RelatedSC { trackId: string; title: string; artist: string; artwork: string; duration: number; soundcloudUrl: string; }
+  const [ytRelated, setYtRelated] = useState<RelatedYT[]>([]);
+  const [scRelated, setScRelated] = useState<RelatedSC[]>([]);
+  const [relatedLoading, setRelatedLoading] = useState(false);
+
+  // Batch download state for Vybe Music / Vybe Waves recommendations
+  const [ytDownloadingAll, setYtDownloadingAll] = useState(false);
+  const [scDownloadingAll, setScDownloadingAll] = useState(false);
+  const [batchActiveId, setBatchActiveId] = useState<string | null>(null);
+  const [batchProgress, setBatchProgress] = useState(0);
+  const cancelBatchRef = useRef(false);
+  const lastFetchedArtist = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!showQueue || !currentTrack?.artist) return;
+    if (lastFetchedArtist.current === currentTrack.artist) return;
+    lastFetchedArtist.current = currentTrack.artist;
+    const artist = currentTrack.artist;
+    const base = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
+    setRelatedLoading(true);
+    setYtRelated([]);
+    setScRelated([]);
+    Promise.all([
+      fetch(`${base}/api/youtube/search?q=${encodeURIComponent(artist + ' music')}&maxResults=10`)
+        .then(r => r.ok ? r.json() : { data: [] })
+        .then(j => setYtRelated((j.data ?? []) as RelatedYT[]))
+        .catch(() => {}),
+      fetch(`${base}/api/soundcloud/search?q=${encodeURIComponent(artist)}&maxResults=10`)
+        .then(r => r.ok ? r.json() : { data: [] })
+        .then(j => setScRelated((j.data ?? []) as RelatedSC[]))
+        .catch(() => {}),
+    ]).finally(() => setRelatedLoading(false));
+  }, [showQueue, currentTrack?.artist]);
+  const playbackState = usePlaybackController(s => s.playbackState);
+  const isPlaying = playbackState === 'playing';
+  const shouldPause = playbackState === 'playing' || playbackState === 'buffering' || playbackState === 'loading';
+  const isLoading = playbackState === 'loading';
+  const isError = playbackState === 'error';
+  const error = usePlaybackController(s => s.error);
+  const isShuffled = usePlaybackController(s => s.isShuffled);
+  const repeatMode = usePlaybackController(s => s.repeatMode);
+  const likedTracks = usePlaybackController(s => s.likedTracks);
+  const currentSource = usePlaybackController(s => s.currentSource);
+  const queue = usePlaybackController(s => s.queue);
+  const queueIndex = usePlaybackController(s => s.queueIndex);
+  const playTrack = usePlaybackController(s => s.playTrack);
+  const playNext = usePlaybackController(s => s.playNext);
+  const addToQueue = usePlaybackController(s => s.addToQueue);
+  const upNext = queue.slice(queueIndex + 1);
+
+  const isPlayButtonBusy = isLoading;
+
+  const pause = usePlaybackController(s => s.pause);
+  const play = usePlaybackController(s => s.play);
+  const next = usePlaybackController(s => s.next);
+  const previous = usePlaybackController(s => s.previous);
+
+  const skipsRemaining = useSubscriptionStore(s => s.skipsRemaining);
+  const subscriptionTier = useSubscriptionStore(s => s.tier);
+
+  const handleSkip = useCallback(() => {
+    if (__DEV__ || subscriptionTier === 'plus') {
+      next();
+      return;
+    }
+    if (skipsRemaining === 0) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      router.push('/upgrade');
+      return;
+    }
+    next();
+  }, [skipsRemaining, subscriptionTier, next, router]);
+  const seekTo = usePlaybackController(s => s.seekTo);
+  const toggleShuffle = usePlaybackController(s => s.toggleShuffle);
+  const toggleRepeat = usePlaybackController(s => s.toggleRepeat);
+  const toggleLike = usePlaybackController(s => s.toggleLike);
+
+  const playScale = useSharedValue(1);
+  const translateY = useSharedValue(0);
+
+  // Download fly animation
+  const flyX = useSharedValue(0);
+  const flyY = useSharedValue(0);
+  const flyScale = useSharedValue(1);
+  const flyOpacity = useSharedValue(0);
+  const [flyVisible, setFlyVisible] = useState(false);
+
+  const isLiked = currentTrack ? likedTracks.has(currentTrack.id) : false;
+  const isYouTube = currentSource === 'youtube';
+  const isYouTubeMusic = currentSource === 'youtube_music';
+  const isSoundCloud = currentSource === 'soundcloud';
+  const isExternalPlayback = isYouTube || isYouTubeMusic || isSoundCloud;
+  const ytVideoId = currentTrack?.youtubeId || currentTrack?.youtubeMusicId || null;
+  // Use 16:9 for YouTube thumbnails (bars baked in); keep square for proper album art
+  const ytmArtworkIsThumb = isYouTubeThumbnail(currentTrack?.artwork ?? '');
+  const ytmArtworkHeight = ytmArtworkIsThumb ? VIDEO_HEIGHT : ARTWORK_SIZE;
+  const scTrackUrl = currentTrack?.soundcloudUrl || null;
+
+  const isTrackDownloaded = useDownloadsStore(s => s.isTrackDownloaded);
+  const removeDownload = useDownloadsStore(s => s.removeDownload);
+  const isDownloaded = currentTrack ? isTrackDownloaded(currentTrack.id) : false;
+  const importProgress = useDownloadsStore(s => s.importProgress);
+  const [isDownloadPending, setIsDownloadPending] = useState(false);
+
+  const playButtonStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: playScale.value }],
+  }));
+
+  const flyStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: flyX.value },
+      { translateY: flyY.value },
+      { scale: flyScale.value },
+    ],
+    opacity: flyOpacity.value,
+  }));
+
+  const handleClose = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (sheetLayout) {
+      useNowPlayingSheetStore.getState().collapse?.();
+      if (pathname.includes('nowPlaying')) {
+        router.back();
+      }
+      return;
+    }
+    router.back();
+  };
+
+  const dockPiP = () => {
+    usePiPStore.getState().dock();
+    handleClose();
+  };
+
   const panGesture = Gesture.Pan()
-    .activeOffsetY([10, 100000])     // only activate for downward swipes
-    .failOffsetX([-15, 15])          // fail immediately on horizontal movement
+    .enabled(!sheetLayout)
+    .activeOffsetY([10, 100000])
+    .failOffsetX([-15, 15])
     .onUpdate((e) => {
       if (e.translationY > 0) {
         translateY.value = e.translationY;
       }
     })
     .onEnd((e) => {
-      if (e.translationY > 100) {
-        runOnJS(handleClose)();
+      if (e.translationY > 150 || e.velocityY > 800) {
+        translateY.value = withTiming(SCREEN_HEIGHT, { duration: 250 });
+        if (isYouTube && ytVideoId) {
+          runOnJS(dockPiP)();
+        } else {
+          runOnJS(handleClose)();
+        }
       } else {
-        translateY.value = withSpring(0);
+        translateY.value = withSpring(0, { damping: 15, stiffness: 100, mass: 1 });
       }
     });
 
-  const containerStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }],
-    opacity: interpolate(translateY.value, [0, 300], [1, 0.5]),
+  const rootStyle = useAnimatedStyle(() => ({
+    flex: 1,
+    transform: [
+      { translateY: translateY.value },
+      { scale: interpolate(translateY.value, [0, 400], [1, 0.88], Extrapolation.CLAMP) },
+    ],
+    opacity: interpolate(translateY.value, [0, 400], [1, 0.4], Extrapolation.CLAMP),
+    borderRadius: interpolate(translateY.value, [0, 100], [0, 24], Extrapolation.CLAMP),
   }));
 
   const handlePlayPause = async () => {
@@ -551,11 +629,13 @@ export default function NowPlayingScreen() {
   };
 
   const handleSeekForward = () => {
-    handleSeek(Math.min(progress + 15, duration));
+    const { progress: p, duration: d } = usePlaybackController.getState();
+    seekTo(Math.min(p + 15, d));
   };
 
   const handleSeekBackward = () => {
-    handleSeek(Math.max(progress - 15, 0));
+    const { progress: p } = usePlaybackController.getState();
+    seekTo(Math.max(p - 15, 0));
   };
 
   const handleOpenExternal = useCallback(() => {
@@ -574,13 +654,14 @@ export default function NowPlayingScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const ytId = currentTrack.youtubeId || currentTrack.youtubeMusicId;
     const scUrl = currentTrack.soundcloudUrl;
-    const url = ytId
+    const playbackUrl = ytId
       ? `https://music.youtube.com/watch?v=${ytId}`
       : scUrl ?? null;
-    const message = url
-      ? `🎵🔥🔥🔥 Fire Ass Beats 🔥🔥🔥🎵\n\n${currentTrack.title} — ${currentTrack.artist}\n\n${url}`
-      : `🎵🔥🔥🔥 Fire Ass Beats 🔥🔥🔥🎵\n\n${currentTrack.title} — ${currentTrack.artist}`;
-    await Share.share({ message });
+    await shareSong({
+      title: currentTrack.title,
+      artist: currentTrack.artist,
+      playbackUrl,
+    });
   }, [currentTrack]);
 
   const triggerDownloadAnimation = useCallback(() => {
@@ -630,14 +711,22 @@ export default function NowPlayingScreen() {
     );
   }
 
-  return (
+  const sheetBody = (
     <>
-    <GestureDetector gesture={panGesture}>
-      <Animated.View style={[{ flex: 1 }, containerStyle]}>
+        {/* Blurred album art background */}
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+          <Image
+            source={{ uri: currentTrack.artwork }}
+            style={{ width: '100%', height: '100%' }}
+            contentFit="cover"
+            blurRadius={40}
+          />
+          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.55)' }} />
+        </View>
         <LinearGradient
           colors={heroColors.gradient as unknown as readonly [string, string, ...string[]]}
           locations={heroColors.locations as unknown as readonly [number, number, ...number[]]}
-          style={{ flex: 1 }}
+          style={{ flex: 1, opacity: 0.6 }}
         >
           <View style={{ flex: 1, paddingTop: insets.top }}>
             {/* Header */}
@@ -673,44 +762,20 @@ export default function NowPlayingScreen() {
               <View className="w-10" />
             </View>
 
-            {/* Artwork / Video — or Ad during ad break */}
+            {/* Artwork / Video */}
             <View className="items-center justify-center flex-1 px-10">
-              {isAdBreak ? (
-                /* ── Ad Break: replace artwork with ad ── */
-                <View style={{
-                  width: ARTWORK_SIZE,
-                  height: ARTWORK_SIZE,
-                  borderRadius: 12,
-                  backgroundColor: '#1A1A1A',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.08)',
-                  overflow: 'hidden',
-                }}>
-                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-                    <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(139,92,246,0.2)', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-                      <Text style={{ fontSize: 24 }}>📢</Text>
-                    </View>
-                    <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 6 }}>Advertisement</Text>
-                    <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textAlign: 'center', marginBottom: 20 }}>
-                      Upgrade to VYBE Plus for ad-free listening
-                    </Text>
-                    <View style={{ width: 56, height: 56, borderRadius: 28, borderWidth: 3, borderColor: '#8B5CF6', alignItems: 'center', justifyContent: 'center' }}>
-                      <AdCountdownNumber />
-                    </View>
-                    <AdCountdownLabel />
-                  </View>
-                </View>
-              ) : isYouTubeMusic && ytVideoId ? (
+              {isYouTubeMusic && ytVideoId ? (
                 /* YouTube Music — 16:9 for thumbnails (crops letterbox), square for album art */
                 <Animated.View
-                  style={[artworkAnimStyle, {
-                    shadowColor: heroColors.glow,
-                    shadowOffset: { width: 0, height: 20 },
-                    shadowOpacity: 0.5,
-                    shadowRadius: 40,
+                  style={[ARTWORK_STATIC_STYLE, {
+                    shadowColor: '#00E5CC',
+                    shadowOffset: { width: 0, height: 0 },
+                    shadowOpacity: 0.6,
+                    shadowRadius: 24,
                     elevation: 20,
+                    borderRadius: 14,
+                    borderWidth: 1.5,
+                    borderColor: 'rgba(0,229,204,0.4)',
                   }]}
                 >
                   <View style={{ width: ARTWORK_SIZE, height: ytmArtworkHeight, borderRadius: 12, overflow: 'hidden' }}>
@@ -738,30 +803,32 @@ export default function NowPlayingScreen() {
                   </View>
                 </Animated.View>
               ) : isYouTube && ytVideoId && !currentTrack?.audioUrl?.startsWith('file://') ? (
-                /* YouTube — show inline video player (streaming only; downloaded tracks
-                   fall through to static artwork so the iframe error never flashes) */
                 <Animated.View
-                  style={[artworkAnimStyle, {
-                    shadowColor: heroColors.glow,
-                    shadowOffset: { width: 0, height: 20 },
-                    shadowOpacity: 0.5,
-                    shadowRadius: 40,
+                  style={[ARTWORK_STATIC_STYLE, {
+                    shadowColor: '#00E5CC',
+                    shadowOffset: { width: 0, height: 0 },
+                    shadowOpacity: 0.6,
+                    shadowRadius: 24,
                     elevation: 20,
-                    borderRadius: 12,
+                    borderRadius: 14,
+                    borderWidth: 1.5,
+                    borderColor: 'rgba(0,229,204,0.4)',
                     overflow: 'hidden',
                   }]}
                 >
                   <YouTubeInlinePlayer videoId={ytVideoId} artworkUri={currentTrack.artwork} isPlaying={isPlaying} />
                 </Animated.View>
               ) : isSoundCloud ? (
-                /* SoundCloud — artwork with source badge */
                 <Animated.View
-                  style={[artworkAnimStyle, {
-                    shadowColor: heroColors.glow,
-                    shadowOffset: { width: 0, height: 20 },
-                    shadowOpacity: 0.5,
-                    shadowRadius: 40,
+                  style={[ARTWORK_STATIC_STYLE, {
+                    shadowColor: '#00E5CC',
+                    shadowOffset: { width: 0, height: 0 },
+                    shadowOpacity: 0.6,
+                    shadowRadius: 24,
                     elevation: 20,
+                    borderRadius: 14,
+                    borderWidth: 1.5,
+                    borderColor: 'rgba(0,229,204,0.4)',
                   }]}
                 >
                   <View style={{ width: ARTWORK_SIZE, height: ARTWORK_SIZE, borderRadius: 12, overflow: 'hidden' }}>
@@ -789,14 +856,16 @@ export default function NowPlayingScreen() {
                   </View>
                 </Animated.View>
               ) : (
-                /* VYBE / local — square artwork */
                 <Animated.View
-                  style={[artworkAnimStyle, {
-                    shadowColor: heroColors.glow,
-                    shadowOffset: { width: 0, height: 20 },
-                    shadowOpacity: 0.5,
-                    shadowRadius: 40,
+                  style={[ARTWORK_STATIC_STYLE, {
+                    shadowColor: '#00E5CC',
+                    shadowOffset: { width: 0, height: 0 },
+                    shadowOpacity: 0.6,
+                    shadowRadius: 24,
                     elevation: 20,
+                    borderRadius: 14,
+                    borderWidth: 1.5,
+                    borderColor: 'rgba(0,229,204,0.4)',
                   }]}
                 >
                   <Image
@@ -809,14 +878,14 @@ export default function NowPlayingScreen() {
             </View>
 
             {/* Track Info */}
-            <Animated.View style={[infoAnimStyle, { paddingHorizontal: 32, marginTop: 32 }]}>
+            <Animated.View style={[INFO_STATIC_STYLE, { paddingHorizontal: 32, marginTop: 32 }]}>
               <View className="flex-row items-center justify-between">
                 <View className="flex-1 mr-4">
                   <Text className="text-white text-2xl font-bold" numberOfLines={1}>
-                    {isAdBreak ? 'Advertisement' : currentTrack.title}
+                    {currentTrack.title}
                   </Text>
                   <Text className="text-white/60 text-lg mt-1" numberOfLines={1}>
-                    {isAdBreak ? 'VYBE Plus removes all ads' : currentTrack.artist}
+                    {currentTrack.artist}
                   </Text>
                 </View>
                 <View className="flex-row items-center gap-2">
@@ -837,42 +906,9 @@ export default function NowPlayingScreen() {
                 </View>
               </View>
 
-              {/* Progress Bar / Scrubber */}
-              <View style={{ marginTop: 24 }}>
-                <GestureDetector gesture={scrubCombined}>
-                  <View style={{ paddingVertical: 10 }}>
-                    <View style={{ height: 3, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, overflow: 'hidden' }}>
-                      <Animated.View style={[{ height: 3, backgroundColor: '#fff', borderRadius: 2 }, scrubFillStyle]} />
-                    </View>
-                    <Animated.View style={[{
-                      position: 'absolute',
-                      top: 4,
-                      left: 0,
-                      width: 12,
-                      height: 12,
-                      borderRadius: 6,
-                      backgroundColor: '#fff',
-                      shadowColor: '#000',
-                      shadowOpacity: 0.35,
-                      shadowRadius: 4,
-                      shadowOffset: { width: 0, height: 2 },
-                    }, scrubThumbStyle]} />
-                  </View>
-                </GestureDetector>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 }}>
-                  <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>
-                    {formatDuration(Math.floor(displayProgress))}
-                  </Text>
-                  <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>
-                    {displayDuration > 0 ? `-${formatDuration(Math.max(0, Math.floor(displayDuration - displayProgress)))}` : '--:--'}
-                  </Text>
-                </View>
-              </View>
+              <NowPlayingScrubberRow />
 
-              {/* Controls — hidden during ad break */}
-              {isAdBreak ? (
-                <View className="items-center mt-4" style={{ height: 72 }} />
-              ) : (
+              {/* Controls */}
               <View className="flex-row items-center justify-between mt-4">
                 <Pressable
                   onPress={() => {
@@ -930,7 +966,6 @@ export default function NowPlayingScreen() {
                   )}
                 </Pressable>
               </View>
-              )}
 
               {/* Bottom Actions */}
               <View
@@ -962,8 +997,18 @@ export default function NowPlayingScreen() {
             <Image source={{ uri: currentTrack.artwork }} style={{ width: 48, height: 48 }} contentFit="cover" />
           </Animated.View>
         )}
-      </Animated.View>
-    </GestureDetector>
+    </>
+  );
+
+  return (
+    <>
+    {sheetLayout ? (
+      <View style={{ flex: 1 }}>{sheetBody}</View>
+    ) : (
+      <GestureDetector gesture={panGesture}>
+        <Animated.View style={rootStyle}>{sheetBody}</Animated.View>
+      </GestureDetector>
+    )}
 
     {/* Queue Sheet */}
     <Modal
@@ -972,10 +1017,10 @@ export default function NowPlayingScreen() {
       presentationStyle="pageSheet"
       onRequestClose={() => setShowQueue(false)}
     >
-      <View style={{ flex: 1, backgroundColor: '#111' }}>
-        {/* Header */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: insets.top + 16, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' }}>
-          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Next Up</Text>
+      <View style={{ flex: 1, backgroundColor: '#0D0B08' }}>
+        {/* Header — premium dark with gold accent */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: insets.top + 16, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(212,175,55,0.15)' }}>
+          <Text style={{ color: '#D4AF37', fontSize: 18, fontWeight: '700', letterSpacing: 0.5 }}>Next Up</Text>
           <Pressable onPress={() => setShowQueue(false)} hitSlop={12} style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
             <Text style={{ color: '#fff', fontSize: 16, lineHeight: 18 }}>✕</Text>
           </Pressable>
@@ -983,10 +1028,10 @@ export default function NowPlayingScreen() {
 
         {/* Now Playing row */}
         {currentTrack && (
-          <View style={{ paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' }}>
-            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 10 }}>Now Playing</Text>
+          <View style={{ paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(212,175,55,0.1)' }}>
+            <Text style={{ color: '#D4AF37', fontSize: 11, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 10 }}>Now Playing</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Image source={{ uri: currentTrack.artwork }} style={{ width: 44, height: 44, borderRadius: 6, borderWidth: 2, borderColor: '#8B5CF6' }} contentFit="cover" />
+              <Image source={{ uri: currentTrack.artwork }} style={{ width: 44, height: 44, borderRadius: 6, borderWidth: 2, borderColor: '#D4AF37' }} contentFit="cover" />
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }} numberOfLines={1}>{currentTrack.title}</Text>
                 <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{currentTrack.artist}</Text>
@@ -1012,15 +1057,19 @@ export default function NowPlayingScreen() {
                 <Pressable
                   key={`${track.id}-${i}`}
                   onPress={() => { playTrack(track, queue); setShowQueue(false); }}
-                  style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 10 }}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center',
+                    marginHorizontal: 16, marginBottom: 8, padding: 10,
+                    backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 12,
+                    borderWidth: 0.5, borderColor: 'rgba(212,175,55,0.3)',
+                  }}
                 >
-                  <Text style={{ color: 'rgba(255,255,255,0.25)', fontSize: 13, width: 24 }}>{i + 1}</Text>
-                  <Image source={{ uri: track.artwork }} style={{ width: 44, height: 44, borderRadius: 6 }} contentFit="cover" />
+                  <Image source={{ uri: track.artwork }} style={{ width: 50, height: 50, borderRadius: 4 }} contentFit="cover" />
                   <View style={{ flex: 1, marginLeft: 12 }}>
                     <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }} numberOfLines={1}>{track.title}</Text>
                     <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{track.artist}</Text>
                   </View>
-                  <DownloadButton track={track} size={24} />
+                  <DownloadButton track={track} size={20} />
                 </Pressable>
               ))}
             </>
@@ -1051,10 +1100,73 @@ export default function NowPlayingScreen() {
                   <Text style={{ color: '#fff', fontSize: 10, lineHeight: 11 }}>♪</Text>
                 </View>
                 <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase' }}>Vybe Music</Text>
+                <View style={{ flex: 1 }} />
+                <Pressable
+                  onPress={async () => {
+                    if (ytDownloadingAll) {
+                      // Second tap → cancel
+                      cancelBatchRef.current = true;
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      return;
+                    }
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                    cancelBatchRef.current = false;
+                    setYtDownloadingAll(true);
+                    const base = process.env.EXPO_PUBLIC_BACKEND_URL!;
+                    try {
+                      for (const item of ytRelated) {
+                        if (cancelBatchRef.current) break;
+                        const id = `yt-${item.videoId}`;
+                        if (isTrackDownloaded(id)) continue;
+                        const t = {
+                          id,
+                          title: item.title,
+                          artist: item.channelName,
+                          artwork: item.thumbnailUrl,
+                          duration: item.duration ?? 0,
+                          artistId: '', album: '', albumId: '', isLiked: false,
+                          source: 'youtube_music' as const,
+                          youtubeId: item.videoId,
+                          youtubeMusicId: item.videoId,
+                          audioUrl: '',
+                        };
+                        setBatchActiveId(id);
+                        setBatchProgress(0);
+                        try { await downloadYouTubeTrack(t, base, (p) => setBatchProgress(p)); } catch {}
+                      }
+                    } finally {
+                      setBatchActiveId(null);
+                      setBatchProgress(0);
+                      setYtDownloadingAll(false);
+                      cancelBatchRef.current = false;
+                    }
+                  }}
+                  style={{
+                    width: 32, height: 32, borderRadius: 16,
+                    backgroundColor: ytDownloadingAll ? 'rgba(255,0,0,0.12)' : '#FF0000',
+                    alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  {ytDownloadingAll ? (
+                    <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                      <Svg width={28} height={28} style={{ position: 'absolute' }}>
+                        <Circle cx={14} cy={14} r={12} stroke="rgba(59,130,246,0.2)" strokeWidth={2.5} fill="none" />
+                        <Circle cx={14} cy={14} r={12} stroke="#3B82F6" strokeWidth={2.5} fill="none"
+                          strokeDasharray={`${2 * Math.PI * 12}`}
+                          strokeDashoffset={2 * Math.PI * 12 * (1 - Math.min(batchProgress, 1))}
+                          strokeLinecap="round" rotation="-90" origin="14, 14" />
+                      </Svg>
+                      <X size={12} color="#3B82F6" strokeWidth={3} />
+                    </View>
+                  ) : (
+                    <Download size={15} color="#fff" strokeWidth={2.5} />
+                  )}
+                </Pressable>
               </View>
               {ytRelated.map((item) => {
+                const id = `yt-${item.videoId}`;
                 const t = {
-                  id: `yt-${item.videoId}`,
+                  id,
                   title: item.title,
                   artist: item.channelName,
                   artwork: item.thumbnailUrl,
@@ -1065,21 +1177,67 @@ export default function NowPlayingScreen() {
                   youtubeMusicId: item.videoId,
                   audioUrl: '',
                 };
-                return (
+                const isBatchTarget = batchActiveId === id;
+                const pct = Math.round(batchProgress * 100);
+                const isDownloaded = isTrackDownloaded(id);
+                const row = (
                   <Pressable
-                    key={item.videoId}
                     onPress={() => { playTrack(t, [t]); setShowQueue(false); }}
-                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 9 }}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      paddingHorizontal: 20,
+                      paddingVertical: 9,
+                      backgroundColor: isBatchTarget ? 'rgba(255,0,0,0.08)' : '#0A0A0A',
+                    }}
                   >
                     <Image source={{ uri: item.thumbnailUrl }} style={{ width: 46, height: 46, borderRadius: 6 }} contentFit="cover" />
                     <View style={{ flex: 1, marginLeft: 12 }}>
                       <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{item.title}</Text>
                       <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 2 }} numberOfLines={1}>{item.channelName}</Text>
+                      {isBatchTarget ? (
+                        <View style={{ marginTop: 6, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,0,0,0.15)', overflow: 'hidden' }}>
+                          <View style={{ height: 3, width: `${Math.max(2, pct)}%`, backgroundColor: '#FF0000' }} />
+                        </View>
+                      ) : null}
                     </View>
-                    <View onStartShouldSetResponder={() => true}>
-                      <DownloadButton track={t} size={26} />
+                    <View onStartShouldSetResponder={() => true} style={{ minWidth: 44, alignItems: 'center' }}>
+                      {isBatchTarget ? (
+                        <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, backgroundColor: 'rgba(255,0,0,0.15)' }}>
+                          <Text style={{ color: '#FF0000', fontSize: 11, fontWeight: '700' }}>{pct}%</Text>
+                        </View>
+                      ) : (
+                        <DownloadButton track={t} size={26} />
+                      )}
                     </View>
                   </Pressable>
+                );
+                return (
+                  <ReanimatedSwipeable
+                    key={item.videoId}
+                    friction={2}
+                    rightThreshold={60}
+                    onSwipeableWillOpen={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
+                    renderRightActions={(progress) => (
+                      <SwipeActions
+                        progress={progress}
+                        onQueue={() => {
+                          addToQueue(t);
+                          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                        }}
+                        onDelete={
+                          isDownloaded
+                            ? () => {
+                                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                                removeDownload(id);
+                              }
+                            : undefined
+                        }
+                      />
+                    )}
+                  >
+                    {row}
+                  </ReanimatedSwipeable>
                 );
               })}
             </>
@@ -1093,10 +1251,71 @@ export default function NowPlayingScreen() {
                   <Text style={{ color: '#fff', fontSize: 7, fontWeight: '900', letterSpacing: -0.5 }}>)))</Text>
                 </View>
                 <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase' }}>Vybe Waves</Text>
+                <View style={{ flex: 1 }} />
+                <Pressable
+                  onPress={async () => {
+                    if (scDownloadingAll) {
+                      cancelBatchRef.current = true;
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      return;
+                    }
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                    cancelBatchRef.current = false;
+                    setScDownloadingAll(true);
+                    const base = process.env.EXPO_PUBLIC_BACKEND_URL!;
+                    try {
+                      for (const item of scRelated) {
+                        if (cancelBatchRef.current) break;
+                        const id = `sc-${item.trackId}`;
+                        if (isTrackDownloaded(id)) continue;
+                        const t = {
+                          id,
+                          title: item.title,
+                          artist: item.artist,
+                          artwork: item.artwork,
+                          duration: item.duration,
+                          artistId: '', album: '', albumId: '', isLiked: false,
+                          source: 'soundcloud' as const,
+                          soundcloudUrl: item.soundcloudUrl,
+                          audioUrl: item.soundcloudUrl,
+                        };
+                        setBatchActiveId(id);
+                        setBatchProgress(0);
+                        try { await downloadSoundCloudTrack(t, base, (p) => setBatchProgress(p)); } catch {}
+                      }
+                    } finally {
+                      setBatchActiveId(null);
+                      setBatchProgress(0);
+                      setScDownloadingAll(false);
+                      cancelBatchRef.current = false;
+                    }
+                  }}
+                  style={{
+                    width: 32, height: 32, borderRadius: 16,
+                    backgroundColor: scDownloadingAll ? 'rgba(255,85,0,0.12)' : '#FF5500',
+                    alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  {scDownloadingAll ? (
+                    <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                      <Svg width={28} height={28} style={{ position: 'absolute' }}>
+                        <Circle cx={14} cy={14} r={12} stroke="rgba(59,130,246,0.2)" strokeWidth={2.5} fill="none" />
+                        <Circle cx={14} cy={14} r={12} stroke="#3B82F6" strokeWidth={2.5} fill="none"
+                          strokeDasharray={`${2 * Math.PI * 12}`}
+                          strokeDashoffset={2 * Math.PI * 12 * (1 - Math.min(batchProgress, 1))}
+                          strokeLinecap="round" rotation="-90" origin="14, 14" />
+                      </Svg>
+                      <X size={12} color="#3B82F6" strokeWidth={3} />
+                    </View>
+                  ) : (
+                    <Download size={15} color="#fff" strokeWidth={2.5} />
+                  )}
+                </Pressable>
               </View>
               {scRelated.map((item) => {
+                const id = `sc-${item.trackId}`;
                 const t = {
-                  id: `sc-${item.trackId}`,
+                  id,
                   title: item.title,
                   artist: item.artist,
                   artwork: item.artwork,
@@ -1106,21 +1325,67 @@ export default function NowPlayingScreen() {
                   soundcloudUrl: item.soundcloudUrl,
                   audioUrl: item.soundcloudUrl,
                 };
-                return (
+                const isBatchTarget = batchActiveId === id;
+                const pct = Math.round(batchProgress * 100);
+                const isDownloaded = isTrackDownloaded(id);
+                const row = (
                   <Pressable
-                    key={item.trackId}
                     onPress={() => { playTrack(t, [t]); setShowQueue(false); }}
-                    style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 9 }}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      paddingHorizontal: 20,
+                      paddingVertical: 9,
+                      backgroundColor: isBatchTarget ? 'rgba(255,85,0,0.08)' : '#0A0A0A',
+                    }}
                   >
                     <Image source={{ uri: item.artwork }} style={{ width: 46, height: 46, borderRadius: 6 }} contentFit="cover" />
                     <View style={{ flex: 1, marginLeft: 12 }}>
                       <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{item.title}</Text>
                       <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 2 }} numberOfLines={1}>{item.artist}</Text>
+                      {isBatchTarget ? (
+                        <View style={{ marginTop: 6, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,85,0,0.15)', overflow: 'hidden' }}>
+                          <View style={{ height: 3, width: `${Math.max(2, pct)}%`, backgroundColor: '#FF5500' }} />
+                        </View>
+                      ) : null}
                     </View>
-                    <View onStartShouldSetResponder={() => true}>
-                      <DownloadButton track={t} size={26} />
+                    <View onStartShouldSetResponder={() => true} style={{ minWidth: 44, alignItems: 'center' }}>
+                      {isBatchTarget ? (
+                        <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, backgroundColor: 'rgba(255,85,0,0.15)' }}>
+                          <Text style={{ color: '#FF5500', fontSize: 11, fontWeight: '700' }}>{pct}%</Text>
+                        </View>
+                      ) : (
+                        <DownloadButton track={t} size={26} />
+                      )}
                     </View>
                   </Pressable>
+                );
+                return (
+                  <ReanimatedSwipeable
+                    key={item.trackId}
+                    friction={2}
+                    rightThreshold={60}
+                    onSwipeableWillOpen={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
+                    renderRightActions={(progress) => (
+                      <SwipeActions
+                        progress={progress}
+                        onQueue={() => {
+                          addToQueue(t);
+                          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                        }}
+                        onDelete={
+                          isDownloaded
+                            ? () => {
+                                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                                removeDownload(id);
+                              }
+                            : undefined
+                        }
+                      />
+                    )}
+                  >
+                    {row}
+                  </ReanimatedSwipeable>
                 );
               })}
             </>
@@ -1133,5 +1398,13 @@ export default function NowPlayingScreen() {
       </View>
     </Modal>
     </>
+  );
+}
+
+export default function NowPlayingRouteScreen() {
+  return (
+    <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
+      <NowPlayingScreenContent />
+    </View>
   );
 }

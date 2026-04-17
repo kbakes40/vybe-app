@@ -1,19 +1,29 @@
 import { create } from 'zustand';
-import { AppState, AppStateStatus } from 'react-native';
+import { AppState, AppStateStatus, NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { Audio, AVPlaybackStatus, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 import { Track, TrackSource, RepeatMode } from '@/types/music';
 import * as Haptics from 'expo-haptics';
 import { isEventObject, isValidTrack, isValidId } from '@/lib/eventGuard';
 import { useRecentsStore } from '@/stores/recentsStore';
 import { updateNowPlaying, updateNowPlayingProgress, clearNowPlaying, registerRemoteHandlers, setNowPlayingArtwork } from '@/lib/NowPlayingManager';
-import { startNowPlayingActivity, updateNowPlayingActivity, endNowPlayingActivity, formatTime } from '@/lib/NowPlayingActivityManager';
+import { startNowPlayingActivity, updateNowPlayingActivity, endNowPlayingActivity } from '@/lib/NowPlayingActivityManager';
 import { usePlaybackSettingsStore } from '@/stores/playbackSettingsStore';
 import { useDownloadsStore, downloadSoundCloudTrack, enqueueDownload } from '@/stores/downloadsStore';
+import { openNowPlayingSheet } from '@/lib/openNowPlayingSheet';
+import {
+  getCachedYoutubeResolveUrl,
+  preResolveYoutubeVideoId,
+  resolveYoutubeUrlForPlayback,
+  resolveYoutubeUrlForPlaybackWithBudget,
+} from '@/lib/youtubeResolvePreloadCache';
+import {
+  preResolveSoundcloudStreamUrl,
+  resolveSoundcloudStreamUrlForPlayback,
+  resolveSoundcloudStreamUrlWithBudget,
+} from '@/lib/soundcloudStreamPreloadCache';
 // Lazy-cached refs to avoid circular dependency + dynamic require overhead
 let _subStore: any = null;
-let _adStore: any = null;
 function getSubStore() { return _subStore ?? (_subStore = require('./subscriptionStore').useSubscriptionStore); }
-function getAdStore() { return _adStore ?? (_adStore = require('../lib/ads/use-ad-break').useAdBreakStore); }
 
 /**
  * Unified Playback Controller
@@ -61,6 +71,32 @@ let audioSessionInitialized = false;
 // Each call captures its own ID; before starting audio it checks if it's
 // still the latest request. If not, it bails out immediately.
 let playRequestCounter = 0;
+
+// Ghost progress bar + latency probe (YouTube fast-start UX)
+let ghostProgressTimer: ReturnType<typeof setInterval> | null = null;
+
+function clearGhostProgress() {
+  if (ghostProgressTimer) {
+    clearInterval(ghostProgressTimer);
+    ghostProgressTimer = null;
+  }
+}
+
+function startGhostProgressForTrack(trackId: string, estDurationSec: number) {
+  clearGhostProgress();
+  const dur = estDurationSec > 45 ? estDurationSec : 200;
+  const t0 = Date.now();
+  ghostProgressTimer = setInterval(() => {
+    const st = usePlaybackController.getState();
+    if (st.currentTrack?.id !== trackId) {
+      clearGhostProgress();
+      return;
+    }
+    const elapsed = (Date.now() - t0) / 1000;
+    const ghostSec = Math.min(dur * 0.14, elapsed * dur * 0.04);
+    usePlaybackController.setState({ progress: ghostSec, playbackState: 'playing' });
+  }, 100);
+}
 
 // ── Crossfade state ───────────────────────────────────────────────────────────
 let crossfadeSound: Audio.Sound | null = null;   // next track being faded in
@@ -122,7 +158,8 @@ async function triggerCrossfade(fadeSecs: number) {
     const ytId = (nextTrack as Track & { youtubeId?: string; youtubeMusicId?: string }).youtubeId
       || (nextTrack as Track & { youtubeId?: string; youtubeMusicId?: string }).youtubeMusicId;
     if (!ytId) return;
-    nextUri = `${backendBase}/api/youtube/audio/${ytId}`;
+    const cached = getCachedYoutubeResolveUrl(ytId);
+    nextUri = cached ?? `${backendBase}/api/youtube/audio/${ytId}`;
   } else {
     nextUri = nextTrack.audioUrl || '';
   }
@@ -274,7 +311,7 @@ async function autoFillQueue(seedTrack: Track, currentQueue: Track[], playNext =
 
     if (playNext) {
       const nextIndex = state.queue.length; // first newly added track
-      state.playTrack(related[0], newQueue);
+      state.playTrack(related[0], newQueue, { expandNowPlaying: false });
       usePlaybackController.setState({ queueIndex: nextIndex });
     }
   } catch (e) {
@@ -398,10 +435,6 @@ interface PlaybackControllerState {
   // Preload state
   preparedTrackId: string | null;
 
-  // Ad-break pending track (track queued while ad was playing)
-  pendingTrackAfterAd: Track | null;
-  pendingQueueAfterAd: Track[] | null;
-
   // Silent playback detection
   lastProgressTime: number;
   silentRetryCount: number;
@@ -411,7 +444,7 @@ interface PlaybackControllerState {
   isAirPlayConnected: boolean;
 
   // Actions
-  playTrack: (track: Track, queue?: Track[]) => Promise<void>;
+  playTrack: (track: Track, queue?: Track[], options?: { expandNowPlaying?: boolean }) => Promise<void>;
   play: () => Promise<void>;
   pause: () => Promise<void>;
   stop: () => Promise<void>;
@@ -450,6 +483,7 @@ interface PlaybackControllerState {
 // Stop VYBE native audio only
 const stopVybeAudio = async (): Promise<void> => {
   clearCrossfadeState();
+  clearGhostProgress();
   if (vybeSound) {
     try {
       await vybeSound.stopAsync();
@@ -517,13 +551,11 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
   volume: 1,
   likedTracks: new Set<string>(),
   preparedTrackId: null,
-  pendingTrackAfterAd: null,
-  pendingQueueAfterAd: null,
   lastProgressTime: 0,
   silentRetryCount: 0,
   isAirPlayConnected: false,
 
-  playTrack: async (track: Track, queue?: Track[]) => {
+  playTrack: async (track: Track, queue?: Track[], options?: { expandNowPlaying?: boolean }) => {
     // Guard against event objects being passed as track
     if (isEventObject(track) || !isValidTrack(track)) {
       if (__DEV__) {
@@ -533,26 +565,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-    // If an ad is currently playing, block all new playback
-    try {
-      const adState = getAdStore().getState();
-      if (adState.isAdBreak && !adState.resumingFromAd) return;
-
-      // Free tier: check if ad break should fire
-      if (!adState.resumingFromAd) {
-        const subState = getSubStore().getState();
-        if (subState.tier === 'free') {
-          const shouldShowAd = subState.recordTrackPlay();
-          if (shouldShowAd) {
-            // Store track as pending — play it after the ad finishes
-            set({ pendingTrackAfterAd: track, pendingQueueAfterAd: queue ?? [track] });
-            adState.startAdBreak();
-            return;
-          }
-        }
-      }
-    } catch {}
 
     // Claim this play slot — any in-flight playTrack call with an older ID will abort
     const myRequestId = ++playRequestCounter;
@@ -595,6 +607,20 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       silentRetryCount: 0,
     });
 
+    // Open the in-app sheet when the user starts playback from a list (not skip / auto-advance).
+    if (options?.expandNowPlaying !== false) {
+      openNowPlayingSheet();
+    }
+
+    // YouTube / YouTube Music / SoundCloud: show Play→Pause immediately while buffers fill.
+    if (
+      source === 'youtube' ||
+      source === 'youtube_music' ||
+      (source === 'soundcloud' && !!(track as Track & { soundcloudUrl?: string }).soundcloudUrl)
+    ) {
+      set({ playbackState: 'playing' });
+    }
+
     // Auto-fill queue with related downloaded tracks if no upcoming songs
     const upcomingCount = newQueue.length - trackIndex - 1;
     if (upcomingCount === 0) {
@@ -615,9 +641,20 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     startNowPlayingActivity(track.title, track.artist, track.artwork ?? '', track.duration || 0);
     startNowPlayingInterval();
 
+    // Downloads-store fast path — if this track has been downloaded (any source),
+    // resolve the local file path BEFORE checking audioUrl. Most tracks passed
+    // from home/search/playlist screens carry a remote audioUrl (or empty) even
+    // after being downloaded, so we have to look them up by id.
+    const dlHit = useDownloadsStore.getState().getDownloadedTrack(track.id);
+    const localUri = dlHit?.localFilePath || (track.audioUrl?.startsWith('file://') ? track.audioUrl : null);
+    if (localUri) {
+      console.log('[PlaybackController] playing from local file:', localUri);
+      track = { ...track, audioUrl: localUri };
+    }
+
     // If the track has been downloaded locally, always play from the local file
     // regardless of its original source (handles downloaded SoundCloud/YouTube tracks)
-    if (track.audioUrl?.startsWith('file://')) {
+    if (localUri) {
       const ytVideoIdForDownload = track.youtubeId || track.youtubeMusicId;
       const isYt = (source === 'youtube' || source === 'youtube_music') && !!ytVideoIdForDownload;
       // Mutable so the background /info fetch below can correct an inflated
@@ -648,7 +685,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
       try {
         const { sound, status } = await Audio.Sound.createAsync(
-          { uri: track.audioUrl },
+          { uri: localUri },
           { shouldPlay: true, volume: get().volume },
           (status: AVPlaybackStatus) => {
             const { currentTrack } = get();
@@ -707,38 +744,76 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       return;
     }
 
-    // YouTube tracks: stream via backend yt-dlp proxy (IFrame API blocks most embeds)
+    // YouTube tracks: stream via backend proxy and/or pre-resolved CDN URL (mobile-only warm cache).
     const ytVideoId = track.youtubeId || track.youtubeMusicId;
     if ((source === 'youtube' || source === 'youtube_music') && ytVideoId) {
-      const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
-      const audioUrl = `${backendBase}/api/youtube/audio/${ytVideoId}`;
-      console.log('[PlaybackController] YouTube via backend proxy:', audioUrl);
+      const playTapAt = Date.now();
+      let ghostCleared = false;
+      const clearGhostOnce = () => {
+        if (ghostCleared) return;
+        ghostCleared = true;
+        clearGhostProgress();
+      };
 
-      // Fetch the real video duration from /info. Some YouTube DASH audio
-      // formats ship an m4a container whose mvhd duration is ~2x the actual
-      // audio length — AVPlayer believes that duration and plays silence
-      // for the second half until it finally hits `didJustFinish`. Having
-      // the real duration lets us (1) display the correct time bar and
-      // (2) advance to the next track as soon as audio actually ends.
-      let realDurationSec = track.duration || 0;
-      if (realDurationSec <= 0) {
-        try {
-          const infoResp = await fetch(`${backendBase}/api/youtube/info/${ytVideoId}`);
-          if (infoResp.ok) {
-            const infoJson = (await infoResp.json()) as { data?: { duration?: number } };
-            const d = infoJson.data?.duration ?? 0;
-            if (d > 0) realDurationSec = d;
-          }
-        } catch {
-          // non-fatal — we'll fall back to whatever AVPlayer reports
-        }
+      const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
+      const proxyUrl = `${backendBase}/api/youtube/audio/${ytVideoId}`;
+
+      // Parallel resolve: budgeted URL for immediate play + unbounded fetch to fill cache.
+      set({ playbackState: 'playing' });
+      startGhostProgressForTrack(track.id, track.duration || 0);
+      preResolveYoutubeVideoId(ytVideoId);
+      void resolveYoutubeUrlForPlayback(ytVideoId);
+
+      const q0 = get().queue;
+      const qi0 = get().queueIndex;
+      for (let i = 1; i <= 2 && qi0 + i < q0.length; i++) {
+        const n = q0[qi0 + i];
+        const nid = n.youtubeId || n.youtubeMusicId;
+        if (nid) preResolveYoutubeVideoId(nid);
       }
 
-      // Bail if the user switched tracks while we were fetching /info.
-      if (!isStillCurrent()) { await stopVybeAudio(); return; }
+      const directUrl = await resolveYoutubeUrlForPlaybackWithBudget(ytVideoId, 2_800);
+      const playUri = directUrl ?? proxyUrl;
+      if (__DEV__) {
+        console.log(
+          '[PlaybackController] YouTube play:',
+          directUrl ? 'CDN (pre-resolved)' : 'proxy',
+          playUri.split('?')[0].slice(0, 96),
+        );
+      }
 
-      // Publish the real duration up-front so the time bar is correct
-      // before the first audio status update arrives.
+      if (Platform.OS === 'ios') {
+        import('@/stores/prefetchStore')
+          .then(({ queueYoutubeHeadPrefetchForPlayback }) => {
+            void queueYoutubeHeadPrefetchForPlayback(
+              track,
+              get().queue,
+              get().queueIndex,
+              playUri,
+              backendBase,
+            );
+          })
+          .catch(() => {});
+      }
+
+      // Mutable duration for DASH/container override logic — never block play on /info.
+      let realDurationSec = track.duration || 0;
+      void fetch(`${backendBase}/api/youtube/info/${ytVideoId}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((infoJson: { data?: { duration?: number } } | null) => {
+          const d = infoJson?.data?.duration ?? 0;
+          if (d > 0) {
+            realDurationSec = d;
+            if (get().currentTrack?.id === track.id) set({ duration: d });
+          }
+        })
+        .catch(() => {});
+
+      if (!isStillCurrent()) {
+        await stopVybeAudio();
+        return;
+      }
+
       if (realDurationSec > 0) {
         set({ duration: realDurationSec });
       }
@@ -752,6 +827,18 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
           const { currentTrack } = get();
           if (currentTrack?.id !== track.id) return;
           if (status.isLoaded) {
+            if (
+              !ghostCleared &&
+              (status.isPlaying || (status.positionMillis ?? 0) > 40)
+            ) {
+              clearGhostOnce();
+              if (__DEV__) {
+                console.log(
+                  `[PlaybackLatency] tap→playback ~${Date.now() - playTapAt}ms (${track.title.slice(0, 40)})`,
+                );
+              }
+            }
+
             const progressSec = status.positionMillis / 1000;
             const rawDurationSec = (status.durationMillis ?? 0) / 1000;
 
@@ -812,23 +899,26 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
               }
             }
           } else if ('error' in status && status.error) {
+            clearGhostOnce();
             console.error('[PlaybackController] Playback error:', status.error);
             set({ playbackState: 'error', error: 'Playback failed' });
           }
         });
 
-        await sound.loadAsync({ uri: audioUrl }, { shouldPlay: false, volume: get().volume });
+        await sound.loadAsync({ uri: playUri }, { shouldPlay: false, volume: get().volume });
         if (!isStillCurrent()) {
           sound.stopAsync().catch(() => {});
           sound.unloadAsync().catch(() => {});
           // Only clear the global ref if it still points to us — otherwise a
           // newer playTrack already took over and we'd orphan its sound.
           if (vybeSound === sound) vybeSound = null;
+          clearGhostOnce();
           return;
         }
         await sound.playAsync();
         set({ playbackState: 'playing' });
       } catch (error) {
+        clearGhostProgress();
         const msg = error instanceof Error ? error.message : 'Unknown error';
         console.error('[PlaybackController] YouTube proxy error:', msg);
         set({ playbackState: 'error', error: `Failed to play: ${msg}` });
@@ -836,14 +926,24 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       return;
     }
 
-    // SoundCloud tracks: stream low-quality first for fast start,
-    // then background-download the HQ version and seamlessly switch.
+    // SoundCloud: prefer direct HLS/progressive URL from /stream-url (native AVPlayer),
+    // parallel unbounded resolve + fall back to low-quality proxy if budget misses.
     const scUrl = (track as Track & { soundcloudUrl?: string }).soundcloudUrl;
     if (source === 'soundcloud' && scUrl) {
       const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
-      // Low-quality stream loads ~3x faster than best audio
       const lqUrl = `${backendBase}/api/soundcloud/audio?url=${encodeURIComponent(scUrl)}&quality=low`;
-      console.log('[PlaybackController] SoundCloud LQ stream start:', lqUrl);
+
+      preResolveSoundcloudStreamUrl(scUrl);
+      void resolveSoundcloudStreamUrlForPlayback(scUrl);
+      const directSc = await resolveSoundcloudStreamUrlWithBudget(scUrl, 2_400);
+      const playScUri = directSc ?? lqUrl;
+      if (__DEV__) {
+        console.log(
+          '[PlaybackController] SoundCloud play:',
+          directSc ? 'direct CDN/HLS' : 'proxy LQ',
+          playScUri.split('?')[0].slice(0, 88),
+        );
+      }
 
       const makeSCStatusCallback = (snd: Audio.Sound) => (status: AVPlaybackStatus) => {
         const { currentTrack } = get();
@@ -872,7 +972,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         const sound = new Audio.Sound();
         vybeSound = sound;
         sound.setOnPlaybackStatusUpdate(makeSCStatusCallback(sound));
-        await sound.loadAsync({ uri: lqUrl }, { shouldPlay: false, volume: get().volume });
+        await sound.loadAsync({ uri: playScUri }, { shouldPlay: false, volume: get().volume });
         if (!isStillCurrent()) {
           sound.stopAsync().catch(() => {});
           sound.unloadAsync().catch(() => {});
@@ -1098,18 +1198,34 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
   },
 
   seekTo: async (seconds: number) => {
-    const { currentSource } = get();
+    const { currentSource, duration, playbackState } = get();
+    let clamped = Math.max(0, seconds);
+    if (duration > 0) {
+      clamped = Math.min(clamped, Math.max(duration - 0.25, 0));
+    }
+
+    // UI + lock screen update immediately; native/WebView seek completes async.
+    set({ progress: clamped, lastProgressTime: Date.now() });
+    updateNowPlayingProgress(clamped, playbackState === 'playing');
 
     if (vybeSound) {
-      await vybeSound.setPositionAsync(seconds * 1000);
+      try {
+        await vybeSound.setPositionAsync(clamped * 1000);
+      } catch {
+        /* position rejected — progress already optimistic */
+      }
     } else {
       const adapter = getAdapterForSource(currentSource ?? undefined);
       if (adapter) {
-        await adapter.seek(seconds);
+        try {
+          await adapter.seek(clamped);
+        } catch {
+          /* same */
+        }
       }
     }
 
-    set({ progress: seconds });
+    set({ progress: clamped, lastProgressTime: Date.now() });
   },
 
   next: () => {
@@ -1140,7 +1256,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
     const nextTrack = queue[nextIndex];
     if (nextTrack) {
-      get().playTrack(nextTrack, queue);
+      get().playTrack(nextTrack, queue, { expandNowPlaying: false });
     }
   },
 
@@ -1159,7 +1275,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     const prevIndex = queueIndex > 0 ? queueIndex - 1 : queue.length - 1;
     const prevTrack = queue[prevIndex];
     if (prevTrack) {
-      get().playTrack(prevTrack, queue);
+      get().playTrack(prevTrack, queue, { expandNowPlaying: false });
     }
   },
 
@@ -1422,7 +1538,6 @@ export const stopVybeNativeAudio = stopVybeAudio;
 // ── AirPlay artwork re-push ──────────────────────────────────────────────────
 // When AirPlay connects, Apple TV needs the album artwork pushed again
 // because it can't fetch URLs on its own — it needs the image data.
-import { NativeModules, NativeEventEmitter, Platform } from 'react-native';
 if (Platform.OS === 'ios') {
   try {
     const { VybeNowPlaying } = NativeModules;

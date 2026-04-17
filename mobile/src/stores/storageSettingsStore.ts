@@ -76,3 +76,23 @@ export async function getDownloadDir(): Promise<{ dir: string; isICloud: boolean
   await FileSystem.makeDirectoryAsync(localDir, { intermediates: true });
   return { dir: localDir, isICloud: false };
 }
+
+/** Offline cache under Caches (not surfaced in Files app). Used by Shadow Sync. */
+export async function getShadowSyncDir(): Promise<string> {
+  const root = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
+  if (!root) throw new Error('[ShadowSync] No writable directory');
+  const dir = `${root}shadow_cache/`;
+  await FileSystem.makeDirectoryAsync(dir, { intermediates: true }).catch(() => null);
+  return dir;
+}
+
+/** Stable hashed filename — avoids predictable titles in the filesystem. */
+export function shadowSyncFilename(trackId: string, ext: 'm4a' | 'mp3' = 'm4a'): string {
+  let h = 5381;
+  for (let i = 0; i < trackId.length; i++) {
+    h = ((h << 5) + h) ^ trackId.charCodeAt(i);
+  }
+  const hex = (h >>> 0).toString(16);
+  const safe = trackId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 48);
+  return `${hex}_${safe}.${ext}`;
+}

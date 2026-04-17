@@ -158,10 +158,14 @@ export default function OnboardingScreen() {
       console.log('Could not save preferences:', error);
     } finally {
       setIsLoading(false);
-      // After onboarding, always show the paywall / "Your Plan" screen so
-      // new users see the subscription options before they land on the
-      // tabs. Users can dismiss it to continue on the free plan.
-      router.replace('/(app)/your-plan');
+      // After onboarding, always show the paywall so new users see the
+      // Vybe+ subscription options before landing on the tabs. Users can
+      // tap "Not now" to continue on the free plan.
+      if (__DEV__) {
+        router.replace('/(app)/(tabs)');
+      } else {
+        router.replace('/(app)/upgrade');
+      }
     }
   };
 

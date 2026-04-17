@@ -21,13 +21,21 @@ import type { BeatMatchRadioSettings } from '../types/discovery';
 
 const discoveryRouter = new Hono();
 
+/** Coerce floats / numeric strings to non-negative ints (mobile may send 122.34s as duration). */
+const optionalNonNegInt = z.preprocess((val) => {
+  if (val === null || val === undefined || val === '') return undefined;
+  const n = Math.floor(Number(val));
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  return n;
+}, z.number().int().min(0).optional());
+
 // Validation schemas
 const listeningSignalSchema = z.object({
   trackId: z.string().min(1),
   signalType: z.enum(['play', 'complete', 'skip', 'save', 'replay', 'unlike']),
-  listenDuration: z.number().int().min(0).optional(),
-  trackDuration: z.number().int().min(0).optional(),
-  skipPosition: z.number().int().min(0).optional(),
+  listenDuration: optionalNonNegInt,
+  trackDuration: optionalNonNegInt,
+  skipPosition: optionalNonNegInt,
 });
 
 const hideArtistSchema = z.object({

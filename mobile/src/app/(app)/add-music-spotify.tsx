@@ -217,8 +217,8 @@ export default function AddMusicSpotifyScreen() {
             <Text style={{ color: '#000', fontSize: 18, fontWeight: '900' }}>♫</Text>
           </View>
           <View>
-            <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>Spotify</Text>
-            <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13 }}>Plays via YouTube</Text>
+            <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>Stream Library</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13 }}>Stream playlists</Text>
           </View>
         </View>
         <Pressable
@@ -276,7 +276,7 @@ export default function AddMusicSpotifyScreen() {
 
           {/* Search — same pattern as YouTube / YouTube Music / SoundCloud */}
           <View style={{ backgroundColor: 'rgba(29,185,84,0.08)', borderRadius: 16, padding: 16, marginBottom: 16 }}>
-            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 12 }}>Search Spotify</Text>
+            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 12 }}>Search Stream Library</Text>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12, height: 44 }}>
                 <Search size={14} color="rgba(255,255,255,0.3)" />
@@ -350,7 +350,7 @@ export default function AddMusicSpotifyScreen() {
           {loading && (
             <View style={{ alignItems: 'center', paddingVertical: 40 }}>
               <ActivityIndicator size="large" color="#1DB954" />
-              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 14, marginTop: 14 }}>Finding tracks on YouTube…</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 14, marginTop: 14 }}>Finding tracks…</Text>
             </View>
           )}
 
@@ -368,7 +368,7 @@ export default function AddMusicSpotifyScreen() {
                 )}
                 <View style={{ flex: 1, marginLeft: 14 }}>
                   <Text style={{ color: '#fff', fontWeight: '700', fontSize: 17 }} numberOfLines={1}>{result.name}</Text>
-                  <Text style={{ color: '#1DB954', fontSize: 13, marginTop: 2 }}>via Spotify · {playlistTracks.length} tracks</Text>
+                  <Text style={{ color: '#1DB954', fontSize: 13, marginTop: 2 }}>Stream Library · {playlistTracks.length} tracks</Text>
                 </View>
                 <Pressable
                   onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(playlistTracks[0], playlistTracks); }}

@@ -1,10 +1,10 @@
 import React, { useMemo, useEffect, useState, useCallback } from 'react';
-import { View, Text, ScrollView, Pressable, Dimensions } from 'react-native';
+import { View, Text, ScrollView, Pressable, Dimensions, Share, Modal } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Play, Shuffle, Sparkles, Music2 } from 'lucide-react-native';
+import { ChevronLeft, Play, Shuffle, Sparkles, Music2, Download, Share2, MoreVertical, ListPlus, X } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { useDiscoverFeedStore, DiscoverItem } from '@/stores/discoverFeedStore';
@@ -232,6 +232,9 @@ export default function VybeBeatsScreen() {
     return () => { cancelled = true; };
   }, [preferences?.favoriteArtists, tracks]);
 
+  const addToQueue = usePlaybackController((s) => s.addToQueue);
+  const [moreOpen, setMoreOpen] = useState(false);
+
   const handlePlayAll = () => {
     if (tracks.length === 0) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -241,8 +244,25 @@ export default function VybeBeatsScreen() {
   const handleShuffle = () => {
     if (tracks.length === 0) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setMoreOpen(false);
     const shuffled = [...tracks].sort(() => Math.random() - 0.5);
     playTrack(shuffled[0], shuffled);
+  };
+
+  const handleShare = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try {
+      const lines = tracks.slice(0, 10).map(t => `• ${t.title} — ${t.artist}`).join('\n');
+      const more = tracks.length > 10 ? `\n…and ${tracks.length - 10} more` : '';
+      await Share.share({ message: `Vybe Beats — hand-picked SoundCloud finds:\n${lines}${more}` });
+    } catch {}
+  };
+
+  const handleAddAllToQueue = () => {
+    if (tracks.length === 0) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setMoreOpen(false);
+    tracks.forEach(t => addToQueue(t));
   };
 
   const handlePlayTrack = (index: number) => {
@@ -362,21 +382,64 @@ export default function VybeBeatsScreen() {
           </View>
         </LinearGradient>
 
-        {/* Action bar */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, backgroundColor: '#0A0A0A' }}>
-          <View style={{ flex: 1 }} />
-          <Pressable onPress={handleShuffle} style={{ padding: 8, marginRight: 8 }}>
-            <Shuffle size={26} color="#8B5CF6" />
-          </Pressable>
+        {/* Action bar — matches the YT Music playlist layout */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, gap: 12, backgroundColor: '#0A0A0A' }}>
+          <View
+            style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(139,92,246,0.15)', alignItems: 'center', justifyContent: 'center' }}
+          >
+            <Download size={20} color="#8B5CF6" />
+          </View>
           <AnimatedPressable
             onPress={handlePlayAll}
-            onPressIn={() => { playScale.value = withSpring(0.88); }}
+            onPressIn={() => { playScale.value = withSpring(0.96); }}
             onPressOut={() => { playScale.value = withSpring(1); }}
-            style={[playButtonStyle, { width: 56, height: 56, borderRadius: 28, backgroundColor: '#8B5CF6', alignItems: 'center', justifyContent: 'center' }]}
+            disabled={tracks.length === 0}
+            style={[playButtonStyle, { flex: 1, height: 50, borderRadius: 25, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', opacity: tracks.length === 0 ? 0.4 : 1 }]}
           >
-            <Play size={26} color="#fff" fill="#fff" style={{ marginLeft: 3 }} />
+            <Play size={20} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 3 }} />
+            <Text style={{ color: '#0A0A0A', fontWeight: '700', fontSize: 15, marginLeft: 6 }}>Play All</Text>
           </AnimatedPressable>
+          <Pressable
+            onPress={handleShare}
+            disabled={tracks.length === 0}
+            style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center', opacity: tracks.length === 0 ? 0.4 : 1 }}
+          >
+            <Share2 size={20} color="#fff" />
+          </Pressable>
+          <Pressable
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setMoreOpen(true); }}
+            disabled={tracks.length === 0}
+            style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center', opacity: tracks.length === 0 ? 0.4 : 1 }}
+          >
+            <MoreVertical size={20} color="#fff" />
+          </Pressable>
         </View>
+
+        {/* More-actions bottom sheet */}
+        <Modal visible={moreOpen} transparent animationType="slide" onRequestClose={() => setMoreOpen(false)}>
+          <Pressable style={{ flex: 1, backgroundColor: 'transparent' }} onPress={() => setMoreOpen(false)}>
+            <View style={{ flex: 1 }} />
+            <Pressable onPress={() => {}} style={{ backgroundColor: '#1a1a1a', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingBottom: insets.bottom + 16 }}>
+              <View style={{ width: 36, height: 4, backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 2, alignSelf: 'center', marginTop: 10, marginBottom: 8 }} />
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12 }}>
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>Vybe Beats</Text>
+                <Pressable onPress={() => setMoreOpen(false)} hitSlop={10}><X size={22} color="rgba(255,255,255,0.6)" /></Pressable>
+              </View>
+              <Pressable onPress={handleShuffle} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 18 }}>
+                <Shuffle size={22} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '500', marginLeft: 16 }}>Shuffle play</Text>
+              </Pressable>
+              <Pressable onPress={handleAddAllToQueue} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 18 }}>
+                <ListPlus size={22} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '500', marginLeft: 16 }}>Add all to queue</Text>
+              </Pressable>
+              <Pressable onPress={() => { setMoreOpen(false); handleShare(); }} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 18 }}>
+                <Share2 size={22} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '500', marginLeft: 16 }}>Share</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
 
         {/* Tracks */}
         {tracks.length === 0 ? (

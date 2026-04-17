@@ -1,3 +1,6 @@
+// RevenueCat: loading this module runs `bootstrapPurchases()` (see purchases.ts); we also
+// call `configurePurchases()` once on mount so the native singleton exists before any child tree runs.
+import { configurePurchases } from '@/lib/purchases';
 import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -9,7 +12,6 @@ import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { Appearance } from 'react-native';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { VybePopupProvider } from '@/components/VybePopup';
-import { FlyAnimationOverlay } from '@/components/FlyAnimationOverlay';
 import { authClient } from '@/lib/auth/auth-client';
 
 // Force dark mode globally
@@ -101,6 +103,10 @@ function RootLayoutNav() {
 }
 
 export default function RootLayout() {
+  useEffect(() => {
+    configurePurchases();
+  }, []);
+
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
@@ -109,7 +115,6 @@ export default function RootLayout() {
             <VybePopupProvider>
               <StatusBar style="light" backgroundColor="transparent" translucent />
               <RootLayoutNav />
-              <FlyAnimationOverlay />
             </VybePopupProvider>
           </KeyboardProvider>
         </GestureHandlerRootView>

@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { View, Text, Pressable } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, Pressable, Animated as RNAnimated } from 'react-native';
 import { Image } from 'expo-image';
 import Animated, {
   useSharedValue,
@@ -10,9 +10,49 @@ import { Track } from '@/types/music';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useSoundCloudPreloadStore } from '@/stores/soundcloudPreloadStore';
 import { formatDuration } from '@/data/mockData';
-import { Play, MoreHorizontal } from 'lucide-react-native';
+import { Play } from 'lucide-react-native';
+import { DownloadButton } from './DownloadButton';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+/**
+ * EqBars — 3 vertical bars that pulse with the playing track. We don't have
+ * real audio-frequency data, so this is a seeded random "bouncy" animation
+ * that loops each bar independently at a different speed — visually reads as
+ * "this song is playing" without ever being wrong.
+ */
+function EqBars() {
+  const b0 = useRef(new RNAnimated.Value(12)).current;
+  const b1 = useRef(new RNAnimated.Value(8)).current;
+  const b2 = useRef(new RNAnimated.Value(16)).current;
+
+  useEffect(() => {
+    const animate = (bar: RNAnimated.Value, speed: number) => {
+      const loop = () => {
+        const next = 4 + Math.random() * 12; // 4px → 16px
+        RNAnimated.timing(bar, {
+          toValue: next,
+          duration: speed + Math.random() * 140,
+          useNativeDriver: false,
+        }).start(loop);
+      };
+      loop();
+    };
+    animate(b0, 180);
+    animate(b1, 240);
+    animate(b2, 200);
+  }, []);
+
+  return (
+    <View style={{ width: 16, height: 16, alignItems: 'center', justifyContent: 'center' }}>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: 16 }}>
+        <RNAnimated.View style={{ width: 2, height: b0, backgroundColor: '#8B5CF6', borderRadius: 1 }} />
+        <RNAnimated.View style={{ width: 2, height: b1, backgroundColor: '#8B5CF6', borderRadius: 1 }} />
+        <RNAnimated.View style={{ width: 2, height: b2, backgroundColor: '#8B5CF6', borderRadius: 1 }} />
+      </View>
+    </View>
+  );
+}
 
 interface TrackCardProps {
   track: Track;
@@ -77,13 +117,7 @@ export function TrackCard({ track, queue, showArtwork = true, index }: TrackCard
           className={`w-8 text-center ${isCurrentTrack ? 'text-[#8B5CF6]' : 'text-white/40'}`}
         >
           {isCurrentTrack && isPlaying ? (
-            <View className="w-4 h-4 items-center justify-center">
-              <View className="flex-row gap-[2px]">
-                <View className="w-[2px] h-3 bg-[#8B5CF6] rounded-full" />
-                <View className="w-[2px] h-2 bg-[#8B5CF6] rounded-full" />
-                <View className="w-[2px] h-4 bg-[#8B5CF6] rounded-full" />
-              </View>
-            </View>
+            <EqBars />
           ) : (
             index + 1
           )}
@@ -110,13 +144,15 @@ export function TrackCard({ track, queue, showArtwork = true, index }: TrackCard
         </Text>
       </View>
 
-      <Text className="text-white/40 text-sm mr-2">
-        {formatDuration(track.duration)}
-      </Text>
+      {track.duration > 0 ? (
+        <Text className="text-white/40 text-sm mr-2">
+          {formatDuration(track.duration)}
+        </Text>
+      ) : null}
 
-      <Pressable className="p-2">
-        <MoreHorizontal size={20} color="rgba(255,255,255,0.4)" />
-      </Pressable>
+      <View style={{ marginLeft: 4 }} onStartShouldSetResponder={() => true}>
+        <DownloadButton track={track} size={22} />
+      </View>
     </AnimatedPressable>
   );
 }

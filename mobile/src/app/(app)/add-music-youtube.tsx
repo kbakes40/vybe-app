@@ -9,12 +9,13 @@ import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
-import { X, Link2, Search } from 'lucide-react-native';
+import { X, Link2, Search, Play } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import { DownloadButton } from '@/components/DownloadButton';
 import { LoadingRing } from '@/components/LoadingRing';
 import { usePlaybackController } from '@/stores/playbackController';
 import { Track } from '@/types/music';
+import { normalizeYoutubePlaylistTracksPayload } from '@/lib/youtubePlaylistTracksNormalize';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
 
@@ -51,7 +52,7 @@ function isYouTubeUrl(url: string): boolean {
 function YouTubeIcon({ size = 20 }: { size?: number }) {
   return (
     <View style={{ width: size, height: size, backgroundColor: '#FF0000', borderRadius: 4, alignItems: 'center', justifyContent: 'center' }}>
-      <View style={{ width: 0, height: 0, borderLeftWidth: size * 0.38, borderTopWidth: size * 0.22, borderBottomWidth: size * 0.22, borderLeftColor: '#fff', borderTopColor: 'transparent', borderBottomColor: 'transparent', marginLeft: 2 }} />
+      <Play size={size * 0.6} color="#fff" fill="#fff" />
     </View>
   );
 }
@@ -126,12 +127,12 @@ function PasteSection() {
         }
         let json: any;
         try { json = JSON.parse(bodyText); } catch { throw new Error('Invalid playlist response'); }
-        const tracks: PlaylistTrack[] = json.data ?? [];
+        const tracks = normalizeYoutubePlaylistTracksPayload(json.data);
         if (tracks.length === 0) throw new Error('Playlist is empty or unavailable');
         setPlaylistTracks(tracks);
       } else {
         const videoId = extractYouTubeVideoId(target);
-        if (!videoId) throw new Error('Paste a YouTube video or playlist URL');
+        if (!videoId) throw new Error('Paste a valid video or playlist URL');
         const endpoint = `${BACKEND_URL}/api/youtube/info/${videoId}`;
         console.log('[YouTube Paste] Fetching info:', endpoint);
         const resp = await fetch(endpoint);
@@ -180,7 +181,7 @@ function PasteSection() {
         </View>
         <View>
           <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>Paste a Link</Text>
-          <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>YouTube video or playlist URL</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>Paste a video or playlist URL</Text>
         </View>
       </View>
       <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, gap: 8 }}>
@@ -291,7 +292,7 @@ function SearchSection() {
           const resp = await fetch(`${BACKEND_URL}/api/youtube/playlist-tracks?listId=${encodeURIComponent(listId)}`);
           if (!resp.ok) throw new Error('Failed to fetch playlist');
           const json = await resp.json();
-          const pts: PlaylistTrack[] = json.data ?? [];
+          const pts = normalizeYoutubePlaylistTracksPayload(json.data);
           if (pts.length === 0) throw new Error('Playlist is empty');
           setUrlPlaylistTracks(pts);
         } else {
@@ -325,7 +326,7 @@ function SearchSection() {
             onChangeText={(t) => { setQuery(t); clearUrlResults(); }}
             onSubmitEditing={handleSearch}
             returnKeyType="search"
-            placeholder="Search YouTube..."
+            placeholder="Search videos..."
             placeholderTextColor="rgba(255,255,255,0.3)"
             autoCapitalize="none" autoCorrect={false}
             style={{ flex: 1, color: '#fff', fontSize: 13, marginLeft: 8 }}
@@ -436,7 +437,7 @@ export default function AddMusicYouTubeScreen() {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <YouTubeIcon size={28} />
           <View>
-            <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>YouTube</Text>
+            <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>Vybe Video</Text>
             <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginTop: 1 }}>Download videos as audio</Text>
           </View>
         </View>

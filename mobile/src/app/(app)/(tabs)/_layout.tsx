@@ -1,17 +1,18 @@
 import React, { useState } from 'react';
 import { View, StyleSheet, Pressable, Modal, Text } from 'react-native';
 import { Tabs, useRouter } from 'expo-router';
-import { Home, Search, Library, Compass, Download } from 'lucide-react-native';
+import { Home, Search, Library, Compass, Download, Play, Music, Radio, Headphones, Disc, User, Sparkles } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path, Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 import type { BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
+import { TAB_BAR_BASE_HEIGHT } from '@/constants/miniPlayer';
 
-// ── Platform icons ────────────────────────────────────────────────────────────
+// ── Source icons (streaming brand colors, neutral shapes — no brand logos) ──
 function YouTubeIcon() {
   return (
     <View style={{ width: 36, height: 36, backgroundColor: '#FF0000', borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
-      <View style={{ width: 0, height: 0, borderLeftWidth: 14, borderTopWidth: 8, borderBottomWidth: 8, borderLeftColor: '#fff', borderTopColor: 'transparent', borderBottomColor: 'transparent', marginLeft: 3 }} />
+      <Play size={20} color="#fff" fill="#fff" />
     </View>
   );
 }
@@ -19,75 +20,37 @@ function YouTubeIcon() {
 function YouTubeMusicIcon() {
   return (
     <View style={{ width: 36, height: 36, backgroundColor: '#FF0000', borderRadius: 18, alignItems: 'center', justifyContent: 'center' }}>
-      <View style={{ width: 0, height: 0, borderLeftWidth: 14, borderTopWidth: 8, borderBottomWidth: 8, borderLeftColor: '#fff', borderTopColor: 'transparent', borderBottomColor: 'transparent', marginLeft: 3 }} />
+      <Music size={20} color="#fff" strokeWidth={2.5} />
     </View>
   );
 }
 
 function SoundCloudIcon() {
   return (
-    <View style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}>
-      <Text style={{ color: '#FF5500', fontSize: 22, fontWeight: '900', letterSpacing: -1 }}>))))</Text>
+    <View style={{ width: 36, height: 36, backgroundColor: '#FF5500', borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
+      <Radio size={20} color="#fff" strokeWidth={2.5} />
     </View>
   );
 }
 
 function SpotifyIcon() {
-  // Green circle with Spotify's three-arc soundwave logo
   return (
-    <Svg width={36} height={36} viewBox="0 0 36 36">
-      <Circle cx={18} cy={18} r={18} fill="#1DB954" />
-      {/* Top arc — widest */}
-      <Path
-        d="M8.5 15 Q18 10.5 27.5 14.5"
-        stroke="white" strokeWidth="2.6" strokeLinecap="round" fill="none"
-      />
-      {/* Middle arc */}
-      <Path
-        d="M10 19.5 Q18 15.5 26 19"
-        stroke="white" strokeWidth="2.3" strokeLinecap="round" fill="none"
-      />
-      {/* Bottom arc — narrowest */}
-      <Path
-        d="M11.5 24 Q18 20.5 24.5 23.5"
-        stroke="white" strokeWidth="2" strokeLinecap="round" fill="none"
-      />
-    </Svg>
+    <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#1DB954', alignItems: 'center', justifyContent: 'center' }}>
+      <Headphones size={20} color="#fff" strokeWidth={2.5} />
+    </View>
   );
 }
 
 function AppleMusicIcon() {
-  // Gradient red rounded-square with white eighth-note
   return (
-    <Svg width={36} height={36} viewBox="0 0 36 36">
-      <Defs>
-        <LinearGradient id="amGrad" x1="0" y1="0" x2="0" y2="1">
-          <Stop offset="0" stopColor="#FC5C65" stopOpacity="1" />
-          <Stop offset="1" stopColor="#C0152A" stopOpacity="1" />
-        </LinearGradient>
-      </Defs>
-      <Rect x={0} y={0} width={36} height={36} rx={8} fill="url(#amGrad)" />
-      {/* Note head */}
-      <Path
-        d="M11 25.5 C11 23.6 12.6 22 14.5 22 C16.4 22 18 23.6 18 25.5 C18 27.4 16.4 29 14.5 29 C12.6 29 11 27.4 11 25.5Z"
-        fill="white"
-      />
-      {/* Stem */}
-      <Rect x={16.5} y={10} width={2.2} height={16} rx={1.1} fill="white" />
-      {/* Beam top-right flag */}
-      <Path
-        d="M18.7 10 C22 10.5 25 13 25 16 C25 18 23 19.5 18.7 19"
-        stroke="white" strokeWidth="2.2" strokeLinecap="round" fill="none"
-      />
-    </Svg>
+    <View style={{ width: 36, height: 36, borderRadius: 8, backgroundColor: '#FC3C44', alignItems: 'center', justifyContent: 'center' }}>
+      <Disc size={20} color="#fff" strokeWidth={2.5} />
+    </View>
   );
 }
 
-// Mini player dimensions - exported for use in screens
-export const MINI_PLAYER_HEIGHT = 66; // 48px artwork + 16px padding + 2px progress bar
-
 // Standard tab bar height (content area, excluding safe area)
-const TAB_BAR_CONTENT_HEIGHT = 76;
+const TAB_BAR_CONTENT_HEIGHT = TAB_BAR_BASE_HEIGHT;
 
 // Fixed icon size - THE ONLY PLACE ICON SIZE IS DEFINED
 const ICON_SIZE = 28;
@@ -263,7 +226,7 @@ export default function TabLayout() {
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16 }}
             >
               <YouTubeIcon />
-              <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>YouTube</Text>
+              <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>Vybe Video</Text>
             </Pressable>
             <Pressable
               onPress={() => {
@@ -274,7 +237,7 @@ export default function TabLayout() {
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16 }}
             >
               <YouTubeMusicIcon />
-              <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>YouTube Music</Text>
+              <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>Vybe Music</Text>
             </Pressable>
             <Pressable
               onPress={() => {
@@ -285,7 +248,7 @@ export default function TabLayout() {
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16 }}
             >
               <SoundCloudIcon />
-              <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>SoundCloud</Text>
+              <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>Vybe Waves</Text>
             </Pressable>
             <Pressable
               onPress={() => {
@@ -296,7 +259,7 @@ export default function TabLayout() {
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16 }}
             >
               <SpotifyIcon />
-              <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>Spotify</Text>
+              <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>Stream Library</Text>
             </Pressable>
             <Pressable
               onPress={() => {
@@ -307,7 +270,7 @@ export default function TabLayout() {
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16 }}
             >
               <AppleMusicIcon />
-              <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>Apple Music</Text>
+              <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>Music Library</Text>
             </Pressable>
           </View>
         </View>
@@ -401,11 +364,28 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
-          name="two"
+          name="profile"
           options={{
-            href: null,
+            title: 'Profile',
+            tabBarButton: (props) => <HapticTabButton {...props} />,
+            tabBarIcon: ({ color, size }) => (
+              <User color={color} size={size} strokeWidth={2} />
+            ),
           }}
         />
+        <Tabs.Screen
+          name="social"
+          options={{
+            title: 'Social',
+            tabBarButton: (props) => <HapticTabButton {...props} />,
+            tabBarIcon: ({ color, size }) => (
+              <Sparkles color={color} size={size} strokeWidth={2} />
+            ),
+          }}
+        />
+        <Tabs.Screen name="two" options={{ href: null }} />
+        <Tabs.Screen name="library 2" options={{ href: null }} />
+        <Tabs.Screen name="library 3" options={{ href: null }} />
       </Tabs>
     </View>
   );

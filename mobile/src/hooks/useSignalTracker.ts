@@ -42,8 +42,11 @@ export function useSignalTracker() {
       trackId: currentTrack.id,
       signalType,
       listenDuration,
-      trackDuration: duration || currentTrack.duration || 180,
-      skipPosition: overrides?.skipPosition,
+      trackDuration: Math.floor(duration || currentTrack.duration || 180),
+      skipPosition:
+        overrides?.skipPosition != null
+          ? Math.floor(overrides.skipPosition)
+          : undefined,
     });
   }, [currentTrack, duration, recordSignal]);
 
@@ -62,7 +65,7 @@ export function useSignalTracker() {
           trackId: tracking.trackId,
           signalType: 'skip',
           listenDuration: Math.floor((Date.now() - tracking.startTime) / 1000),
-          trackDuration: duration || 180,
+          trackDuration: Math.floor(duration || 180),
           skipPosition: Math.floor(tracking.maxProgress),
         });
       }

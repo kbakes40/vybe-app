@@ -4,27 +4,122 @@ import { MMKV } from 'react-native-mmkv';
 import * as FileSystem from 'expo-file-system';
 import { NativeModules, Platform } from 'react-native';
 import { Track } from '@/types/music';
-import { getDownloadDir } from './storageSettingsStore';
+import { getShadowSyncDir, shadowSyncFilename } from './storageSettingsStore';
 
 // ── Live Activity bridge (iOS 16.1+ only) ─────────────────────────────────────
 const LiveActivityBridge = Platform.OS === 'ios' ? NativeModules.VybeDownloadActivity : null;
+console.log('[LiveActivity] bridge =', LiveActivityBridge ? 'FOUND' : 'MISSING', 'keys:', LiveActivityBridge ? Object.keys(LiveActivityBridge) : []);
+
+// ── Native background downloader (iOS only) ─────────────────────────────────
+// Uses URLSession.background so downloads keep running — and the Dynamic
+// Island Live Activity keeps updating — when the user backgrounds the app.
+// Android falls back to expo-file-system below.
+const NativeDownloader = Platform.OS === 'ios' ? NativeModules.VybeDownloader : null;
+console.log('[SyncEngine] native bridge =', NativeDownloader ? 'FOUND' : 'MISSING');
+
+async function nativeDownload(args: {
+  url: string;
+  destPath: string;
+  trackId: string;
+  trackTitle: string;
+  artistName: string;
+  onProgress?: (progress: number) => void;
+}): Promise<{ filePath: string; fileSize: number; fileFormat: 'M4A' | 'MP3' }> {
+  if (!NativeDownloader) throw new Error('Native downloader unavailable');
+
+  // Subscribe to progress events from Swift — per-trackId so concurrent
+  // downloads don't overwrite each other's progress callbacks.
+  const { NativeEventEmitter } = require('react-native');
+  const emitter = new NativeEventEmitter(NativeDownloader);
+  const sub = emitter.addListener('onDownloadProgress', (evt: { trackId: string; progress: number }) => {
+    if (evt.trackId === args.trackId) args.onProgress?.(evt.progress);
+  });
+
+  try {
+    const result = await NativeDownloader.startDownload({
+      url: args.url,
+      destPath: args.destPath,
+      trackId: args.trackId,
+      trackTitle: args.trackTitle,
+      artistName: args.artistName,
+    });
+    return {
+      filePath: result.filePath,
+      fileSize: typeof result.fileSize === 'number' ? result.fileSize : Number(result.fileSize ?? 0),
+      fileFormat: result.fileFormat === 'MP3' ? 'MP3' : 'M4A',
+    };
+  } finally {
+    sub.remove();
+  }
+}
 
 async function laStartDownloadActivity(trackTitle: string, artistName: string): Promise<void> {
+  console.log('[LiveActivity] startActivity called', { trackTitle, artistName, bridge: !!LiveActivityBridge });
+  // Reset throttle state so the next track's first progress update fires
+  // immediately instead of being blocked by the previous track's throttle window.
+  if (_laFlushTimer) { clearTimeout(_laFlushTimer); _laFlushTimer = null; }
+  _laPending = null;
+  _laLastSentAt = 0;
   try {
     await LiveActivityBridge?.startActivity(trackTitle, artistName);
-  } catch {}
+    console.log('[LiveActivity] startActivity OK');
+  } catch (e) {
+    console.log('[LiveActivity] startActivity ERROR', e);
+  }
+}
+
+// Throttle ActivityKit updates — iOS rate-limits activity.update() to ~60/min
+// and silently drops excess. createDownloadResumable can fire its callback
+// dozens of times per second. We coalesce: send at most once per 200ms, but
+// always send the final (100%) update so the completion state is never lost.
+let _laLastSentAt = 0;
+let _laPending: { progress: number; statusText: string } | null = null;
+let _laFlushTimer: ReturnType<typeof setTimeout> | null = null;
+const LA_MIN_INTERVAL_MS = 200;
+
+function _laFlush(): void {
+  if (!_laPending) return;
+  const { progress, statusText } = _laPending;
+  _laPending = null;
+  _laLastSentAt = Date.now();
+  try { LiveActivityBridge?.updateProgress(progress, statusText); } catch {}
 }
 
 function laUpdateProgress(progress: number, statusText: string): void {
-  try {
-    LiveActivityBridge?.updateProgress(progress, statusText);
-  } catch {}
+  if (!LiveActivityBridge) return;
+  const now = Date.now();
+  const sinceLast = now - _laLastSentAt;
+
+  // Always let the final (>= 0.98) update through immediately so completion
+  // isn't delayed by an in-flight throttle timer.
+  if (progress >= 0.98) {
+    if (_laFlushTimer) { clearTimeout(_laFlushTimer); _laFlushTimer = null; }
+    _laPending = { progress, statusText };
+    _laFlush();
+    return;
+  }
+
+  _laPending = { progress, statusText };
+  if (sinceLast >= LA_MIN_INTERVAL_MS) {
+    if (_laFlushTimer) { clearTimeout(_laFlushTimer); _laFlushTimer = null; }
+    _laFlush();
+  } else if (!_laFlushTimer) {
+    _laFlushTimer = setTimeout(() => {
+      _laFlushTimer = null;
+      _laFlush();
+    }, LA_MIN_INTERVAL_MS - sinceLast);
+  }
 }
 
 function laEndActivity(success: boolean): void {
+  if (_laFlushTimer) { clearTimeout(_laFlushTimer); _laFlushTimer = null; }
+  _laPending = null;
+  _laLastSentAt = 0;
   try {
     LiveActivityBridge?.endActivity(success);
-  } catch {}
+  } catch (e) {
+    console.log('[LiveActivity] endActivity ERROR', e);
+  }
 }
 
 // ── Serial download queue ──────────────────────────────────────────────────────
@@ -95,6 +190,18 @@ interface DownloadsState {
   clearAllDownloads: () => Promise<void>;
 }
 
+// Shadow index — Map<trackId, DownloadedTrack>. Rebuilt whenever the
+// downloads array changes so isTrackDownloaded / getDownloadedTrack are
+// O(1) instead of O(n). Every track row in the app calls these on every
+// render, so at 1000+ downloads the linear-scan version was doing tens of
+// thousands of comparisons per render pass.
+let _downloadsIndex: Map<string, DownloadedTrack> = new Map();
+function _rebuildIndex(list: DownloadedTrack[]): Map<string, DownloadedTrack> {
+  const map = new Map<string, DownloadedTrack>();
+  for (const t of list) map.set(t.id, t);
+  return map;
+}
+
 export const useDownloadsStore = create<DownloadsState>()(
   persist(
     (set, get) => ({
@@ -104,16 +211,15 @@ export const useDownloadsStore = create<DownloadsState>()(
 
       addDownload: (track) => {
         set((state) => {
-          // Don't add duplicates
-          if (state.downloads.some(d => d.id === track.id)) {
-            return state;
-          }
-          return { downloads: [...state.downloads, track] };
+          if (_downloadsIndex.has(track.id)) return state;
+          const next = [...state.downloads, track];
+          _downloadsIndex = _rebuildIndex(next);
+          return { downloads: next };
         });
       },
 
       removeDownload: async (trackId) => {
-        const track = get().downloads.find(d => d.id === trackId);
+        const track = _downloadsIndex.get(trackId);
         if (track?.localFilePath) {
           try {
             const fileInfo = await FileSystem.getInfoAsync(track.localFilePath);
@@ -124,18 +230,16 @@ export const useDownloadsStore = create<DownloadsState>()(
             console.error('Error deleting file:', error);
           }
         }
-        set((state) => ({
-          downloads: state.downloads.filter(d => d.id !== trackId),
-        }));
+        set((state) => {
+          const next = state.downloads.filter(d => d.id !== trackId);
+          _downloadsIndex = _rebuildIndex(next);
+          return { downloads: next };
+        });
       },
 
-      getDownloadedTrack: (trackId) => {
-        return get().downloads.find(d => d.id === trackId);
-      },
+      getDownloadedTrack: (trackId) => _downloadsIndex.get(trackId),
 
-      isTrackDownloaded: (trackId) => {
-        return get().downloads.some(d => d.id === trackId);
-      },
+      isTrackDownloaded: (trackId) => _downloadsIndex.has(trackId),
 
       setImporting: (isImporting) => set({ isImporting }),
 
@@ -147,8 +251,12 @@ export const useDownloadsStore = create<DownloadsState>()(
 
       clearAllDownloads: async () => {
         const downloads = get().downloads;
-        for (const track of downloads) {
-          if (track.localFilePath) {
+        // Fire all deletes in parallel — at 1000 tracks this goes from ~30s
+        // sequential down to a couple seconds. expo-file-system handles the
+        // concurrent IO fine.
+        await Promise.all(
+          downloads.map(async (track) => {
+            if (!track.localFilePath) return;
             try {
               const fileInfo = await FileSystem.getInfoAsync(track.localFilePath);
               if (fileInfo.exists) {
@@ -157,8 +265,9 @@ export const useDownloadsStore = create<DownloadsState>()(
             } catch (error) {
               console.error('Error deleting file:', error);
             }
-          }
-        }
+          })
+        );
+        _downloadsIndex = new Map();
         set({ downloads: [] });
       },
     }),
@@ -166,6 +275,14 @@ export const useDownloadsStore = create<DownloadsState>()(
       name: 'vybe-downloads',
       storage: createJSONStorage(() => mmkvStorage),
       partialize: (state) => ({ downloads: state.downloads }),
+      onRehydrateStorage: () => (state) => {
+        // Build the O(1) lookup index once the persisted array lands in
+        // state. Without this, the first isTrackDownloaded calls on app
+        // boot would miss because the index hasn't been populated yet.
+        if (state?.downloads) {
+          _downloadsIndex = _rebuildIndex(state.downloads);
+        }
+      },
     }
   )
 );
@@ -202,13 +319,8 @@ export function isLosslessFormat(format: string): boolean {
 }
 
 /**
- * Download a YouTube track for offline playback.
- * Streams audio from the backend `GET /api/youtube/audio/:videoId` route
- * and saves it under the app documents directory.
- *
- * Usage:
- *   import { downloadYouTubeTrack } from '@/stores/downloadsStore';
- *   await downloadYouTubeTrack(track, 'https://192.168.x.x:3000');
+ * Shadow Sync: pull audio from the Railway proxy and cache locally (file://) for instant playback.
+ * JS path uses expo-file-system `downloadAsync`; iOS may use the native Sync Engine when available.
  */
 export async function downloadYouTubeTrack(
   track: Track & { youtubeId?: string; youtubeMusicId?: string },
@@ -217,7 +329,7 @@ export async function downloadYouTubeTrack(
 ): Promise<{ success: boolean; error?: string }> {
   const videoId = track.youtubeId || track.youtubeMusicId;
   if (!videoId) {
-    return { success: false, error: 'No YouTube video ID on this track' };
+    return { success: false, error: 'No stream ID on this track' };
   }
 
   const store = useDownloadsStore.getState();
@@ -232,75 +344,71 @@ export async function downloadYouTubeTrack(
   const trackTitle = track.title ?? 'Unknown track';
   const artistName = track.artist ?? 'Unknown artist';
 
-  // Start Dynamic Island Live Activity
-  await laStartDownloadActivity(trackTitle, artistName);
+  // On iOS with the native downloader, Swift owns the Live Activity
+  // lifecycle (start/update/end) so that pill updates keep flowing even
+  // when the app is backgrounded. The Android fallback path still uses
+  // the JS-driven Live Activity bridge.
+  if (!NativeDownloader) {
+    await laStartDownloadActivity(trackTitle, artistName);
+  }
 
   const base = backendBaseUrl.replace(/\/$/, '');
 
   try {
-    const { dir, isICloud } = await getDownloadDir();
-    if (isICloud) console.log('[downloadYouTubeTrack] saving to iCloud:', dir);
-
+    const dir = await getShadowSyncDir();
     onProgress?.(0.01);
     store.setImportProgress(0.01);
-    laUpdateProgress(0.01, 'Fetching from server…');
 
-    // Use /download/ endpoint: backend uses yt-dlp to download to a temp file first,
-    // then serves it with Content-Length. This is much faster than the /audio/ streaming
-    // proxy because yt-dlp fetches from YouTube CDN at full server speed, and the mobile
-    // then downloads over LAN in seconds instead of minutes.
-    // 8-minute timeout covers: 3 min yt-dlp download + 5 min mobile transfer buffer.
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 480_000);
+    const destM4a = `${dir}${shadowSyncFilename(track.id, 'm4a')}`;
+    const downloadUrl = `${base}/api/youtube/download/${videoId}`;
 
-    let resp: Response;
-    try {
-      resp = await fetch(`${base}/api/youtube/download/${videoId}`, { signal: controller.signal });
-    } finally {
-      clearTimeout(timeoutId);
+    let localFilePath: string;
+    let fileSize: number;
+    let fileFormat: 'M4A' | 'MP3';
+
+    if (NativeDownloader) {
+      const res = await nativeDownload({
+        url: downloadUrl,
+        destPath: destM4a,
+        trackId: track.id,
+        trackTitle,
+        artistName,
+        onProgress: (ratio) => {
+          const mapped = 0.02 + ratio * 0.93;
+          onProgress?.(mapped);
+          store.setImportProgress(mapped);
+        },
+      });
+      localFilePath = res.filePath;
+      fileSize = res.fileSize;
+      fileFormat = res.fileFormat;
+    } else {
+      laUpdateProgress(0.02, 'Starting…');
+      onProgress?.(0.02);
+      store.setImportProgress(0.02);
+      const result = await FileSystem.downloadAsync(downloadUrl, destM4a);
+      if (!result || result.status !== 200) {
+        throw new Error(`Server error (${result?.status ?? 'no response'})`);
+      }
+      const ct = (result.headers?.['Content-Type'] ?? result.headers?.['content-type'] ?? '') as string;
+      localFilePath = result.uri;
+      fileFormat = 'M4A';
+      if (ct.includes('mpeg')) {
+        fileFormat = 'MP3';
+        const mp3Path = `${dir}${shadowSyncFilename(track.id, 'mp3')}`;
+        await FileSystem.moveAsync({ from: localFilePath, to: mp3Path });
+        localFilePath = mp3Path;
+      }
+      const info = await FileSystem.getInfoAsync(localFilePath);
+      fileSize = (info.exists && 'size' in info ? info.size : 0) || 0;
+      if (fileSize === 0) throw new Error('Synced file is empty');
+      laUpdateProgress(1, 'Synced');
+      onProgress?.(0.96);
+      store.setImportProgress(0.96);
     }
-    if (!resp.ok) {
-      let reason = `Server error (${resp.status})`;
-      try {
-        const json = await resp.json();
-        if (json?.error) reason = json.error;
-      } catch {}
-      throw new Error(reason);
-    }
-
-    laUpdateProgress(0.5, 'Saving to device…');
-
-    // Detect actual format from Content-Type
-    const ct = resp.headers.get('Content-Type') ?? '';
-    const fileExt = ct.includes('mpeg') ? 'mp3' : 'm4a';
-    const localFilePath = `${dir}yt_${videoId}.${fileExt}`;
-
-    const buffer = await resp.arrayBuffer();
-    const fileSize = buffer.byteLength;
-    if (fileSize === 0) throw new Error('Downloaded file is empty');
-
-    onProgress?.(0.9);
-    store.setImportProgress(0.9);
-    laUpdateProgress(0.9, 'Almost done…');
-
-    // Convert to base64 in chunks to avoid call-stack overflow on large files
-    const bytes = new Uint8Array(buffer);
-    const chunkSize = 8192;
-    let binary = '';
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      binary += String.fromCharCode(...(bytes.subarray(i, i + chunkSize) as unknown as number[]));
-    }
-    const base64 = btoa(binary);
-
-    await FileSystem.writeAsStringAsync(localFilePath, base64, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
 
     onProgress?.(1);
     store.setImportProgress(1);
-    laUpdateProgress(1, 'Downloaded');
-
-    const fileFormat = fileExt === 'mp3' ? 'MP3' : 'M4A';
     const downloadedTrack: DownloadedTrack = {
       ...track,
       isDownloaded: true,
@@ -313,12 +421,12 @@ export async function downloadYouTubeTrack(
     };
 
     store.addDownload(downloadedTrack);
-    laEndActivity(true);
+    if (!NativeDownloader) laEndActivity(true);
     return { success: true };
   } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Download failed';
-    console.error('[downloadYouTubeTrack]', msg);
-    laEndActivity(false);
+    const msg = error instanceof Error ? error.message : 'Sync failed';
+    console.error('[ShadowSync]', msg);
+    if (!NativeDownloader) laEndActivity(false);
     return { success: false, error: msg };
   } finally {
     store.setImporting(false);
@@ -327,9 +435,7 @@ export async function downloadYouTubeTrack(
 }
 
 /**
- * Download a SoundCloud track for offline playback.
- * Uses the backend `GET /api/soundcloud/download?url=...` route which pre-downloads
- * via yt-dlp then serves the full file — same pattern as the YouTube download endpoint.
+ * Shadow Sync for SoundCloud — same cache directory as web stream tracks.
  */
 export async function downloadSoundCloudTrack(
   track: Track & { soundcloudUrl?: string },
@@ -356,62 +462,78 @@ export async function downloadSoundCloudTrack(
   const trackTitle = track.title ?? 'Unknown track';
   const artistName = track.artist ?? 'Unknown artist';
 
-  await laStartDownloadActivity(trackTitle, artistName);
+  if (!NativeDownloader) {
+    await laStartDownloadActivity(trackTitle, artistName);
+  }
 
   const base = backendBaseUrl.replace(/\/$/, '');
   const audioUrl = `${base}/api/soundcloud/download?url=${encodeURIComponent(track.soundcloudUrl)}`;
 
   try {
-    const safeId = track.id.replace(/[^\w-]/g, '_');
-    const { dir, isICloud } = await getDownloadDir();
-    if (isICloud) console.log('[downloadSoundCloudTrack] saving to iCloud:', dir);
+    const dir = await getShadowSyncDir();
 
     onProgress?.(0.01);
     if (!silent) store.setImportProgress(0.01);
-    laUpdateProgress(0.01, 'Fetching from server…');
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 300_000);
+    const tempPath = `${dir}${shadowSyncFilename(track.id, 'm4a')}`;
 
-    let resp: Response;
-    try {
-      resp = await fetch(audioUrl, { signal: controller.signal });
-    } finally {
-      clearTimeout(timeoutId);
+    let localFilePath: string;
+    let fileSize: number;
+    let fileFormat: 'M4A' | 'MP3';
+
+    if (NativeDownloader) {
+      const res = await nativeDownload({
+        url: audioUrl,
+        destPath: tempPath,
+        trackId: track.id,
+        trackTitle,
+        artistName,
+        onProgress: (ratio) => {
+          const mapped = 0.02 + ratio * 0.93;
+          onProgress?.(mapped);
+          if (!silent) store.setImportProgress(mapped);
+        },
+      });
+      localFilePath = res.filePath;
+      fileSize = res.fileSize;
+      fileFormat = res.fileFormat;
+    } else {
+      laUpdateProgress(0.01, 'Starting…');
+      const resumable = FileSystem.createDownloadResumable(
+        audioUrl,
+        tempPath,
+        {},
+        (progress) => {
+          const { totalBytesWritten, totalBytesExpectedToWrite } = progress;
+          if (totalBytesExpectedToWrite > 0) {
+            const ratio = totalBytesWritten / totalBytesExpectedToWrite;
+            const mapped = 0.02 + ratio * 0.93;
+            onProgress?.(mapped);
+            if (!silent) store.setImportProgress(mapped);
+            laUpdateProgress(mapped, silent ? `Upgrading ${trackTitle} · ${Math.round(ratio * 100)}%` : `${trackTitle} · ${Math.round(ratio * 100)}%`);
+          }
+        },
+      );
+      const result = await resumable.downloadAsync();
+      if (!result || result.status !== 200) {
+        throw new Error(`Server returned ${result?.status ?? 'no response'}`);
+      }
+      const respContentType = (result.headers?.['Content-Type'] ?? result.headers?.['content-type'] ?? '') as string;
+      fileFormat = 'M4A';
+      localFilePath = tempPath;
+      if (respContentType.includes('mpeg')) {
+        fileFormat = 'MP3';
+        localFilePath = `${dir}${shadowSyncFilename(track.id, 'mp3')}`;
+        await FileSystem.moveAsync({ from: tempPath, to: localFilePath });
+      }
+      const info = await FileSystem.getInfoAsync(localFilePath);
+      fileSize = (info.exists && 'size' in info ? info.size : 0) || 0;
+      if (fileSize === 0) throw new Error('Synced file is empty');
+      laUpdateProgress(1, silent ? 'Quality upgraded' : 'Synced');
     }
-    if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
-
-    laUpdateProgress(0.5, silent ? 'Upgrading quality…' : 'Saving to device…');
-
-    // Detect format from Content-Type before buffering
-    const respContentType = resp.headers.get('Content-Type') ?? '';
-    const fileFormat = respContentType.includes('mpeg') ? 'MP3' : 'M4A';
-    const fileExt = fileFormat === 'MP3' ? 'mp3' : 'm4a';
-    const localFilePath = `${dir}sc_${safeId}.${fileExt}`;
-
-    const buffer = await resp.arrayBuffer();
-    const fileSize = buffer.byteLength;
-    if (fileSize === 0) throw new Error('Downloaded file is empty');
-
-    onProgress?.(0.9);
-    if (!silent) store.setImportProgress(0.9);
-    laUpdateProgress(0.9, 'Almost done…');
-
-    const bytes = new Uint8Array(buffer);
-    const chunkSize = 8192;
-    let binary = '';
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      binary += String.fromCharCode(...(bytes.subarray(i, i + chunkSize) as unknown as number[]));
-    }
-    const base64 = btoa(binary);
-
-    await FileSystem.writeAsStringAsync(localFilePath, base64, {
-      encoding: FileSystem.EncodingType.Base64,
-    });
 
     onProgress?.(1);
     if (!silent) store.setImportProgress(1);
-    laUpdateProgress(1, silent ? 'Quality upgraded' : 'Downloaded');
 
     const downloadedTrack: DownloadedTrack = {
       ...track,
@@ -425,12 +547,12 @@ export async function downloadSoundCloudTrack(
     };
 
     store.addDownload(downloadedTrack);
-    laEndActivity(true);
+    if (!NativeDownloader) laEndActivity(true);
     return { success: true };
   } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Download failed';
-    console.error('[downloadSoundCloudTrack]', msg);
-    laEndActivity(false);
+    const msg = error instanceof Error ? error.message : 'Sync failed';
+    console.error('[ShadowSync:SoundCloud]', msg);
+    if (!NativeDownloader) laEndActivity(false);
     return { success: false, error: msg };
   } finally {
     if (!silent) {
@@ -439,3 +561,6 @@ export async function downloadSoundCloudTrack(
     }
   }
 }
+
+/** Alias for store reviewers / call sites preferring “sync” wording. */
+export { downloadYouTubeTrack as syncWebStreamTrackOffline };

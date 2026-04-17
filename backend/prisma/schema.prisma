@@ -25,6 +25,7 @@ model User {
   listeningHistory ListeningHistory[]
   likedTracks   LikedTrack[]
   playlists     Playlist[]
+  libraryTracks LibraryTrack[]
 }
 
 model Session {
@@ -426,6 +427,34 @@ model HiddenDiscoverItem {
 
   @@unique([userId, discoverItemId])
   @@index([userId])
+}
+
+// ============================================
+// CLOUD LIBRARY SYNC
+// Tracks saved to a user's library for cross-device sync
+// ============================================
+
+model LibraryTrack {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  trackId     String   // Client-side track identifier
+  title       String
+  artist      String
+  artwork     String?
+  duration    Int      @default(0) // seconds
+
+  source      String   // "youtube_music" | "soundcloud" | "youtube"
+  sourceId    String   // youtubeId or soundcloudUrl
+  fileFormat  String?  // "mp3" | "opus" | etc.
+
+  savedAt     DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, trackId])
+  @@index([userId, savedAt])
 }
 
 // ============================================

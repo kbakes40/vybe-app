@@ -1,184 +1,110 @@
-import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { Image } from 'expo-image';
-import { Play, Pause, Cloud, Disc3, Download } from 'lucide-react-native';
-import { useRouter } from 'expo-router';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, LayoutChangeEvent, Platform } from 'react-native';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
+  useAnimatedProps,
   withSpring,
   withTiming,
   withRepeat,
-  interpolate,
-  Extrapolation,
   runOnJS,
   Easing,
 } from 'react-native-reanimated';
+import { Image } from 'expo-image';
+import { Svg, Rect } from 'react-native-svg';
+import { Play, Pause, SkipForward, Disc3, CloudDownload } from 'lucide-react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { usePlaybackController } from '@/stores/playbackController';
-import { downloadYouTubeTrack, useDownloadsStore } from '@/stores/downloadsStore';
+import { openNowPlayingSheet } from '@/lib/openNowPlayingSheet';
+import { Track } from '@/types/music';
+import { downloadYouTubeTrack, downloadSoundCloudTrack, useDownloadsStore } from '@/stores/downloadsStore';
 import { usePlaybackDebugStore } from '@/stores/playbackDebugStore';
 import { PlaybackDebugIndicator } from '@/components/PlaybackDebugOverlay';
 import { LoadingRing } from '@/components/LoadingRing';
-
 import * as Haptics from 'expo-haptics';
 
-// YouTube icon component
-function YouTubeIcon({ size = 14 }: { size?: number }) {
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        backgroundColor: '#FF0000',
-        borderRadius: 3,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <View
-        style={{
-          width: 0,
-          height: 0,
-          borderLeftWidth: size * 0.35,
-          borderTopWidth: size * 0.2,
-          borderBottomWidth: size * 0.2,
-          borderLeftColor: '#fff',
-          borderTopColor: 'transparent',
-          borderBottomColor: 'transparent',
-          marginLeft: 2,
-        }}
-      />
-    </View>
-  );
-}
+const AnimatedRect = Animated.createAnimatedComponent(Rect);
 
-// SoundCloud icon component
-function SoundCloudIcon({ size = 14 }: { size?: number }) {
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        backgroundColor: '#FF5500',
-        borderRadius: 3,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <Cloud size={size * 0.7} color="#fff" strokeWidth={3} />
-    </View>
-  );
-}
+const ICON_STROKE = 1.35;
 
-// YouTube Music icon component
-function YouTubeMusicIcon({ size = 14 }: { size?: number }) {
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        backgroundColor: '#FF0000',
-        borderRadius: size / 2,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <View
-        style={{
-          width: 0,
-          height: 0,
-          borderLeftWidth: size * 0.3,
-          borderTopWidth: size * 0.18,
-          borderBottomWidth: size * 0.18,
-          borderLeftColor: '#fff',
-          borderTopColor: 'transparent',
-          borderBottomColor: 'transparent',
-          marginLeft: 1,
-        }}
-      />
-    </View>
-  );
-}
+function MiniPlayerSlimProgress() {
+  const layoutW = useSharedValue(0);
+  const frac = useSharedValue(0);
+  const [svgW, setSvgW] = useState(0);
 
-// VYBE icon for source indicator
-function VybeSourceIcon({ size = 14 }: { size?: number }) {
+  useEffect(() => {
+    return usePlaybackController.subscribe((state, prev) => {
+      if (state.progress === prev.progress && state.duration === prev.duration) return;
+      const f = state.duration > 0 ? Math.min(1, state.progress / state.duration) : 0;
+      const prevF = prev.duration > 0 ? Math.min(1, prev.progress / prev.duration) : 0;
+      const jumpSec = Math.abs(state.progress - prev.progress);
+      if (jumpSec > 1 || Math.abs(f - prevF) > 0.04 || state.duration !== prev.duration) {
+        frac.value = f;
+      } else {
+        frac.value = withTiming(f, { duration: 120 });
+      }
+    });
+  }, []);
+
+  const animatedProps = useAnimatedProps(() => ({
+    width: Math.max(0, layoutW.value * frac.value),
+  }));
+
+  const onLayout = (e: LayoutChangeEvent) => {
+    const w = e.nativeEvent.layout.width;
+    layoutW.value = w;
+    if (w > 0 && w !== svgW) setSvgW(w);
+  };
+
   return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        backgroundColor: '#8B5CF6',
-        borderRadius: 3,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <Text style={{ color: '#fff', fontSize: size * 0.6, fontWeight: 'bold' }}>V</Text>
+    <View style={styles.progressTrack} onLayout={onLayout}>
+      {svgW > 0 ? (
+        <Svg width={svgW} height={2}>
+          <Rect x={0} y={0} width={svgW} height={2} fill="rgba(255,255,255,0.08)" />
+          <AnimatedRect x={0} y={0} height={2} fill="#FFFFFF" animatedProps={animatedProps} />
+        </Svg>
+      ) : null}
     </View>
   );
 }
 
 export function MiniPlayer() {
-  const router = useRouter();
   const currentTrack = usePlaybackController(s => s.currentTrack);
   const playbackState = usePlaybackController(s => s.playbackState);
-  const progress = usePlaybackController(s => s.progress);
-  const duration = usePlaybackController(s => s.duration);
   const play = usePlaybackController(s => s.play);
   const pause = usePlaybackController(s => s.pause);
+  const next = usePlaybackController(s => s.next);
+  const previous = usePlaybackController(s => s.previous);
   const currentSource = usePlaybackController(s => s.currentSource);
 
   const isTrackDownloaded = useDownloadsStore(s => s.isTrackDownloaded);
   const isImporting = useDownloadsStore(s => s.isImporting);
 
-  // Debug store
   const debugModeEnabled = usePlaybackDebugStore(s => s.debugModeEnabled);
   const toggleDebugOverlay = usePlaybackDebugStore(s => s.toggleDebugOverlay);
 
-  // Triple tap tracking for debug toggle
   const tapCountRef = useRef(0);
   const lastTapTimeRef = useRef(0);
 
-  // Derive state from playbackState
   const isPlaying = playbackState === 'playing';
   const shouldPause = playbackState === 'playing' || playbackState === 'buffering' || playbackState === 'loading';
   const isLoading = playbackState === 'loading' || playbackState === 'buffering';
 
-  // Source type detection (needed before useEffects)
   const isYouTube = currentSource === 'youtube';
   const isYouTubeMusic = currentSource === 'youtube_music';
   const isSoundCloud = currentSource === 'soundcloud';
 
-  // Animation values
-  const scale = useSharedValue(1);
   const buttonScale = useSharedValue(1);
   const translateY = useSharedValue(0);
-  const progressWidth = useSharedValue(0);
-  const appearAnimation = useSharedValue(0);
+  const dragX = useSharedValue(0);
   const loadingRotation = useSharedValue(0);
 
-  // Animate progress bar smoothly
-  useEffect(() => {
-    const percent = duration > 0 ? (progress / duration) * 100 : 0;
-    progressWidth.value = withTiming(percent, { duration: 200 });
-  }, [progress, duration]);
-
-  // Appear animation when track changes
-  useEffect(() => {
-    if (currentTrack) {
-      appearAnimation.value = 0;
-      appearAnimation.value = withSpring(1, { damping: 20, stiffness: 300 });
-    }
-  }, [currentTrack?.id]);
-
-  // Loading spinner animation
   useEffect(() => {
     if (isLoading) {
       loadingRotation.value = 0;
       loadingRotation.value = withRepeat(
         withTiming(360, { duration: 1000, easing: Easing.linear }),
-        -1, // Infinite
+        -1,
         false
       );
     } else {
@@ -186,23 +112,26 @@ export function MiniPlayer() {
     }
   }, [isLoading]);
 
+  useEffect(() => {
+    if (!currentTrack) return;
+    dragX.value = 0;
+    translateY.value = 0;
+    buttonScale.value = 1;
+  }, [currentTrack?.id]);
+
   const navigateToNowPlaying = () => {
-    // Medium haptic when expanding mini player to full player
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.push('/(app)/nowPlaying' as never);
+    openNowPlayingSheet();
   };
 
-  // Triple tap handler for debug overlay toggle
   const handleTripleTap = () => {
     const now = Date.now();
     if (now - lastTapTimeRef.current > 500) {
-      // Reset if more than 500ms since last tap
       tapCountRef.current = 1;
     } else {
       tapCountRef.current++;
     }
     lastTapTimeRef.current = now;
-
     if (tapCountRef.current >= 3 && debugModeEnabled) {
       tapCountRef.current = 0;
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -212,33 +141,89 @@ export function MiniPlayer() {
 
   const handlePlayPause = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    if (shouldPause) {
-      pause();
-    } else {
-      play();
-    }
+    if (shouldPause) pause();
+    else play();
+  };
+
+  const handleNext = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    next();
+  };
+
+  const skipNextFromSwipe = () => {
+    Haptics.selectionAsync();
+    next();
+  };
+
+  const skipPreviousFromSwipe = () => {
+    Haptics.selectionAsync();
+    previous();
   };
 
   const handleDownload = async () => {
     if (!currentTrack || isImporting) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
-    await downloadYouTubeTrack(currentTrack, BACKEND_URL);
+    const sc = (currentTrack as Track & { soundcloudUrl?: string }).soundcloudUrl;
+    if (sc) {
+      await downloadSoundCloudTrack(currentTrack as Track & { soundcloudUrl: string }, BACKEND_URL);
+    } else {
+      await downloadYouTubeTrack(currentTrack as Track & { youtubeId?: string; youtubeMusicId?: string }, BACKEND_URL);
+    }
   };
 
-  // Swipe up gesture to expand to full player
-  const swipeGesture = Gesture.Pan()
+  const tripleTapDebugGesture = Gesture.Tap()
+    .numberOfTaps(3)
+    .onEnd(() => {
+      runOnJS(handleTripleTap)();
+    });
+
+  const tapOpenGesture = Gesture.Tap().onEnd(() => {
+    runOnJS(navigateToNowPlaying)();
+  });
+
+  const panGesture = Gesture.Pan()
+    .minDistance(12)
     .onUpdate((event) => {
-      if (event.translationY < 0) {
-        translateY.value = Math.max(event.translationY, -50);
+      const ax = Math.abs(event.translationX);
+      const ay = Math.abs(event.translationY);
+      if (ax > ay + 2) {
+        dragX.value = event.translationX * 0.28;
+      } else if (event.translationY < 0) {
+        translateY.value = Math.max(event.translationY, -44);
       }
     })
     .onEnd((event) => {
-      if (event.translationY < -30 || event.velocityY < -500) {
-        runOnJS(navigateToNowPlaying)();
+      const { translationX, translationY, velocityX, velocityY } = event;
+      const ax = Math.abs(translationX);
+      const ay = Math.abs(translationY);
+
+      if (ax > ay && ax > 22) {
+        if (translationX < -44 || velocityX < -420) {
+          runOnJS(skipNextFromSwipe)();
+        } else if (translationX > 44 || velocityX > 420) {
+          runOnJS(skipPreviousFromSwipe)();
+        }
+        dragX.value = withSpring(0, { damping: 18, stiffness: 240 });
+        translateY.value = withSpring(0, { damping: 20, stiffness: 400 });
+        return;
       }
+
+      if (translationY < -30 || velocityY < -480) {
+        runOnJS(navigateToNowPlaying)();
+        dragX.value = withSpring(0, { damping: 18, stiffness: 240 });
+        translateY.value = withSpring(0, { damping: 20, stiffness: 400 });
+        return;
+      }
+
+      dragX.value = withSpring(0, { damping: 18, stiffness: 240 });
       translateY.value = withSpring(0, { damping: 20, stiffness: 400 });
     });
+
+  const miniCardGesture = Gesture.Exclusive(
+    tripleTapDebugGesture,
+    Gesture.Race(tapOpenGesture, panGesture),
+  );
 
   const showDownload =
     currentTrack &&
@@ -247,7 +232,7 @@ export function MiniPlayer() {
 
   const playPauseTapGesture = Gesture.Tap()
     .onStart(() => {
-      buttonScale.value = withSpring(0.85, { damping: 15 });
+      buttonScale.value = withSpring(0.88, { damping: 15 });
     })
     .onEnd(() => {
       runOnJS(handlePlayPause)();
@@ -256,42 +241,16 @@ export function MiniPlayer() {
       buttonScale.value = withSpring(1, { damping: 15 });
     });
 
+  const nextTapGesture = Gesture.Tap().onEnd(() => {
+    runOnJS(handleNext)();
+  });
+
   const downloadTapGesture = Gesture.Tap().onEnd(() => {
     runOnJS(handleDownload)();
   });
 
-  // Tap gesture for navigation (with triple tap detection) — must fail if a child control consumed the touch
-  const tapGestureBase = Gesture.Tap()
-    .onStart(() => {
-      scale.value = withSpring(0.98, { damping: 15 });
-    })
-    .onEnd(() => {
-      scale.value = withSpring(1, { damping: 15 });
-      runOnJS(handleTripleTap)();
-      runOnJS(navigateToNowPlaying)();
-    });
-
-  const tapGesture = showDownload
-    ? tapGestureBase
-        .requireExternalGestureToFail(playPauseTapGesture)
-        .requireExternalGestureToFail(downloadTapGesture)
-    : tapGestureBase.requireExternalGestureToFail(playPauseTapGesture);
-
   const containerAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [
-      { scale: scale.value },
-      { translateY: translateY.value },
-    ],
-    opacity: interpolate(
-      appearAnimation.value,
-      [0, 1],
-      [0, 1],
-      Extrapolation.CLAMP
-    ),
-  }));
-
-  const progressAnimatedStyle = useAnimatedStyle(() => ({
-    width: `${progressWidth.value}%`,
+    transform: [{ translateX: dragX.value }, { translateY: translateY.value }],
   }));
 
   const buttonAnimatedStyle = useAnimatedStyle(() => ({
@@ -304,140 +263,146 @@ export function MiniPlayer() {
 
   if (!currentTrack) return null;
 
-  const isVybe = !currentSource || currentSource === 'vybe';
+  const playingFromLocalFile = !!currentTrack.audioUrl?.startsWith('file://');
 
-  // Determine source label
-  const getSourceLabel = () => {
-    if (isYouTube) return 'YouTube';
-    if (isYouTubeMusic) return 'YouTube Music';
-    if (isSoundCloud) return 'SoundCloud';
-    return null;
-  };
-
-  const sourceLabel = getSourceLabel();
-
-  return (
-    <GestureDetector gesture={Gesture.Exclusive(swipeGesture, tapGesture)}>
-      <Animated.View style={[styles.container, containerAnimatedStyle]}>
-        {/* Main content area */}
-        <View style={styles.content}>
-          {/* Album Art */}
-          <View style={styles.artworkContainer}>
-            <Image
-              source={{ uri: currentTrack.artwork }}
-              style={styles.artwork}
-              contentFit="cover"
-              transition={200}
-            />
-            {isLoading && (
-              <View style={styles.loadingOverlay}>
-                <Animated.View style={loadingAnimatedStyle}>
-                  <Disc3 size={20} color="#fff" style={{ opacity: 0.9 }} />
-                </Animated.View>
-              </View>
-            )}
-          </View>
-
-          {/* Track Info */}
-          <View style={styles.trackInfo}>
-            <Text style={styles.trackTitle} numberOfLines={1}>
-              {currentTrack.title}
-            </Text>
-            <View style={styles.artistRow}>
-              {/* Source indicator */}
-              {isYouTube && (
-                <>
-                  <YouTubeIcon size={12} />
-                  <Text style={styles.sourceLabel}>{sourceLabel}</Text>
-                  <Text style={styles.separator}>•</Text>
-                </>
-              )}
-              {isYouTubeMusic && (
-                <>
-                  <YouTubeMusicIcon size={12} />
-                  <Text style={styles.sourceLabel}>{sourceLabel}</Text>
-                  <Text style={styles.separator}>•</Text>
-                </>
-              )}
-              {isSoundCloud && (
-                <>
-                  <SoundCloudIcon size={12} />
-                  <Text style={styles.sourceLabel}>{sourceLabel}</Text>
-                  <Text style={styles.separator}>•</Text>
-                </>
-              )}
-              {/* Artist name */}
-              <Text style={styles.artistName} numberOfLines={1}>
-                {currentTrack.artist}
-              </Text>
-            </View>
-          </View>
-
-          {/* Download button — colored to match the current source */}
-          {showDownload && (
-            <GestureDetector gesture={downloadTapGesture}>
-              <Animated.View style={[styles.playButton, { opacity: isImporting ? 0.4 : 1 }]}>
-                <Download
-                  size={18}
-                  color={isYouTube || isYouTubeMusic ? '#FF0000' : isSoundCloud ? '#FF7700' : '#8B5CF6'}
-                />
+  const cardBody = (
+    <>
+      <View style={styles.content}>
+        <View style={styles.artworkContainer}>
+          <Image
+            source={{ uri: currentTrack.artwork }}
+            style={styles.artwork}
+            contentFit="cover"
+          />
+          {isLoading && (
+            <View style={styles.loadingOverlay}>
+              <Animated.View style={loadingAnimatedStyle}>
+                <Disc3 size={18} color="#fff" style={{ opacity: 0.9 }} />
               </Animated.View>
-            </GestureDetector>
+            </View>
           )}
+          {playingFromLocalFile ? (
+            <View
+              style={styles.localSyncedDot}
+              accessibilityLabel="Synced"
+              accessibilityHint="Playing from device cache"
+            />
+          ) : null}
+        </View>
 
-          {/* Play/Pause — dedicated Tap gesture so parent mini-player tap doesn't double-fire */}
-          <GestureDetector gesture={playPauseTapGesture}>
-            <Animated.View style={[styles.playButton, buttonAnimatedStyle]}>
-              {isLoading ? (
-                <LoadingRing
-                  size={26}
-                  color={isYouTube || isYouTubeMusic ? '#FF0000' : isSoundCloud ? '#FF7700' : '#8B5CF6'}
-                />
-              ) : isPlaying ? (
-                <Pause size={22} color="#fff" fill="#fff" />
-              ) : (
-                <Play size={22} color="#fff" fill="#fff" style={{ marginLeft: 2 }} />
-              )}
-              <PlaybackDebugIndicator />
+        <View style={styles.trackInfo}>
+          <Text style={styles.trackTitle} numberOfLines={1}>
+            {currentTrack.title}
+          </Text>
+          <Text style={styles.artistName} numberOfLines={1}>
+            {currentTrack.artist}
+          </Text>
+        </View>
+
+        {showDownload && (
+          <GestureDetector gesture={downloadTapGesture}>
+            <Animated.View
+              style={[styles.controlButton, { opacity: isImporting ? 0.4 : 1 }]}
+              accessibilityRole="button"
+              accessibilityLabel="Keep offline"
+            >
+              <CloudDownload size={19} color="rgba(255,255,255,0.92)" strokeWidth={ICON_STROKE} />
             </Animated.View>
           </GestureDetector>
-        </View>
+        )}
 
-        {/* Progress bar at bottom edge */}
-        <View style={styles.progressContainer}>
-          <Animated.View style={[styles.progressBar, progressAnimatedStyle]} />
+        <GestureDetector gesture={playPauseTapGesture}>
+          <Animated.View style={[styles.controlButton, buttonAnimatedStyle]}>
+            {isLoading ? (
+              <LoadingRing
+                size={21}
+                color={isYouTube || isYouTubeMusic ? '#FF0000' : isSoundCloud ? '#FF7700' : '#fff'}
+              />
+            ) : isPlaying ? (
+              <Pause size={21} color="#FFFFFF" strokeWidth={ICON_STROKE} fill="rgba(255,255,255,0.95)" />
+            ) : (
+              <Play
+                size={21}
+                color="#FFFFFF"
+                strokeWidth={ICON_STROKE}
+                fill="transparent"
+                style={{ marginLeft: 2 }}
+              />
+            )}
+            <PlaybackDebugIndicator />
+          </Animated.View>
+        </GestureDetector>
+
+        <GestureDetector gesture={nextTapGesture}>
+          <View style={styles.controlButton}>
+            <SkipForward size={21} color="#FFFFFF" strokeWidth={ICON_STROKE} fill="transparent" />
+          </View>
+        </GestureDetector>
+      </View>
+
+      <MiniPlayerSlimProgress />
+    </>
+  );
+
+  /** Solid chrome (#121212) matches tab bar — blur read as “floating glass” and let list show through. */
+  const cardSurface = (
+    <View style={styles.cardSurface}>
+      {cardBody}
+    </View>
+  );
+
+  return (
+    <View style={styles.outer} pointerEvents="box-none">
+      <GestureDetector gesture={miniCardGesture}>
+        <View style={styles.shadowHost}>
+          <Animated.View style={containerAnimatedStyle}>{cardSurface}</Animated.View>
         </View>
-      </Animated.View>
-    </GestureDetector>
+      </GestureDetector>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    marginHorizontal: 8,
-    marginBottom: 4,
-    borderRadius: 8,
-    backgroundColor: '#282828',
+  outer: {
+    position: 'relative',
+    marginHorizontal: 0,
+    zIndex: 9999,
+  },
+  cardSurface: {
+    borderRadius: 0,
     overflow: 'hidden',
-    // Subtle shadow for depth
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    position: 'relative',
+    backgroundColor: '#121212',
+  },
+  shadowHost: {
+    borderRadius: 0,
+    backgroundColor: '#121212',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.12,
+        shadowRadius: 6,
+      },
+      android: {
+        elevation: 4,
+      },
+      default: {},
+    }),
   },
   content: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 8,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 8,
   },
   artworkContainer: {
     position: 'relative',
   },
   artwork: {
-    width: 48,
-    height: 48,
+    width: 44,
+    height: 44,
     borderRadius: 4,
   },
   loadingOverlay: {
@@ -451,57 +416,43 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  localSyncedDot: {
+    position: 'absolute',
+    top: 3,
+    right: 3,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.4)',
+    zIndex: 2,
+  },
   trackInfo: {
     flex: 1,
-    marginLeft: 12,
-    marginRight: 8,
+    marginLeft: 10,
+    marginRight: 4,
+    minWidth: 0,
+    justifyContent: 'center',
   },
   trackTitle: {
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
-    letterSpacing: 0.1,
-  },
-  artistRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  sourceLabel: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 11,
-    marginLeft: 4,
-  },
-  separator: {
-    color: 'rgba(255,255,255,0.3)',
-    fontSize: 11,
-    marginHorizontal: 4,
   },
   artistName: {
-    color: 'rgba(255,255,255,0.6)',
+    color: 'rgba(255,255,255,0.55)',
     fontSize: 12,
-    flex: 1,
+    marginTop: 3,
   },
-  qualityBadge: {
-    color: '#8B5CF6',
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  playButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'transparent',
+  controlButton: {
+    width: 36,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  progressContainer: {
+  progressTrack: {
     height: 2,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-  },
-  progressBar: {
-    height: '100%',
-    backgroundColor: '#8B5CF6',
+    width: '100%',
   },
 });

@@ -3,12 +3,20 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 54;
+	objectVersion = 56;
 	objects = {
 
 /* Begin PBXBuildFile section */
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */; };
+		7E2D88DC2F8F22630083D908 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7E2D88DB2F8F22630083D908 /* WidgetKit.framework */; };
+		7E2D88DE2F8F22630083D908 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7E2D88DD2F8F22630083D908 /* SwiftUI.framework */; };
+		7E2D88EB2F8F22640083D908 /* VybeDownloadWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7E2D88DA2F8F22630083D908 /* VybeDownloadWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		7E2D88F22F8F24F50083D908 /* VybeDownloadAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E2D88F12F8F24F50083D908 /* VybeDownloadAttributes.swift */; };
+		7E2D88F32F8F24F50083D908 /* VybeDownloadAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E2D88F12F8F24F50083D908 /* VybeDownloadAttributes.swift */; };
+		7E30AABD2F909EC90063C482 /* VybeDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E30AABC2F909EC90063C482 /* VybeDownloader.swift */; };
+		7E30AABE2F909EC90063C482 /* VybeDownloader.m in Sources */ = {isa = PBXBuildFile; fileRef = 7E30AABB2F909EC90063C482 /* VybeDownloader.m */; };
+		7E40B0AB2F909EC90063C481 /* VybeAVPlayerTuning.m in Sources */ = {isa = PBXBuildFile; fileRef = 7E40B0AA2F909EC90063C481 /* VybeAVPlayerTuning.m */; };
 		B195FDFFC3F2C59B2B0F197E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9E483C0E3678D1A7950AE571 /* PrivacyInfo.xcprivacy */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
 		BE6A366DDF34ADA6B6F7712F /* libPods-vibecode.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 64485A74CDF591FF37A706CE /* libPods-vibecode.a */; };
@@ -22,6 +30,37 @@
 		VYBE00000000000000000016 /* VybeDownloadActivityModule.m in Sources */ = {isa = PBXBuildFile; fileRef = VYBE00000000000000000006 /* VybeDownloadActivityModule.m */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		7E2D88E92F8F22640083D908 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7E2D88D92F8F22630083D908;
+			remoteInfo = VybeDownloadWidgetExtension;
+		};
+		7E2D88F42F8F2BBC0083D908 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7E2D88D92F8F22630083D908;
+			remoteInfo = VybeDownloadWidgetExtension;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		7E2D88F02F8F22640083D908 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				7E2D88EB2F8F22640083D908 /* VybeDownloadWidgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		13B07F961A680F5B00A75B9A /* vibecode.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = vibecode.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = vibecode/Images.xcassets; sourceTree = "<group>"; };
@@ -30,7 +69,14 @@
 		3804182CFE75CD6FD7FA7498 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-vibecode/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
 		56C840A3AA8518612383A89C /* Pods-vibecode.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-vibecode.release.xcconfig"; path = "Target Support Files/Pods-vibecode/Pods-vibecode.release.xcconfig"; sourceTree = "<group>"; };
 		64485A74CDF591FF37A706CE /* libPods-vibecode.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-vibecode.a"; sourceTree = BUILT_PRODUCTS_DIR; };
-		9E483C0E3678D1A7950AE571 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; name = PrivacyInfo.xcprivacy; path = vibecode/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		7E2D88DA2F8F22630083D908 /* VybeDownloadWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VybeDownloadWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		7E2D88DB2F8F22630083D908 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		7E2D88DD2F8F22630083D908 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		7E2D88F12F8F24F50083D908 /* VybeDownloadAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VybeDownloadAttributes.swift; path = vibecode/VybeDownloadAttributes.swift; sourceTree = "<group>"; };
+		7E30AABB2F909EC90063C482 /* VybeDownloader.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = VybeDownloader.m; path = vibecode/VybeDownloader.m; sourceTree = "<group>"; };
+		7E30AABC2F909EC90063C482 /* VybeDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VybeDownloader.swift; path = vibecode/VybeDownloader.swift; sourceTree = "<group>"; };
+		7E40B0AA2F909EC90063C481 /* VybeAVPlayerTuning.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = VybeAVPlayerTuning.m; path = vibecode/VybeAVPlayerTuning.m; sourceTree = "<group>"; };
+		9E483C0E3678D1A7950AE571 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = vibecode/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = vibecode/SplashScreen.storyboard; sourceTree = "<group>"; };
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
@@ -44,6 +90,31 @@
 		VYBE00000000000000000006 /* VybeDownloadActivityModule.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = VybeDownloadActivityModule.m; path = vibecode/VybeDownloadActivityModule.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		7E2D88EC2F8F22640083D908 /* Exceptions for "VybeDownloadWidget" folder in "VybeDownloadWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 7E2D88D92F8F22630083D908 /* VybeDownloadWidgetExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		7E2D88DF2F8F22630083D908 /* VybeDownloadWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7E2D88EC2F8F22640083D908 /* Exceptions for "VybeDownloadWidget" folder in "VybeDownloadWidgetExtension" target */,
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = VybeDownloadWidget;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
 /* Begin PBXFrameworksBuildPhase section */
 		13B07F8C1A680F5B00A75B9A /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
@@ -53,12 +124,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7E2D88D72F8F22630083D908 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7E2D88DE2F8F22630083D908 /* SwiftUI.framework in Frameworks */,
+				7E2D88DC2F8F22630083D908 /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		13B07FAE1A68108700A75B9A /* vibecode */ = {
 			isa = PBXGroup;
 			children = (
+				7E30AABB2F909EC90063C482 /* VybeDownloader.m */,
+				7E40B0AA2F909EC90063C481 /* VybeAVPlayerTuning.m */,
+				7E30AABC2F909EC90063C482 /* VybeDownloader.swift */,
 				F11748412D0307B40044C1D9 /* AppDelegate.swift */,
 				F11748442D0722820044C1D9 /* vibecode-Bridging-Header.h */,
 				VYBE00000000000000000001 /* VybeNowPlayingModule.swift */,
@@ -66,6 +149,7 @@
 				VYBE00000000000000000003 /* VybeNowPlayingActivityModule.swift */,
 				VYBE00000000000000000004 /* VybeNowPlayingActivityModule.m */,
 				VYBE00000000000000000005 /* VybeDownloadActivityModule.swift */,
+				7E2D88F12F8F24F50083D908 /* VybeDownloadAttributes.swift */,
 				VYBE00000000000000000006 /* VybeDownloadActivityModule.m */,
 				BB2F792B24A3F905000567C9 /* Supporting */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
@@ -82,7 +166,6 @@
 				1992A9ED5BF346C46E1111E7 /* Pods-vibecode.debug.xcconfig */,
 				56C840A3AA8518612383A89C /* Pods-vibecode.release.xcconfig */,
 			);
-			name = Pods;
 			path = Pods;
 			sourceTree = "<group>";
 		};
@@ -91,6 +174,8 @@
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
 				64485A74CDF591FF37A706CE /* libPods-vibecode.a */,
+				7E2D88DB2F8F22630083D908 /* WidgetKit.framework */,
+				7E2D88DD2F8F22630083D908 /* SwiftUI.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -115,6 +200,7 @@
 			children = (
 				13B07FAE1A68108700A75B9A /* vibecode */,
 				832341AE1AAA6A7D00B99B32 /* Libraries */,
+				7E2D88DF2F8F22630083D908 /* VybeDownloadWidget */,
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
 				ACEA6C6E7EBAE7DA4C30C933 /* ExpoModulesProviders */,
@@ -129,6 +215,7 @@
 			isa = PBXGroup;
 			children = (
 				13B07F961A680F5B00A75B9A /* vibecode.app */,
+				7E2D88DA2F8F22630083D908 /* VybeDownloadWidgetExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -165,15 +252,38 @@
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				32C2DE817D8EA9846D549969 /* [CP] Embed Pods Frameworks */,
 				53AA94E57A555C229A594CF5 /* [CP] Copy Pods Resources */,
+				7E2D88F02F8F22640083D908 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				7E2D88EA2F8F22640083D908 /* PBXTargetDependency */,
+				7E2D88F52F8F2BBC0083D908 /* PBXTargetDependency */,
 			);
 			name = vibecode;
 			productName = vibecode;
 			productReference = 13B07F961A680F5B00A75B9A /* vibecode.app */;
 			productType = "com.apple.product-type.application";
+		};
+		7E2D88D92F8F22630083D908 /* VybeDownloadWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7E2D88ED2F8F22640083D908 /* Build configuration list for PBXNativeTarget "VybeDownloadWidgetExtension" */;
+			buildPhases = (
+				7E2D88D62F8F22630083D908 /* Sources */,
+				7E2D88D72F8F22630083D908 /* Frameworks */,
+				7E2D88D82F8F22630083D908 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				7E2D88DF2F8F22630083D908 /* VybeDownloadWidget */,
+			);
+			name = VybeDownloadWidgetExtension;
+			productName = VybeDownloadWidgetExtension;
+			productReference = 7E2D88DA2F8F22630083D908 /* VybeDownloadWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -181,10 +291,15 @@
 		83CBB9F71A601CBA00E9B192 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
+				LastSwiftUpdateCheck = 2640;
 				LastUpgradeCheck = 1130;
 				TargetAttributes = {
 					13B07F861A680F5B00A75B9A = {
 						LastSwiftMigration = 1250;
+					};
+					7E2D88D92F8F22630083D908 = {
+						CreatedOnToolsVersion = 26.4;
+						LastSwiftMigration = 2640;
 					};
 				};
 			};
@@ -202,6 +317,7 @@
 			projectRoot = "";
 			targets = (
 				13B07F861A680F5B00A75B9A /* vibecode */,
+				7E2D88D92F8F22630083D908 /* VybeDownloadWidgetExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -215,6 +331,13 @@
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
 				B195FDFFC3F2C59B2B0F197E /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7E2D88D82F8F22630083D908 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -377,13 +500,38 @@
 				VYBE00000000000000000011 /* VybeNowPlayingModule.swift in Sources */,
 				VYBE00000000000000000012 /* VybeNowPlayingModule.m in Sources */,
 				VYBE00000000000000000013 /* VybeNowPlayingActivityModule.swift in Sources */,
+				7E2D88F22F8F24F50083D908 /* VybeDownloadAttributes.swift in Sources */,
 				VYBE00000000000000000014 /* VybeNowPlayingActivityModule.m in Sources */,
 				VYBE00000000000000000015 /* VybeDownloadActivityModule.swift in Sources */,
+				7E30AABD2F909EC90063C482 /* VybeDownloader.swift in Sources */,
+				7E30AABE2F909EC90063C482 /* VybeDownloader.m in Sources */,
+				7E40B0AB2F909EC90063C481 /* VybeAVPlayerTuning.m in Sources */,
 				VYBE00000000000000000016 /* VybeDownloadActivityModule.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7E2D88D62F8F22630083D908 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7E2D88F32F8F24F50083D908 /* VybeDownloadAttributes.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		7E2D88EA2F8F22640083D908 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7E2D88D92F8F22630083D908 /* VybeDownloadWidgetExtension */;
+			targetProxy = 7E2D88E92F8F22640083D908 /* PBXContainerItemProxy */;
+		};
+		7E2D88F52F8F2BBC0083D908 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7E2D88D92F8F22630083D908 /* VybeDownloadWidgetExtension */;
+			targetProxy = 7E2D88F42F8F2BBC0083D908 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		13B07F941A680F5B00A75B9A /* Debug */ = {
@@ -393,7 +541,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = vibecode/vibecode.entitlements;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = FCXP585VH2;
 				ENABLE_BITCODE = NO;
 				GCC_PREPROCESSOR_DEFINITIONS = (
@@ -415,6 +563,7 @@
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = com.vibecode.vybe;
 				PRODUCT_NAME = vibecode;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_OBJC_BRIDGING_HEADER = "vibecode/vibecode-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -430,7 +579,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = vibecode/vibecode.entitlements;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = FCXP585VH2;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = vibecode/Info.plist;
@@ -448,10 +597,110 @@
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = com.vibecode.vybe;
 				PRODUCT_NAME = vibecode;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_OBJC_BRIDGING_HEADER = "vibecode/vibecode-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Release;
+		};
+		7E2D88EE2F8F22640083D908 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = FCXP585VH2;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = VybeDownloadWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = VybeDownloadWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
+				PRODUCT_BUNDLE_IDENTIFIER = com.vibecode.vybe.VybeDownloadWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		7E2D88EF2F8F22640083D908 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = FCXP585VH2;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = VybeDownloadWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = VybeDownloadWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				MTL_FAST_MATH = YES;
+				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
+				PRODUCT_BUNDLE_IDENTIFIER = com.vibecode.vybe.VybeDownloadWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -587,6 +836,15 @@
 			buildConfigurations = (
 				13B07F941A680F5B00A75B9A /* Debug */,
 				13B07F951A680F5B00A75B9A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7E2D88ED2F8F22640083D908 /* Build configuration list for PBXNativeTarget "VybeDownloadWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7E2D88EE2F8F22640083D908 /* Debug */,
+				7E2D88EF2F8F22640083D908 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

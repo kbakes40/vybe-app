@@ -1,0 +1,11 @@
+{
+  "name": "vybe-app",
+  "private": true,
+  "scripts": {
+    "build": "bun run --cwd backend build",
+    "build:backend": "bun run --cwd backend build",
+    "dev:backend": "bun run --cwd backend dev",
+    "start:content": "bun run --cwd backend start:content",
+    "dev:mobile": "bun run --cwd mobile start"
+  }
+}

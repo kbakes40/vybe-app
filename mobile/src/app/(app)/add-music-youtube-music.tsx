@@ -9,13 +9,14 @@ import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
-import { X, Link2, Search } from 'lucide-react-native';
+import { X, Link2, Search, Music } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import { DownloadButton } from '@/components/DownloadButton';
 import { LoadingRing } from '@/components/LoadingRing';
 import { usePlaybackController } from '@/stores/playbackController';
 import { downloadYouTubeTrack, enqueueDownload, useDownloadsStore } from '@/stores/downloadsStore';
 import { Track } from '@/types/music';
+import { normalizeYoutubePlaylistTracksPayload } from '@/lib/youtubePlaylistTracksNormalize';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
 
@@ -51,7 +52,7 @@ function isYouTubeMusicUrl(url: string): boolean {
 function YouTubeMusicIcon({ size = 20 }: { size?: number }) {
   return (
     <View style={{ width: size, height: size, backgroundColor: '#FF0000', borderRadius: size / 2, alignItems: 'center', justifyContent: 'center' }}>
-      <View style={{ width: 0, height: 0, borderLeftWidth: size * 0.38, borderTopWidth: size * 0.22, borderBottomWidth: size * 0.22, borderLeftColor: '#fff', borderTopColor: 'transparent', borderBottomColor: 'transparent', marginLeft: 2 }} />
+      <Music size={size * 0.55} color="#fff" strokeWidth={2.5} />
     </View>
   );
 }
@@ -100,6 +101,8 @@ function PasteSection() {
   const [lookedUpVideoId, setLookedUpVideoId] = useState<string | null>(null);
   const [bulkStarted, setBulkStarted] = useState(false);
   const [bulkDone, setBulkDone] = useState(0);
+  const [bulkActiveId, setBulkActiveId] = useState<string | null>(null);
+  const [bulkProgress, setBulkProgress] = useState(0);
 
   const clear = () => { setYtInfo(null); setPlaylistTracks([]); setError(null); setRelatedTracks([]); setLookedUpVideoId(null); setBulkStarted(false); setBulkDone(0); };
 
@@ -122,12 +125,12 @@ function PasteSection() {
         }
         let json: any;
         try { json = JSON.parse(bodyText); } catch { throw new Error('Invalid playlist response'); }
-        const tracks: PlaylistTrack[] = json.data ?? [];
+        const tracks = normalizeYoutubePlaylistTracksPayload(json.data);
         if (tracks.length === 0) throw new Error('Playlist is empty or unavailable');
         setPlaylistTracks(tracks);
       } else {
         const videoId = extractYouTubeVideoId(target);
-        if (!videoId) throw new Error('Paste a YouTube Music video or playlist URL');
+        if (!videoId) throw new Error('Paste a Vybe Music video or playlist URL');
         const endpoint = `${BACKEND_URL}/api/youtube/info/${videoId}`;
         console.log('[YTMusic Paste] Fetching info:', endpoint);
         const infoResp = await fetch(endpoint);
@@ -183,7 +186,7 @@ function PasteSection() {
         </View>
         <View>
           <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>Paste a Link</Text>
-          <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>YouTube Music video or playlist URL</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>Vybe Music video or playlist URL</Text>
         </View>
       </View>
       <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, gap: 8 }}>
@@ -233,8 +236,12 @@ function PasteSection() {
                       source: 'youtube_music', audioUrl: '', youtubeMusicId: pt.videoId,
                     };
                     enqueueDownload(t.id, async () => {
-                      await downloadYouTubeTrack(t, BACKEND_URL);
+                      setBulkActiveId(t.id);
+                      setBulkProgress(0);
+                      await downloadYouTubeTrack(t, BACKEND_URL, (p) => setBulkProgress(p));
                       setBulkDone((n) => n + 1);
+                      setBulkActiveId(null);
+                      setBulkProgress(0);
                     });
                   });
                 }}
@@ -258,14 +265,29 @@ function PasteSection() {
               artistId: '', album: '', albumId: '', isLiked: false,
               source: 'youtube_music', audioUrl: '', youtubeMusicId: pt.videoId,
             };
+            const isBatchTarget = bulkActiveId === t.id;
+            const pct = Math.round(bulkProgress * 100);
             return (
-              <View key={pt.videoId} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+              <View key={pt.videoId} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, paddingVertical: 4, paddingHorizontal: 4, borderRadius: 8, backgroundColor: isBatchTarget ? 'rgba(139,92,246,0.12)' : 'transparent' }}>
                 <Image source={{ uri: pt.thumbnail }} style={{ width: 48, height: 48, borderRadius: 6 }} contentFit="cover" />
                 <View style={{ flex: 1, marginLeft: 10 }}>
                   <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{pt.title}</Text>
                   <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 1 }} numberOfLines={1}>{pt.channel}</Text>
+                  {isBatchTarget ? (
+                    <View style={{ marginTop: 6, height: 3, borderRadius: 2, backgroundColor: 'rgba(139,92,246,0.2)', overflow: 'hidden' }}>
+                      <View style={{ height: 3, width: `${Math.max(2, pct)}%`, backgroundColor: '#8B5CF6' }} />
+                    </View>
+                  ) : null}
                 </View>
-                <DownloadButton track={t} size={28} />
+                <View style={{ minWidth: 44, alignItems: 'center' }}>
+                  {isBatchTarget ? (
+                    <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, backgroundColor: 'rgba(139,92,246,0.2)' }}>
+                      <Text style={{ color: '#8B5CF6', fontSize: 11, fontWeight: '700' }}>{pct}%</Text>
+                    </View>
+                  ) : (
+                    <DownloadButton track={t} size={28} />
+                  )}
+                </View>
               </View>
             );
           })}
@@ -326,6 +348,8 @@ function SearchSection() {
   const [urlPlaylistTracks, setUrlPlaylistTracks] = useState<PlaylistTrack[]>([]);
   const [bulkStarted, setBulkStarted] = useState(false);
   const [bulkDone, setBulkDone] = useState(0);
+  const [bulkActiveId, setBulkActiveId] = useState<string | null>(null);
+  const [bulkProgress, setBulkProgress] = useState(0);
 
   const queryIsUrl = query.includes('music.youtube.com') || query.includes('youtube.com') || query.includes('youtu.be');
   const clearUrlResults = () => { setUrlTrack(null); setUrlPlaylistTracks([]); setUrlError(null); setBulkStarted(false); setBulkDone(0); };
@@ -355,7 +379,7 @@ function SearchSection() {
           const resp = await fetch(`${BACKEND_URL}/api/youtube/playlist-tracks?listId=${encodeURIComponent(listId)}`);
           if (!resp.ok) throw new Error('Failed to fetch playlist');
           const json = await resp.json();
-          const pts: PlaylistTrack[] = json.data ?? [];
+          const pts = normalizeYoutubePlaylistTracksPayload(json.data);
           if (pts.length === 0) throw new Error('Playlist is empty');
           setUrlPlaylistTracks(pts);
         } else {
@@ -389,7 +413,7 @@ function SearchSection() {
             onChangeText={(t) => { setQuery(t); clearUrlResults(); }}
             onSubmitEditing={handleSearch}
             returnKeyType="search"
-            placeholder="Search YouTube Music..."
+            placeholder="Search Vybe Music..."
             placeholderTextColor="rgba(255,255,255,0.3)"
             autoCapitalize="none" autoCorrect={false}
             style={{ flex: 1, color: '#fff', fontSize: 13, marginLeft: 8 }}
@@ -439,8 +463,12 @@ function SearchSection() {
                       source: 'youtube_music', audioUrl: '', youtubeMusicId: pt.videoId,
                     };
                     enqueueDownload(t.id, async () => {
-                      await downloadYouTubeTrack(t, BACKEND_URL);
+                      setBulkActiveId(t.id);
+                      setBulkProgress(0);
+                      await downloadYouTubeTrack(t, BACKEND_URL, (p) => setBulkProgress(p));
                       setBulkDone((n) => n + 1);
+                      setBulkActiveId(null);
+                      setBulkProgress(0);
                     });
                   });
                 }}
@@ -464,14 +492,29 @@ function SearchSection() {
               artistId: '', album: '', albumId: '', isLiked: false,
               source: 'youtube_music', audioUrl: '', youtubeMusicId: pt.videoId,
             };
+            const isBatchTarget = bulkActiveId === t.id;
+            const pct = Math.round(bulkProgress * 100);
             return (
-              <View key={pt.videoId} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+              <View key={pt.videoId} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, paddingVertical: 4, paddingHorizontal: 4, borderRadius: 8, backgroundColor: isBatchTarget ? 'rgba(139,92,246,0.12)' : 'transparent' }}>
                 <Image source={{ uri: pt.thumbnail }} style={{ width: 48, height: 48, borderRadius: 6 }} contentFit="cover" />
                 <View style={{ flex: 1, marginLeft: 10 }}>
                   <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{pt.title}</Text>
                   <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 1 }} numberOfLines={1}>{pt.channel}</Text>
+                  {isBatchTarget ? (
+                    <View style={{ marginTop: 6, height: 3, borderRadius: 2, backgroundColor: 'rgba(139,92,246,0.2)', overflow: 'hidden' }}>
+                      <View style={{ height: 3, width: `${Math.max(2, pct)}%`, backgroundColor: '#8B5CF6' }} />
+                    </View>
+                  ) : null}
                 </View>
-                <DownloadButton track={t} size={28} />
+                <View style={{ minWidth: 44, alignItems: 'center' }}>
+                  {isBatchTarget ? (
+                    <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, backgroundColor: 'rgba(139,92,246,0.2)' }}>
+                      <Text style={{ color: '#8B5CF6', fontSize: 11, fontWeight: '700' }}>{pct}%</Text>
+                    </View>
+                  ) : (
+                    <DownloadButton track={t} size={28} />
+                  )}
+                </View>
               </View>
             );
           })}
@@ -533,7 +576,7 @@ export default function AddMusicYouTubeMusicScreen() {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           <YouTubeMusicIcon size={28} />
           <View>
-            <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>YouTube Music</Text>
+            <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>Vybe Music</Text>
             <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginTop: 1 }}>Download music tracks</Text>
           </View>
         </View>

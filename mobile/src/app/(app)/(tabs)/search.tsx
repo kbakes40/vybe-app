@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { View, Text, ScrollView, TextInput, Pressable, Keyboard, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
-import { LoadingRing } from '@/components/LoadingRing';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Search as SearchIcon, X, ChevronLeft, Music, Play, Radio } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
+import { useCancelPrefetchOnBlur } from '@/hooks/usePrefetch';
+import { cancelNativePrefetchQueue, queueYoutubeAudioPrefetch } from '@/stores/prefetchStore';
+import { PreResolveOnView } from '@/components/PreResolveOnView';
 import { Image } from 'expo-image';
 import { CategoryCard } from '@/components/CategoryCard';
 import { TrackCard } from '@/components/TrackCard';
@@ -14,6 +16,9 @@ import { useDownloadsStore } from '@/stores/downloadsStore';
 import { api } from '@/lib/api/api';
 import { Track } from '@/types/music';
 import { createMMKVCache, TTL } from '@/lib/mmkv-cache';
+import { preResolveYoutubeVideoId } from '@/lib/youtubeResolvePreloadCache';
+import { preResolveSoundcloudStreamUrl } from '@/lib/soundcloudStreamPreloadCache';
+import { tabScreenScrollBottomPad } from '@/constants/miniPlayer';
 
 interface PlaylistTrack {
   videoId: string;
@@ -36,6 +41,11 @@ interface CacheEntry {
   youtube: Track[];
   soundcloud: Track[];
   timestamp: number;
+}
+
+interface TypedSearchDiskEntry {
+  yt: Track[];
+  sc: Track[];
 }
 
 interface SpotifyPlaylistTrack {
@@ -93,8 +103,10 @@ function hydrateGenreFromDisk(genre: string): CacheEntry | null {
 function GenreTrackCard({ track, onPress }: { track: Track; onPress: () => void }) {
   const label = track.source === 'youtube_music' ? 'Vybe Music'
     : track.source === 'soundcloud' ? 'Vybe Waves' : 'Vybe Video';
+  const ytVid = track.youtubeMusicId ?? track.youtubeId;
   return (
-    <Pressable onPress={onPress} style={{ marginRight: 12, width: 120 }}>
+    <PreResolveOnView youtubeVideoId={ytVid} style={{ marginRight: 12, width: 120 }}>
+    <Pressable onPress={onPress} style={{ width: 120 }}>
       <View style={{ width: 120, height: 120, borderRadius: 8, overflow: 'hidden', backgroundColor: '#1A1A1A', marginBottom: 6 }}>
         {track.artwork ? (
           <Image source={{ uri: track.artwork }} style={{ width: '100%', height: '100%' }} contentFit="cover" />
@@ -104,6 +116,7 @@ function GenreTrackCard({ track, onPress }: { track: Track; onPress: () => void 
       <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }} numberOfLines={2}>{track.title}</Text>
       <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }} numberOfLines={1}>{track.artist}</Text>
     </Pressable>
+    </PreResolveOnView>
   );
 }
 
@@ -121,10 +134,16 @@ function SectionRow({ label, icon, loading, tracks: rowTracks, onPlay, loadingCo
         {icon}
         <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', marginLeft: 8 }}>{label}</Text>
       </View>
-      {loading ? (
-        <View style={{ alignSelf: 'flex-start', marginLeft: 4 }}>
-          <LoadingRing size={24} color={loadingColor ?? '#8B5CF6'} />
-        </View>
+      {loading && rowTracks.length === 0 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }}>
+          {[0, 1, 2].map((i) => (
+            <View key={i} style={{ width: 120, marginRight: 12 }}>
+              <View style={{ width: 120, height: 120, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.06)' }} />
+              <View style={{ marginTop: 8, height: 12, width: '90%', borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.05)' }} />
+              <View style={{ marginTop: 6, height: 10, width: '60%', borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.04)' }} />
+            </View>
+          ))}
+        </ScrollView>
       ) : rowTracks.length === 0 ? (
         <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, paddingLeft: 4 }}>No results</Text>
       ) : (
@@ -141,7 +160,78 @@ function SectionRow({ label, icon, loading, tracks: rowTracks, onPlay, loadingCo
 const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> =>
   Promise.race([promise, new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
 
+// Curated query strings per genre. These are tuned to pull hits + popular tracks
+// instead of random playlists / compilations. Each provider gets a tailored query.
+const GENRE_QUERIES: Record<string, { ytMusic: string; youtube: string; soundcloud: string }> = {
+  Pop: {
+    ytMusic: 'top pop hits 2025',
+    youtube: 'pop music video official',
+    soundcloud: 'pop hits',
+  },
+  'Hip-Hop': {
+    ytMusic: 'top hip hop hits 2025',
+    youtube: 'hip hop music video official',
+    soundcloud: 'hip hop new',
+  },
+  'Hip Hop': {
+    ytMusic: 'top hip hop hits 2025',
+    youtube: 'hip hop music video official',
+    soundcloud: 'hip hop new',
+  },
+  Electronic: {
+    ytMusic: 'top electronic tracks 2025',
+    youtube: 'electronic music video',
+    soundcloud: 'electronic edm',
+  },
+  'R&B': {
+    ytMusic: 'top rnb hits 2025',
+    youtube: 'rnb music video official',
+    soundcloud: 'rnb new',
+  },
+  Rock: {
+    ytMusic: 'top rock hits 2025',
+    youtube: 'rock music video official',
+    soundcloud: 'rock indie',
+  },
+  Jazz: {
+    ytMusic: 'best jazz tracks',
+    youtube: 'jazz live performance',
+    soundcloud: 'jazz fusion',
+  },
+  Classical: {
+    ytMusic: 'best classical pieces',
+    youtube: 'classical music performance',
+    soundcloud: 'classical piano',
+  },
+  'Lo-Fi': {
+    ytMusic: 'lofi hip hop beats',
+    youtube: 'lofi chill beats',
+    soundcloud: 'lofi chill',
+  },
+  'AI Sounds': {
+    ytMusic: 'ai generated music',
+    youtube: 'ai music showcase',
+    soundcloud: 'ai generated',
+  },
+  Throwbacks: {
+    ytMusic: 'throwback hits 2000s 2010s',
+    youtube: 'throwback music video official',
+    soundcloud: 'throwback classics',
+  },
+};
+
+function genreQueries(genre: string): { ytMusic: string; youtube: string; soundcloud: string } {
+  return (
+    GENRE_QUERIES[genre] ?? {
+      ytMusic: `top ${genre} hits 2025`,
+      youtube: `${genre} music video official`,
+      soundcloud: `${genre} new`,
+    }
+  );
+}
+
 export default function SearchScreen() {
+  useCancelPrefetchOnBlur();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
@@ -173,9 +263,10 @@ export default function SearchScreen() {
   const [youtubeLoading, setYoutubeLoading] = useState(false);
   const [scLoading, setScLoading] = useState(false);
 
-  // Live SoundCloud results for the typed search bar (separate from genre cache)
+  // Live unified search (YouTube Music + SoundCloud) for the typed bar — stale-while-revalidate.
   const [liveSoundCloudTracks, setLiveSoundCloudTracks] = useState<Track[]>([]);
-  const [liveSoundCloudLoading, setLiveSoundCloudLoading] = useState(false);
+  const [liveYtMusicTracks, setLiveYtMusicTracks] = useState<Track[]>([]);
+  const [liveSearchFetching, setLiveSearchFetching] = useState(false);
 
   const [spotifyResult, setSpotifyResult] = useState<SpotifyPlaylistResult | null>(null);
   const [spotifyLoading, setSpotifyLoading] = useState(false);
@@ -185,6 +276,7 @@ export default function SearchScreen() {
   const activeGenreRef = useRef<string | null>(lastSelectedGenre);
 
   const playTrack = usePlaybackController(s => s.playTrack);
+  const currentTrack = usePlaybackController(s => s.currentTrack);
   const downloads = useDownloadsStore(s => s.downloads);
 
   const spotifyPlaylistId = extractSpotifyPlaylistId(searchQuery);
@@ -235,24 +327,37 @@ export default function SearchScreen() {
       )
     : [];
 
-  // Debounced live SoundCloud search for the typed bar.
+  // 50ms debounce; hydrate from MMKV; parallel YT Music + SoundCloud; keep prior rows until replace (SWR).
   useEffect(() => {
     const q = searchQuery.trim();
     if (q.length < 2) {
       setLiveSoundCloudTracks([]);
-      setLiveSoundCloudLoading(false);
+      setLiveYtMusicTracks([]);
+      setLiveSearchFetching(false);
       return;
     }
+
+    const disk = searchMMKV.get<TypedSearchDiskEntry>(`typed:${q.toLowerCase()}`, 10 * 60 * 1000);
+    if (disk?.value && !disk.isStale) {
+      setLiveYtMusicTracks(disk.value.yt);
+      setLiveSoundCloudTracks(disk.value.sc);
+    }
+
     let cancelled = false;
-    setLiveSoundCloudLoading(true);
+    setLiveSearchFetching(true);
     const handle = setTimeout(() => {
-      withTimeout(
-        api.get<SCTrack[]>(`/api/soundcloud/search?q=${encodeURIComponent(q)}&maxResults=20`),
-        15000,
-      )
-        .then(res => {
+      const scP = withTimeout(
+        api.get<SCTrack[]>(`/api/soundcloud/search?q=${encodeURIComponent(q)}&maxResults=35`),
+        18000,
+      ).catch(() => [] as SCTrack[]);
+      const ytP = withTimeout(
+        api.get<PlaylistTrack[]>(`/api/youtube/search?q=${encodeURIComponent(`${q} music`)}&maxResults=18`),
+        18000,
+      ).catch(() => [] as PlaylistTrack[]);
+      Promise.all([scP, ytP])
+        .then(([scRes, ytRes]) => {
           if (cancelled) return;
-          const mapped: Track[] = (res ?? []).map(t => ({
+          const scMapped: Track[] = (scRes ?? []).map((t) => ({
             id: `sc-${t.trackId}`,
             title: t.title,
             artist: t.artist,
@@ -262,14 +367,50 @@ export default function SearchScreen() {
             source: 'soundcloud' as const,
             soundcloudUrl: t.soundcloudUrl,
             audioUrl: '',
-            artistId: '', album: '', albumId: '',
+            artistId: '',
+            album: '',
+            albumId: '',
           }));
-          setLiveSoundCloudTracks(mapped);
+          const ytMapped: Track[] = (ytRes ?? []).map((t) => ({
+            id: `ytm-${t.videoId}`,
+            title: t.title,
+            artist: t.channelName,
+            artwork: t.thumbnailUrl,
+            source: 'youtube_music' as const,
+            youtubeMusicId: t.videoId,
+            audioUrl: '',
+            artistId: '',
+            album: '',
+            albumId: '',
+            isLiked: false,
+            duration: 0,
+          }));
+          setLiveSoundCloudTracks(scMapped);
+          setLiveYtMusicTracks(ytMapped);
+          searchMMKV.set(`typed:${q.toLowerCase()}`, { yt: ytMapped, sc: scMapped });
+
+          ytMapped.slice(0, 3).forEach((tr) => {
+            const id = tr.youtubeMusicId ?? tr.youtubeId;
+            if (id) preResolveYoutubeVideoId(id);
+          });
+          scMapped.slice(0, 3).forEach((tr) => {
+            if (tr.soundcloudUrl) preResolveSoundcloudStreamUrl(tr.soundcloudUrl);
+          });
+          [...ytMapped, ...scMapped].slice(0, 10).forEach((tr) => {
+            if (tr.artwork) void Image.prefetch(tr.artwork);
+          });
         })
-        .catch(() => { if (!cancelled) setLiveSoundCloudTracks([]); })
-        .finally(() => { if (!cancelled) setLiveSoundCloudLoading(false); });
-    }, 350);
-    return () => { cancelled = true; clearTimeout(handle); };
+        .catch(() => {
+          /* keep stale rows */
+        })
+        .finally(() => {
+          if (!cancelled) setLiveSearchFetching(false);
+        });
+    }, 50);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
   }, [searchQuery]);
 
   const filteredArtists = searchQuery
@@ -295,6 +436,7 @@ export default function SearchScreen() {
   };
 
   const fetchGenre = (genre: string) => {
+    cancelNativePrefetchQueue();
     activeGenreRef.current = genre;
     setYtMusicTracks([]); setYoutubeTracks([]); setScTracks([]);
     setYtMusicLoading(true); setYoutubeLoading(true); setScLoading(true);
@@ -308,7 +450,11 @@ export default function SearchScreen() {
       });
     };
 
-    withTimeout(api.get<PlaylistTrack[]>(`/api/youtube/search?q=${encodeURIComponent(genre + ' music')}&maxResults=10`), 25000)
+    // Curated query templates per genre — picks high-signal terms instead of
+    // a bare "<genre> music" string that returns generic / playlist links.
+    const queries = genreQueries(genre);
+
+    withTimeout(api.get<PlaylistTrack[]>(`/api/youtube/search?q=${encodeURIComponent(queries.ytMusic)}&maxResults=15`), 25000)
       .then(res => {
         if (activeGenreRef.current !== genre) return;
         const mapped = (res ?? []).map(t => ({
@@ -319,6 +465,7 @@ export default function SearchScreen() {
         partial.ytMusic = mapped;
         setYtMusicTracks(mapped);
         warmVideoIds(mapped.map(t => t.youtubeMusicId!));
+        void queueYoutubeAudioPrefetch(mapped);
       })
       .catch(() => { partial.ytMusic = []; })
       .finally(() => {
@@ -327,7 +474,7 @@ export default function SearchScreen() {
         tryCommitCache(genre, partial);
       });
 
-    withTimeout(api.get<PlaylistTrack[]>(`/api/youtube/search?q=${encodeURIComponent(genre + ' music video')}&maxResults=8`), 25000)
+    withTimeout(api.get<PlaylistTrack[]>(`/api/youtube/search?q=${encodeURIComponent(queries.youtube)}&maxResults=12`), 25000)
       .then(res => {
         if (activeGenreRef.current !== genre) return;
         const mapped = (res ?? []).map(t => ({
@@ -345,7 +492,7 @@ export default function SearchScreen() {
         tryCommitCache(genre, partial);
       });
 
-    withTimeout(api.get<SCTrack[]>(`/api/soundcloud/search?q=${encodeURIComponent(genre)}&maxResults=8`), 25000)
+    withTimeout(api.get<SCTrack[]>(`/api/soundcloud/search?q=${encodeURIComponent(queries.soundcloud)}&maxResults=15`), 25000)
       .then(res => {
         if (activeGenreRef.current !== genre) return;
         const mapped = (res ?? []).map(t => ({
@@ -355,6 +502,9 @@ export default function SearchScreen() {
         }));
         partial.soundcloud = mapped;
         setScTracks(mapped);
+        mapped.slice(0, 3).forEach((t) => {
+          if (t.soundcloudUrl) preResolveSoundcloudStreamUrl(t.soundcloudUrl);
+        });
       })
       .catch(() => { partial.soundcloud = []; })
       .finally(() => {
@@ -380,6 +530,7 @@ export default function SearchScreen() {
   };
 
   const handleGenrePress = (genre: string) => {
+    cancelNativePrefetchQueue();
     lastSelectedGenre = genre;
     setSelectedGenre(genre);
 
@@ -394,6 +545,7 @@ export default function SearchScreen() {
       setYtMusicLoading(false);
       setYoutubeLoading(false);
       setScLoading(false);
+      void queueYoutubeAudioPrefetch([...cached.ytMusic, ...cached.youtube]);
       return;
     }
 
@@ -441,7 +593,7 @@ export default function SearchScreen() {
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: tabScreenScrollBottomPad(insets.bottom, !!currentTrack) }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         onScrollBeginDrag={() => Keyboard.dismiss()}
@@ -538,7 +690,7 @@ export default function SearchScreen() {
           </View>
         ) : searchQuery ? (
           <View>
-            {filteredDownloads.length > 0 || filteredTracks.length > 0 || filteredArtists.length > 0 || liveSoundCloudTracks.length > 0 || liveSoundCloudLoading ? (
+            {filteredDownloads.length > 0 || filteredTracks.length > 0 || filteredArtists.length > 0 || liveSoundCloudTracks.length > 0 || liveYtMusicTracks.length > 0 || liveSearchFetching ? (
               <>
                 {filteredDownloads.length > 0 ? (
                   <View style={{ marginBottom: 8 }}>
@@ -567,20 +719,56 @@ export default function SearchScreen() {
                   </View>
                 ) : null}
 
-                {liveSoundCloudLoading || liveSoundCloudTracks.length > 0 ? (
+                {liveYtMusicTracks.length > 0 || (liveSearchFetching && liveYtMusicTracks.length === 0 && liveSoundCloudTracks.length === 0) ? (
                   <View style={{ marginTop: 24 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginBottom: 12 }}>
-                      <View style={{ width: 18, height: 18, borderRadius: 4, backgroundColor: '#FF5500', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
-                        <Radio size={11} color="#fff" strokeWidth={2.5} />
+                      <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: '#FF0000', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+                        <Music size={11} color="#fff" strokeWidth={2.5} />
                       </View>
-                      <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>From Vybe Waves</Text>
+                      <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Vybe Music</Text>
                     </View>
-                    {liveSoundCloudLoading && liveSoundCloudTracks.length === 0 ? (
-                      <View style={{ paddingVertical: 20, alignItems: 'center' }}>
-                        <ActivityIndicator color="#FF5500" />
+                    {liveYtMusicTracks.length === 0 && liveSearchFetching ? (
+                      <View style={{ paddingHorizontal: 20, gap: 12 }}>
+                        {[0, 1, 2].map((i) => (
+                          <View key={i} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <View style={{ width: 56, height: 56, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.06)' }} />
+                            <View style={{ flex: 1, marginLeft: 12, gap: 8 }}>
+                              <View style={{ height: 14, width: '70%', borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.06)' }} />
+                              <View style={{ height: 12, width: '45%', borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.04)' }} />
+                            </View>
+                          </View>
+                        ))}
                       </View>
                     ) : (
-                      liveSoundCloudTracks.map(track => (
+                      liveYtMusicTracks.map((track) => (
+                        <TrackCard key={track.id} track={track} queue={liveYtMusicTracks} />
+                      ))
+                    )}
+                  </View>
+                ) : null}
+
+                {liveSoundCloudTracks.length > 0 || (liveSearchFetching && liveSoundCloudTracks.length === 0 && liveYtMusicTracks.length === 0) ? (
+                  <View style={{ marginTop: 24 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginBottom: 12 }}>
+                      <View style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+                        <Radio size={14} color="rgba(255,255,255,0.9)" strokeWidth={2.5} />
+                      </View>
+                      <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Vybe Waves</Text>
+                    </View>
+                    {liveSoundCloudTracks.length === 0 && liveSearchFetching ? (
+                      <View style={{ paddingHorizontal: 20, gap: 12 }}>
+                        {[0, 1, 2].map((i) => (
+                          <View key={i} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <View style={{ width: 56, height: 56, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.06)' }} />
+                            <View style={{ flex: 1, marginLeft: 12, gap: 8 }}>
+                              <View style={{ height: 14, width: '68%', borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.06)' }} />
+                              <View style={{ height: 12, width: '40%', borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.04)' }} />
+                            </View>
+                          </View>
+                        ))}
+                      </View>
+                    ) : (
+                      liveSoundCloudTracks.map((track) => (
                         <TrackCard key={track.id} track={track} queue={liveSoundCloudTracks} />
                       ))
                     )}

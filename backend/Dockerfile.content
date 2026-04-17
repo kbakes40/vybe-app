@@ -1,0 +1,13 @@
+# vybe-content — serves /catalog/curated-playlists.json (no Prisma, yt-dlp, or apt).
+# Railway: set Root Directory = backend, Builder = Dockerfile, Dockerfile path = Dockerfile.content
+FROM oven/bun:1
+WORKDIR /app
+
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile --production
+
+COPY catalog ./catalog
+COPY src/contentServer.ts ./src/contentServer.ts
+
+ENV NODE_ENV=production
+CMD ["bun", "run", "src/contentServer.ts"]

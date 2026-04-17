@@ -6,8 +6,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChevronLeft, Play, Shuffle, Heart } from 'lucide-react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { tracks } from '@/data/mockData';
 import { usePlaybackController } from '@/stores/playbackController';
+import { useLikedSongsStore } from '@/stores/likedSongsStore';
 import { TrackCard } from '@/components/TrackCard';
 import { usePlaylistHeroColors } from '@/lib/usePlaylistHeroColors';
 
@@ -16,16 +16,13 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 export default function LikedSongsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const likedTracks = usePlaybackController(s => s.likedTracks);
   const playTrack = usePlaybackController(s => s.playTrack);
+  const likedSongs = useLikedSongsStore(s => s.likedSongs);
 
   const playScale = useSharedValue(1);
   const playButtonStyle = useAnimatedStyle(() => ({
     transform: [{ scale: playScale.value }],
   }));
-
-  // All liked tracks in order
-  const likedSongs = tracks.filter(t => likedTracks.has(t.id) || t.isLiked);
 
   const handlePlayAll = () => {
     if (likedSongs.length > 0) {

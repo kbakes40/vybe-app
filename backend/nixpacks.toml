@@ -1,13 +1,18 @@
+# Railway / Nixpacks — avoid aptPkgs here: apt-get hits archive.ubuntu.com during
+# Docker build and often fails on this builder (IPv6 unreachable / mirror timeouts).
+# `aptPkgs = []` stops providers (e.g. Node + yt-dlp-wrap) from injecting apt/pip steps.
+# Use Nix only for native tools; see Dockerfile.content for the static catalog service.
+
 [phases.setup]
-aptPkgs = ["python3", "python3-pip", "ffmpeg"]
-nixPkgs = ["yt-dlp"]
+aptPkgs = []
+nixPkgs = ["yt-dlp", "ffmpeg", "openssl"]
 nixLibs = ["openssl"]
 
 [phases.install]
-cmds = ["pip3 install --break-system-packages yt-dlp || true", "bun install"]
+cmds = ["bun install"]
 
 [phases.build]
-cmds = ["yt-dlp --version"]
+cmds = ["bun run build"]
 
 [start]
 cmd = "bun run start"

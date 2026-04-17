@@ -174,8 +174,8 @@ export default function AddMusicAppleMusicScreen() {
             <Text style={{ color: '#fff', fontSize: 18, fontWeight: '900' }}>♪</Text>
           </View>
           <View>
-            <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>Apple Music</Text>
-            <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13 }}>Plays via YouTube</Text>
+            <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>Music Library</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13 }}>Stream playlists</Text>
           </View>
         </View>
         <Pressable
@@ -233,7 +233,7 @@ export default function AddMusicAppleMusicScreen() {
 
           {/* Search — same pattern as YouTube / YouTube Music / SoundCloud / Spotify */}
           <View style={{ backgroundColor: 'rgba(252,60,68,0.08)', borderRadius: 16, padding: 16, marginBottom: 16 }}>
-            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 12 }}>Search Apple Music</Text>
+            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700', marginBottom: 12 }}>Search Music Library</Text>
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12, height: 44 }}>
                 <Search size={14} color="rgba(255,255,255,0.3)" />
@@ -307,7 +307,7 @@ export default function AddMusicAppleMusicScreen() {
           {!result && !loading && (
             <View style={{ backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 12, padding: 14, marginBottom: 16 }}>
               <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, lineHeight: 20 }}>
-                Supports Apple Music <Text style={{ color: '#FC3C44', fontWeight: '600' }}>albums</Text> and <Text style={{ color: '#FC3C44', fontWeight: '600' }}>playlists</Text>. Tracks are matched and played via YouTube.
+                Supports <Text style={{ color: '#FC3C44', fontWeight: '600' }}>albums</Text> and <Text style={{ color: '#FC3C44', fontWeight: '600' }}>playlists</Text>. Tracks are matched and streamed in-app.
               </Text>
             </View>
           )}
@@ -316,7 +316,7 @@ export default function AddMusicAppleMusicScreen() {
           {loading && (
             <View style={{ alignItems: 'center', paddingVertical: 40 }}>
               <ActivityIndicator size="large" color="#FC3C44" />
-              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 14, marginTop: 14 }}>Finding tracks on YouTube…</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 14, marginTop: 14 }}>Finding tracks…</Text>
             </View>
           )}
 

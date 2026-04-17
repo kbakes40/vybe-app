@@ -39,6 +39,26 @@ interface DiscoveryAlgorithmState {
 
 // Debounce interval for signal uploads (5 seconds)
 const SIGNAL_FLUSH_INTERVAL = 5000;
+
+/** Strict payload for POST /api/discovery/signal (API expects safe integers). */
+function listeningSignalForApi(signal: ListeningSignal): ListeningSignal {
+  return {
+    trackId: signal.trackId,
+    signalType: signal.signalType,
+    listenDuration:
+      signal.listenDuration != null
+        ? Math.floor(Number(signal.listenDuration))
+        : undefined,
+    trackDuration:
+      signal.trackDuration != null
+        ? Math.floor(Number(signal.trackDuration))
+        : undefined,
+    skipPosition:
+      signal.skipPosition != null
+        ? Math.floor(Number(signal.skipPosition))
+        : undefined,
+  };
+}
 // Cache duration for sections (5 minutes)
 const SECTIONS_CACHE_DURATION = 5 * 60 * 1000;
 
@@ -96,9 +116,11 @@ export const useDiscoveryAlgorithmStore = create<DiscoveryAlgorithmState>((set, 
   recordSignal: (signal: ListeningSignal) => {
     const { signalQueue, updateAdaptation } = get();
 
+    const normalized = listeningSignalForApi(signal);
+
     // Add to queue
     set({
-      signalQueue: [...signalQueue, { signal, timestamp: Date.now() }]
+      signalQueue: [...signalQueue, { signal: normalized, timestamp: Date.now() }]
     });
 
     // Update skip/complete counts for adaptation
@@ -134,7 +156,7 @@ export const useDiscoveryAlgorithmStore = create<DiscoveryAlgorithmState>((set, 
     try {
       // Upload signals one by one (could batch in future)
       for (const item of toUpload) {
-        await api.post('/api/discovery/signal', item.signal);
+        await api.post('/api/discovery/signal', listeningSignalForApi(item.signal));
       }
       console.log('[Discovery] Flushed', toUpload.length, 'signals');
     } catch (error) {

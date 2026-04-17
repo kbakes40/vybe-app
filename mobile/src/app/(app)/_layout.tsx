@@ -1,23 +1,31 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { View, StyleSheet, AppState, Linking, Text, Pressable } from 'react-native';
-import { Stack, usePathname, useRouter } from 'expo-router';
+import { Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MiniPlayer } from '@/components/MiniPlayer';
+import { NowPlayingSheet } from '@/components/NowPlayingSheet';
+import { AirPlayPill } from '@/components/AirPlayPill';
 import { usePlaybackController } from '@/stores/playbackController';
 import { SoundCloudWebViewPool, SoundCloudWebViewPoolRef } from '@/components/SoundCloudWebViewPool';
 import { YouTubeWebViewPool, YouTubeWebViewPoolRef } from '@/components/YouTubeWebViewPool';
 import { PlaybackDebugOverlay } from '@/components/PlaybackDebugOverlay';
+import { PiPVideoOverlay } from '@/components/PiPVideoOverlay';
 import { useSignalTracker } from '@/hooks/useSignalTracker';
 import { useDiscoveryRefresh } from '@/hooks/useDiscoveryRefresh';
+import { authClient } from '@/lib/auth/auth-client';
+import { configurePurchases, getCustomerInfo, isPremiumActive } from '@/lib/purchases';
+import { useSubscriptionStore, setVipEmail } from '@/stores/subscriptionStore';
 import * as Clipboard from 'expo-clipboard';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming } from 'react-native-reanimated';
 import { X } from 'lucide-react-native';
 
-// Mini player dimensions - exported for use in screens
-export const MINI_PLAYER_HEIGHT = 66; // 48px artwork + 16px padding + 2px progress bar
+import {
+  MINI_PLAYER_HEIGHT,
+  TAB_BAR_BASE_HEIGHT,
+  MINI_PLAYER_TAB_FLUSH_OVERLAP_PX,
+} from '@/constants/miniPlayer';
 
-// Tab bar height constant (50px + bottom safe area)
-export const TAB_BAR_BASE_HEIGHT = 50;
+// Re-export for screens that already import from this layout file
+export { MINI_PLAYER_HEIGHT, TAB_BAR_BASE_HEIGHT };
 
 // Global refs to the warm WebView pools
 export let warmSoundCloudRef: React.RefObject<SoundCloudWebViewPoolRef | null> | null = null;
@@ -36,19 +44,20 @@ function detectMusicPlatform(text: string): MusicPlatform | null {
 
 const PLATFORM_META: Record<MusicPlatform, { label: string; color: string; symbol: string; symbolSize: number }> = {
   soundcloud:   { label: 'SoundCloud',   color: '#FF5500', symbol: ')))', symbolSize: 11 },
-  youtube_music:{ label: 'YouTube Music',color: '#FF0000', symbol: '▶',   symbolSize: 13 },
-  youtube:      { label: 'YouTube',      color: '#FF0000', symbol: '▶',   symbolSize: 13 },
+  youtube_music:{ label: 'Cloud Source', color: '#FF0000', symbol: '▶',   symbolSize: 13 },
+  youtube:      { label: 'Web Stream',   color: '#FF0000', symbol: '▶',   symbolSize: 13 },
   spotify:      { label: 'Spotify',      color: '#1DB954', symbol: '♫',   symbolSize: 16 },
   apple_music:  { label: 'Apple Music',  color: '#FC3C44', symbol: '♪',   symbolSize: 16 },
 };
 
 export default function AppLayout() {
-  // Use the unified PlaybackController instead of the old playerStore
-  const currentTrack = usePlaybackController(s => s.currentTrack);
+  // Unified playback store — mini player mirrors the same `currentTrack` as `MiniPlayer` / `NowPlayingSheet`.
+  const currentTrack = usePlaybackController((s) => s.currentTrack);
   const insets = useSafeAreaInsets();
-  const showMiniPlayer = !!currentTrack;
+  const showMiniPlayer = currentTrack != null;
   const soundcloudPoolRef = useRef<SoundCloudWebViewPoolRef>(null);
   const youtubePoolRef = useRef<YouTubeWebViewPoolRef>(null);
+  const segments = useSegments();
   const pathname = usePathname();
   const router = useRouter();
 
@@ -112,11 +121,25 @@ export default function AppLayout() {
     return () => sub.remove();
   }, []);
 
-  // Handle vibecode://import?url=... deep links
+  // Handle vibecode://import?url=... and vibecode://downloads deep links
   useEffect(() => {
+    let handledInitial = false;
+    let lastHandledUrl: string | null = null;
+    let lastHandledAt = 0;
+
     const handleDeepLink = (url: string) => {
+      // De-dupe: same URL within 1s is ignored (prevents loop from getInitialURL + url event firing together)
+      const now = Date.now();
+      if (url === lastHandledUrl && now - lastHandledAt < 1000) return;
+      lastHandledUrl = url;
+      lastHandledAt = now;
+
       try {
         const parsed = new URL(url);
+        const host = parsed.host || parsed.pathname.replace(/^\/+/, '').split('/')[0];
+        // Hard-block any vibecode://downloads deep link — stale pills from
+        // older widget builds may still emit this. Ignore it entirely.
+        if (host === 'downloads') return;
         const target = parsed.searchParams.get('url');
         if (target && detectMusicPlatform(target)) {
           router.push({ pathname: '/(app)/add-music', params: { prefillUrl: target } });
@@ -124,7 +147,12 @@ export default function AppLayout() {
       } catch {}
     };
 
-    Linking.getInitialURL().then((url) => { if (url) handleDeepLink(url); });
+    Linking.getInitialURL().then((url) => {
+      if (url && !handledInitial) {
+        handledInitial = true;
+        handleDeepLink(url);
+      }
+    });
     const sub = Linking.addEventListener('url', ({ url }) => handleDeepLink(url));
     return () => sub.remove();
   }, [router]);
@@ -132,6 +160,64 @@ export default function AppLayout() {
   // Discovery system hooks - track listening signals and refresh on app open
   useSignalTracker();
   useDiscoveryRefresh();
+
+  // VIP + RevenueCat subscription check — fire-and-forget on mount so it
+  // never triggers a re-render of this layout component.
+  useEffect(() => {
+    (async () => {
+      try {
+        const session = await authClient.getSession();
+        const email = session?.data?.user?.email;
+        const userId = session?.data?.user?.id;
+
+        // Cache email for synchronous VIP checks in subscription store
+        setVipEmail(email ?? null);
+
+        if (__DEV__) {
+          configurePurchases(userId);
+          useSubscriptionStore.getState().setTier('plus');
+          return;
+        }
+
+        // 1. Hardcoded VIP emails — instant
+        const VIP_EMAILS = ['kevin.baker88@gmail.com', 'kevin.baker88@me.com'];
+        if (email && VIP_EMAILS.includes(email.toLowerCase())) {
+          useSubscriptionStore.getState().setTier('plus');
+          return;
+        }
+
+        // 2. Remote VIP table
+        const base = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
+        if (email && base) {
+          const res = await fetch(`${base}/api/vip/check?email=${encodeURIComponent(email)}`).catch(() => null);
+          if (res?.ok) {
+            const json = await res.json();
+            if (json?.data?.isVip) {
+              useSubscriptionStore.getState().setTier('plus');
+              return;
+            }
+          }
+        }
+
+        // 3. RevenueCat (may not be available in dev builds)
+        try {
+          configurePurchases(userId);
+          const info = await getCustomerInfo();
+          if (info && isPremiumActive(info)) {
+            useSubscriptionStore.getState().setTier('plus');
+            return;
+          }
+        } catch (rcErr) {
+          console.warn('[Subscription] RevenueCat unavailable:', rcErr);
+        }
+
+        // No VIP or RevenueCat match — ensure free tier
+        useSubscriptionStore.getState().setTier('free');
+      } catch (e) {
+        console.warn('[Subscription] check failed:', e);
+      }
+    })();
+  }, []);
 
   // Expose the warm WebView refs globally
   useEffect(() => {
@@ -144,16 +230,35 @@ export default function AppLayout() {
     };
   }, []);
 
-  // Check if we're on a tab screen (tabs have the tab bar visible)
-  const isTabScreen = pathname === '/' || pathname === '/search' || pathname === '/library' || pathname === '/discover';
+  // Expo Router often omits `(tabs)` from `useSegments()` (e.g. `['index']` on Home). Combine checks
+  // so `miniPlayerBottom` stays `tabBarHeight` on tabs — otherwise it falls back to ~insets.bottom and
+  // the mini strip covers the tab icons.
+  const segs = segments as string[];
+  const tabLeaf = segs[segs.length - 1] ?? '';
+  const isKnownTabLeaf =
+    tabLeaf === 'index' ||
+    tabLeaf === 'search' ||
+    tabLeaf === 'library' ||
+    tabLeaf === 'discover' ||
+    tabLeaf === 'profile' ||
+    tabLeaf === 'social';
+  const pathNorm = String(pathname ?? '/').replace(/\/$/, '') || '/';
+  const isTabPath =
+    pathNorm === '/' ||
+    pathNorm === '/index' ||
+    pathNorm === '/search' ||
+    pathNorm === '/library' ||
+    pathNorm === '/discover' ||
+    pathNorm === '/profile' ||
+    pathNorm === '/social';
+  const isTabScreen = segs.includes('(tabs)') || isKnownTabLeaf || isTabPath;
 
   // Tab bar height (only applies on tab screens)
   const tabBarHeight = TAB_BAR_BASE_HEIGHT + insets.bottom;
 
-  // Mini player bottom position:
-  // - On tab screens: sits directly above the tab bar
-  // - On non-tab screens: sits at the bottom with safe area inset
-  const miniPlayerBottom = isTabScreen ? tabBarHeight : insets.bottom;
+  const miniPlayerBottom = isTabScreen
+    ? Math.max(0, tabBarHeight - MINI_PLAYER_TAB_FLUSH_OVERLAP_PX)
+    : Math.max(insets.bottom, 0);
 
   return (
     <View style={styles.container}>
@@ -167,9 +272,9 @@ export default function AppLayout() {
         <Stack.Screen
           name="nowPlaying"
           options={{
-            presentation: 'modal',
-            animation: 'slide_from_bottom',
-            contentStyle: { backgroundColor: '#0A0A0A' },
+            presentation: 'transparentModal',
+            animation: 'none',
+            contentStyle: { backgroundColor: 'transparent' },
           }}
         />
         <Stack.Screen
@@ -194,6 +299,14 @@ export default function AppLayout() {
           name="playlist/[id]"
           options={{
             animation: 'slide_from_right',
+          }}
+        />
+        <Stack.Screen
+          name="playlist-detail"
+          options={{
+            animation: 'slide_from_right',
+            gestureEnabled: true,
+            fullScreenGestureEnabled: true,
           }}
         />
         <Stack.Screen
@@ -313,21 +426,32 @@ export default function AppLayout() {
         visible={false}
       />
 
-      {/* Global Mini Player - fixed to bottom, above tab bar on tab screens */}
-      {showMiniPlayer && (
+      {/* Global mini player — floats above tab bar; zIndex ensures it stacks above (tabs) stack. */}
+      {showMiniPlayer ? (
         <View
-          style={[
-            styles.miniPlayerContainer,
-            { bottom: miniPlayerBottom },
-          ]}
           pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            top: 0,
+            bottom: 0,
+            zIndex: 9999,
+            elevation: 9999,
+          }}
         >
-          <MiniPlayer />
+          <NowPlayingSheet miniPlayerBottom={miniPlayerBottom} />
         </View>
-      )}
+      ) : null}
 
       {/* Playback Debug Overlay - only visible when debug mode is enabled */}
       <PlaybackDebugOverlay />
+      <PiPVideoOverlay />
+
+      {/* Floating AirPlay pill — appears top-right while AirPlay is active so
+          the user stays on their current screen (no forced full-screen player) */}
+      <AirPlayPill />
+
 
       {/* Clipboard music link banner */}
       {clipboardUrl && (
@@ -339,8 +463,8 @@ export default function AppLayout() {
               top: insets.top + 8,
               left: 16,
               right: 16,
-              zIndex: 9999,
-              elevation: 20,
+              zIndex: 250000,
+              elevation: 250000,
               backgroundColor: '#1C1C1E',
               borderRadius: 16,
               borderWidth: 1,
@@ -412,12 +536,5 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0A0A0A',
-  },
-  miniPlayerContainer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    zIndex: 1000,
-    overflow: 'visible',
   },
 });

@@ -104,9 +104,22 @@ function SuccessOverlay({ onContinue }: { onContinue: () => void }) {
           Welcome to the good stuff.
         </Animated.Text>
 
-        {/* Feature checks */}
+        {/* Feature checks — mirrors the full Vybe+ benefit list from the
+            paywall so the confirmation feels like a complete receipt of
+            everything the user just unlocked. */}
         <Animated.View entering={FadeIn.delay(400).duration(300)} style={styles.successFeatures}>
-          {['Unlimited skips', 'Zero ads', 'Offline downloads', 'High quality audio'].map((f, i) => (
+          {[
+            'No ads, ever',
+            'Unlimited skips',
+            'High quality audio',
+            'Lossless when supported',
+            'Offline downloads',
+            'Early AI releases',
+            'Exclusive releases',
+            'Advanced discovery',
+            'Artist radio stations',
+            'Listening insights',
+          ].map((f, i) => (
             <View key={i} style={styles.successFeatureRow}>
               <View style={styles.successCheck}>
                 <Check size={14} color="#fff" strokeWidth={3} />
@@ -482,22 +495,25 @@ const styles = StyleSheet.create({
     fontSize: 17,
     marginBottom: 36,
   },
-  successFeatures: { width: '100%', marginBottom: 40 },
+  successFeatures: {
+    alignSelf: 'center',
+    marginBottom: 28,
+  },
   successFeatureRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
   },
   successCheck: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     backgroundColor: '#8B5CF6',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 14,
+    marginRight: 12,
   },
-  successFeatureText: { color: '#FFFFFF', fontSize: 16, fontWeight: '500' },
+  successFeatureText: { color: '#FFFFFF', fontSize: 15, fontWeight: '500' },
   successCtaWrap: { width: '100%' },
   successCta: { borderRadius: 28, overflow: 'hidden' },
   successCtaGradient: { height: 56, alignItems: 'center', justifyContent: 'center' },

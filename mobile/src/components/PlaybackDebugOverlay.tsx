@@ -84,7 +84,7 @@ export function PlaybackDebugOverlay() {
   return (
     <View
       className="absolute top-0 left-0 right-0 bg-black/95 border-b border-[#8B5CF6]/30"
-      style={{ zIndex: 9999 }}
+      style={{ zIndex: 250000, elevation: 250000 }}
     >
       <View className="px-3 pt-2 pb-1">
         {/* Header */}

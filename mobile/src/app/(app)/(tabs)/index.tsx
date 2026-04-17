@@ -1,25 +1,39 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, Text, ScrollView, Pressable, Dimensions, ActivityIndicator, RefreshControl, NativeSyntheticEvent, NativeScrollEvent } from 'react-native';
+import { View, Text, ScrollView, Pressable, Dimensions, ActivityIndicator, RefreshControl, NativeSyntheticEvent, NativeScrollEvent, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
-import { Play, ChevronRight, Moon, Brain, Cloud, Sparkles, MoreHorizontal, Radio, Music, Headphones } from 'lucide-react-native';
+import { BlurView } from 'expo-blur';
+import { useRouter, useFocusEffect } from 'expo-router';
+import {
+  Play,
+  Pause,
+  ChevronRight,
+  Moon,
+  Brain,
+  Sparkles,
+  Radio,
+  Music,
+  Headphones,
+  SkipBack,
+  SkipForward,
+  Shuffle,
+  Repeat,
+  Repeat1,
+} from 'lucide-react-native';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
-  withTiming,
-  withRepeat,
-  withSequence,
-  Easing,
   interpolate,
   Extrapolation,
-  SharedValue,
-  runOnJS,
 } from 'react-native-reanimated';
 import { PlaylistCard } from '@/components/PlaylistCard';
+import { clearCuratedPlaylistWarmSession } from '@/lib/curatedPlaylistWarmup';
+import { preResolveYoutubeVideoId } from '@/lib/youtubeResolvePreloadCache';
+import { normalizeYoutubePlaylistTracksPayload } from '@/lib/youtubePlaylistTracksNormalize';
+import { useCuratedPlaylistCardWarmup } from '@/hooks/useCuratedPlaylistCardWarmup';
 import { AlbumCard } from '@/components/AlbumCard';
 import { VybeIcon } from '@/components/VybeIcon';
 import { ProfileAvatar } from '@/components/ProfileAvatar';
@@ -42,8 +56,17 @@ import { api } from '@/lib/api/api';
 import { MixDefinition, RelatedTrack, Track } from '@/types/music';
 import { prefetchHeroColors } from '@/lib/usePlaylistHeroColors';
 import { createMMKVCache, TTL } from '@/lib/mmkv-cache';
+import { tabScreenScrollBottomPad } from '@/constants/miniPlayer';
+import { ShadowSavedMark } from '@/components/DownloadButton';
+import { SourceCornerBadge } from '@/components/SourceCornerBadge';
+import { QuickPickRow } from '@/components/QuickPickRow';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+/** Shadow home system */
+const SECTION_GAP = 32;
+const ART_RADIUS = 16;
+const SCREEN_W = Dimensions.get('window').width;
 const AnimatedText = Animated.createAnimatedComponent(Text);
 
 // ─── Mood tabs ────────────────────────────────────────────────────────────────
@@ -95,40 +118,30 @@ interface DailyMixHeroCardProps {
   onPress: () => void;
 }
 
-const GRID_SIZE = 200;
-const TILE = (GRID_SIZE - 2) / 2;
-
+/** No Reanimated/React state cross-over — that combo was tripping "invalid hook call" on Home. */
 function FlipTile({ uri, size }: { uri: string; size: number }) {
-  const flip = useSharedValue(0);
-  const [displayed, setDisplayed] = useState(uri);
-
-  useEffect(() => {
-    if (uri === displayed) return;
-    flip.value = withSequence(
-      withTiming(1, { duration: 220, easing: Easing.in(Easing.ease) }, (done) => {
-        if (done) runOnJS(setDisplayed)(uri);
-      }),
-      withTiming(0, { duration: 220, easing: Easing.out(Easing.ease) }),
-    );
-  }, [uri]);
-
-  const animStyle = useAnimatedStyle(() => ({
-    transform: [
-      { perspective: 600 },
-      { rotateY: `${interpolate(flip.value, [0, 1], [0, 90])}deg` },
-    ],
-  }));
-
+  const show = uri.length > 0;
   return (
-    <Animated.View style={[{ width: size, height: size }, animStyle]}>
-      <Image source={{ uri: displayed }} style={{ width: size, height: size }} contentFit="cover" cachePolicy="memory-disk" />
-    </Animated.View>
+    <View style={{ width: size, height: size, backgroundColor: '#141416' }}>
+      {show ? (
+        <Image
+          key={uri}
+          source={{ uri }}
+          style={{ width: size, height: size }}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+        />
+      ) : null}
+    </View>
   );
 }
 
 function DailyMixHeroCard({ title, artistNames, artworks, onPress }: DailyMixHeroCardProps) {
   const cardScale = useSharedValue(1);
   const cardAnimStyle = useAnimatedStyle(() => ({ transform: [{ scale: cardScale.value }] }));
+  const cardW = SCREEN_W - 32;
+  const heroGrid = Math.min(236, Math.floor(cardW * 0.44));
+  const tile = (heroGrid - 2) / 2;
 
   const [slots, setSlots] = useState<string[]>(() => {
     const init = artworks.slice(0, 4);
@@ -156,7 +169,7 @@ function DailyMixHeroCard({ title, artistNames, artworks, onPress }: DailyMixHer
   }, [artworks[0]]);
 
   return (
-    <Animated.View style={[{ marginHorizontal: 20 }, cardAnimStyle]}>
+    <Animated.View style={[{ marginHorizontal: 16, width: cardW }, cardAnimStyle]}>
       <Pressable
         onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); onPress(); }}
         onPressIn={() => { cardScale.value = withSpring(0.97); }}
@@ -165,36 +178,83 @@ function DailyMixHeroCard({ title, artistNames, artworks, onPress }: DailyMixHer
         <LinearGradient
           colors={['#1A0836', '#0F0428', '#0D0722']}
           start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-          style={{ borderRadius: 18, overflow: 'hidden' }}
+          style={{
+            borderRadius: 20,
+            overflow: 'hidden',
+            borderWidth: 0.5,
+            borderColor: 'rgba(255,255,255,0.1)',
+          }}
         >
-          <View style={{ flexDirection: 'row', minHeight: GRID_SIZE }}>
-            {/* Left: badge + title + artists + play */}
-            <View style={{ flex: 1, paddingLeft: 16, paddingVertical: 20, paddingRight: 12, justifyContent: 'space-between' }}>
+          <View style={{ flexDirection: 'row', minHeight: heroGrid, alignItems: 'center' }}>
+            <View style={{ flex: 1, paddingLeft: 18, paddingVertical: 22, paddingRight: 14, justifyContent: 'space-between', minHeight: heroGrid }}>
               <View>
-                <View style={{ backgroundColor: '#7C3AED', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, alignSelf: 'flex-start', marginBottom: 10 }}>
-                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 1.2 }}>NEW</Text>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+                  <View
+                    style={{
+                      borderRadius: 8,
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      backgroundColor: 'rgba(139,92,246,0.22)',
+                      borderWidth: StyleSheet.hairlineWidth,
+                      borderColor: 'rgba(196,181,253,0.45)',
+                    }}
+                  >
+                    <Text style={{ color: '#E9D5FF', fontSize: 9, fontWeight: '900', letterSpacing: 1.1 }}>MADE FOR YOU</Text>
+                  </View>
+                  <View
+                    style={{
+                      borderRadius: 8,
+                      paddingHorizontal: 8,
+                      paddingVertical: 3,
+                      backgroundColor: 'rgba(57,255,20,0.1)',
+                      borderWidth: StyleSheet.hairlineWidth,
+                      borderColor: 'rgba(57,255,20,0.75)',
+                    }}
+                  >
+                    <Text style={{ color: '#39FF14', fontSize: 9, fontWeight: '900', letterSpacing: 1.2 }}>NEW</Text>
+                  </View>
                 </View>
-                <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', lineHeight: 26 }} numberOfLines={2}>{title}</Text>
-                <Text style={{ color: 'rgba(255,255,255,0.42)', fontSize: 12, marginTop: 5 }} numberOfLines={1}>{artistNames}</Text>
+                <Text style={{ color: '#fff', fontSize: 23, fontWeight: '800', lineHeight: 28, letterSpacing: -0.3 }} numberOfLines={2}>
+                  {title}
+                </Text>
+                <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12, marginTop: 6 }} numberOfLines={2}>
+                  {artistNames}
+                </Text>
               </View>
-              <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
-                <Play size={20} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 2 }} />
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  alignSelf: 'flex-start',
+                  marginTop: 16,
+                  paddingHorizontal: 22,
+                  height: 52,
+                  borderRadius: 26,
+                  backgroundColor: 'rgba(255,255,255,0.9)',
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.28,
+                  shadowRadius: 10,
+                  elevation: 8,
+                }}
+              >
+                <Play size={22} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 2 }} />
+                <Text style={{ color: '#0A0A0A', fontWeight: '800', fontSize: 15, marginLeft: 10, letterSpacing: 0.35 }}>Play Mix</Text>
               </View>
             </View>
 
-            {/* Right: 2×2 square grid */}
-            <View style={{ width: GRID_SIZE, height: GRID_SIZE }}>
+            <View style={{ width: heroGrid, height: heroGrid }}>
               <View style={{ flex: 1, flexDirection: 'column' }}>
                 <View style={{ flex: 1, flexDirection: 'row' }}>
-                  <FlipTile uri={slots[0]} size={TILE} />
+                  <FlipTile uri={slots[0]} size={tile} />
                   <View style={{ width: 2, backgroundColor: '#0D0722' }} />
-                  <FlipTile uri={slots[1]} size={TILE} />
+                  <FlipTile uri={slots[1]} size={tile} />
                 </View>
                 <View style={{ height: 2, backgroundColor: '#0D0722' }} />
                 <View style={{ flex: 1, flexDirection: 'row' }}>
-                  <FlipTile uri={slots[2]} size={TILE} />
+                  <FlipTile uri={slots[2]} size={tile} />
                   <View style={{ width: 2, backgroundColor: '#0D0722' }} />
-                  <FlipTile uri={slots[3]} size={TILE} />
+                  <FlipTile uri={slots[3]} size={tile} />
                 </View>
               </View>
             </View>
@@ -205,41 +265,117 @@ function DailyMixHeroCard({ title, artistNames, artworks, onPress }: DailyMixHer
   );
 }
 
-// ─── Quick Pick Row ───────────────────────────────────────────────────────────
-interface QuickPickRowProps {
-  track: Track;
-  onPress: () => void;
-  onMore?: () => void;
+// ─── Heavy Rotation Card ─────────────────────────────────────────────────────
+const ROTATION_CARD_SIZE = 110;
+const RAIL_CARD_DIM = Math.min(SCREEN_W * 0.42, 168);
+const HEAVY_SECTION_H_PAD = 20;
+
+/** 2×3 Shadow grid — square tiles, center glass play, YT badge, typography below */
+function HeavyRotationShadowGrid({
+  playlists,
+  onOpen,
+}: {
+  playlists: CuratedPlaylist[];
+  onOpen: (pl: CuratedPlaylist) => void;
+}) {
+  const innerW = SCREEN_W - HEAVY_SECTION_H_PAD * 2 - 24;
+  const colGap = 12;
+  const cell = (innerW - colGap) / 2;
+  const six = playlists.slice(0, 6);
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+        {six.map((pl, idx) => (
+        <Pressable
+          key={pl.playlistId}
+          onPress={() => onOpen(pl)}
+          style={{ width: cell, marginBottom: idx < 4 ? 16 : 0 }}
+        >
+          <View style={{ width: cell, height: cell, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0A0A0A' }}>
+            <Image source={{ uri: pl.thumbnailUrl }} style={{ width: cell, height: cell }} contentFit="cover" cachePolicy="memory-disk" />
+            <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { alignItems: 'center', justifyContent: 'center' }]}>
+              <View
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 24,
+                  backgroundColor: 'rgba(255,255,255,0.36)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Play size={24} color="#fff" fill="#fff" style={{ marginLeft: 3 }} />
+              </View>
+            </View>
+            <View style={{ position: 'absolute', top: 8, right: 8 }} pointerEvents="none">
+              <SourceCornerBadge source="youtube_music" />
+            </View>
+          </View>
+          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 14, marginTop: 10, letterSpacing: 0.15 }} numberOfLines={2}>
+            {pl.name}
+          </Text>
+          <Text style={{ color: '#888888', fontSize: 12, marginTop: 4, fontWeight: '600' }}>{pl.tracks.length} songs</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
 }
 
-function QuickPickRow({ track, onPress, onMore }: QuickPickRowProps) {
-  const scale = useSharedValue(1);
-  const animatedStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+function HeavyRotationCard({
+  playlist,
+  onPress,
+  variant = 'default',
+}: {
+  playlist: { name: string; artwork: string; trackCount: number };
+  onPress: () => void;
+  variant?: 'default' | 'shadowRail';
+}) {
+  const dim = variant === 'shadowRail' ? RAIL_CARD_DIM : ROTATION_CARD_SIZE;
+  const showBadge = true;
   return (
-    <Animated.View style={animatedStyle}>
-      <Pressable
-        onPress={onPress}
-        onPressIn={() => { scale.value = withSpring(0.98); }}
-        onPressOut={() => { scale.value = withSpring(1); }}
-        style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 10 }}
+    <Pressable onPress={onPress} style={{ width: dim, marginRight: variant === 'shadowRail' ? 14 : 12 }}>
+      <View
+        style={{
+          width: dim,
+          height: dim,
+          borderRadius: ART_RADIUS,
+          overflow: 'hidden',
+          backgroundColor: '#121214',
+          borderWidth: variant === 'shadowRail' ? StyleSheet.hairlineWidth : 0,
+          borderColor: 'rgba(255,255,255,0.14)',
+        }}
       >
-        <View style={{ width: 52, height: 52, borderRadius: 6, overflow: 'hidden', backgroundColor: '#1C1C1C' }}>
-          <Image source={{ uri: track.artwork }} style={{ width: 52, height: 52 }} contentFit="cover" />
-        </View>
-        <View style={{ flex: 1, marginLeft: 13 }}>
-          <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }} numberOfLines={1}>{track.title}</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3 }}>
-            <SourceIcon source={track.source} />
-            <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }} numberOfLines={1}>
-              {track.artist}
-            </Text>
+        <Image source={{ uri: playlist.artwork }} style={{ width: dim, height: dim }} contentFit="cover" />
+        {variant === 'shadowRail' ? (
+          <View
+            style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(8,8,12,0.18)' }]}
+            pointerEvents="none"
+          />
+        ) : null}
+        {showBadge ? (
+          <View style={{ position: 'absolute', top: 8, right: 8 }} pointerEvents="none">
+            <SourceCornerBadge source="youtube_music" />
+          </View>
+        ) : null}
+        <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { alignItems: 'center', justifyContent: 'center' }]}>
+          <View
+            style={{
+              width: variant === 'shadowRail' ? 40 : 36,
+              height: variant === 'shadowRail' ? 40 : 36,
+              borderRadius: variant === 'shadowRail' ? 20 : 18,
+              backgroundColor: 'rgba(255,255,255,0.34)',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <Play size={variant === 'shadowRail' ? 18 : 16} color="#fff" fill="#fff" style={{ marginLeft: 2 }} />
           </View>
         </View>
-        <Pressable onPress={onMore} hitSlop={12} style={{ padding: 6 }}>
-          <MoreHorizontal size={18} color="rgba(255,255,255,0.35)" />
-        </Pressable>
-      </Pressable>
-    </Animated.View>
+      </View>
+      <Text style={{ color: '#fff', fontSize: variant === 'shadowRail' ? 14 : 12, fontWeight: '800', marginTop: 10, letterSpacing: 0.2 }} numberOfLines={2}>
+        {playlist.name}
+      </Text>
+      <Text style={{ color: '#888888', fontSize: 12, marginTop: 4, fontWeight: '600' }}>{playlist.trackCount} songs</Text>
+    </Pressable>
   );
 }
 
@@ -259,14 +395,17 @@ interface SectionHeaderProps {
 
 function SectionHeader({ title, onSeeAll }: SectionHeaderProps) {
   return (
-    <View className="flex-row items-center justify-between px-5 mb-4">
-      <Text className="text-white text-xl font-bold">{title}</Text>
-      {onSeeAll ? (
-        <Pressable onPress={onSeeAll} className="flex-row items-center">
-          <Text className="text-white/60 text-sm mr-1">See all</Text>
-          <ChevronRight size={16} color="rgba(255,255,255,0.6)" />
-        </Pressable>
-      ) : null}
+    <View style={{ paddingHorizontal: 20, marginBottom: 18 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', letterSpacing: 0.35 }}>{title}</Text>
+        {onSeeAll ? (
+          <Pressable onPress={onSeeAll} style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 13, marginRight: 4 }}>See all</Text>
+            <ChevronRight size={16} color="rgba(255,255,255,0.55)" />
+          </Pressable>
+        ) : null}
+      </View>
+      <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: 'rgba(255,255,255,0.1)', marginTop: 14 }} />
     </View>
   );
 }
@@ -392,6 +531,7 @@ interface PlaylistTrack {
   videoId: string;
   title: string;
   channelName: string;
+  channelId?: string;
   thumbnailUrl: string;
   publishedAt: string;
 }
@@ -403,6 +543,105 @@ interface CuratedPlaylist {
   tracks: PlaylistTrack[];
   category?: string;
   section?: string;
+}
+
+/** YouTube Music curated playlist tile with visible-first resolve warming + ready play affordance. */
+function HomeYtmCuratedPlaylistCard({ playlist }: { playlist: CuratedPlaylist }) {
+  const router = useRouter();
+  const playTrack = usePlaybackController(s => s.playTrack);
+  const videoIds = useMemo(() => playlist.tracks.map(t => t.videoId), [playlist.tracks]);
+  const { ref, onLayout, isReady, firstVideoId } = useCuratedPlaylistCardWarmup(
+    playlist.playlistId,
+    playlist.name,
+    videoIds,
+  );
+
+  const playlistTracks: Track[] = useMemo(
+    () =>
+      playlist.tracks.map(t => ({
+        id: `ytm-${t.videoId}`,
+        title: t.title,
+        artist: t.channelName,
+        artistId: `ytm-artist-${t.videoId}`,
+        album: playlist.name,
+        albumId: `ytm-pl-${playlist.playlistId}`,
+        artwork: t.thumbnailUrl,
+        duration: 0,
+        isLiked: false,
+        source: 'youtube_music' as const,
+        youtubeId: t.videoId,
+        youtubeMusicId: t.videoId,
+        youtubeMusicUrl: `https://music.youtube.com/watch?v=${t.videoId}`,
+      })),
+    [playlist],
+  );
+
+  const cover = playlist.thumbnailUrl || playlistTracks[0]?.artwork || '';
+
+  return (
+    <View ref={ref} collapsable={false} onLayout={onLayout} className="mr-4">
+      <Pressable
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          router.push(`/(app)/playlist-detail?id=${playlist.playlistId}` as never);
+        }}
+      >
+        <View style={{ width: 150 }}>
+          <View
+            style={{
+              width: 150,
+              height: 150,
+              borderRadius: ART_RADIUS,
+              overflow: 'hidden',
+              backgroundColor: '#121214',
+              borderWidth: 0.5,
+              borderColor: 'rgba(255,255,255,0.1)',
+            }}
+          >
+            <Image source={{ uri: cover }} style={{ width: 150, height: 150 }} contentFit="cover" />
+            <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(6,6,10,0.12)' }]} pointerEvents="none" />
+            <View style={{ position: 'absolute', top: 8, right: 8 }} pointerEvents="none">
+              <SourceCornerBadge source="youtube_music" />
+            </View>
+            <Pressable
+              onPressIn={() => {
+                if (firstVideoId) preResolveYoutubeVideoId(firstVideoId);
+                videoIds.slice(0, 3).forEach(id => preResolveYoutubeVideoId(id));
+              }}
+              onPress={(e) => {
+                e.stopPropagation();
+                if (playlistTracks.length === 0) return;
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                void playTrack(playlistTracks[0], playlistTracks, { expandNowPlaying: false });
+                router.push({
+                  pathname: '/(app)/playlist-detail',
+                  params: { playlistId: playlist.playlistId, playlistName: playlist.name },
+                } as never);
+              }}
+              style={[StyleSheet.absoluteFillObject, { alignItems: 'center', justifyContent: 'center' }]}
+            >
+              <View
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  backgroundColor: 'rgba(255,255,255,0.34)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Play size={22} color="#fff" fill="#fff" style={{ marginLeft: 2 }} />
+              </View>
+            </Pressable>
+          </View>
+          <Text style={{ color: '#fff', fontWeight: '800', fontSize: 13, marginTop: 10, letterSpacing: 0.2 }} numberOfLines={2}>
+            {playlist.name}
+          </Text>
+          <Text style={{ color: '#888888', fontSize: 11, marginTop: 3, fontWeight: '600' }}>{playlist.tracks.length} songs</Text>
+        </View>
+      </Pressable>
+    </View>
+  );
 }
 
 interface SpotifyPlaylistTrack {
@@ -464,6 +703,8 @@ const HOME_KEYS = {
   // Backend-sourced track feeds for From YouTube / From SoundCloud sections
   ytTrendingTracks: 'ytTrendingTracks',
   scTrendingTracks: 'scTrendingTracks',
+  // playlistId → first-track thumbnail for Era Hits cards
+  eraArtwork: 'eraArtwork',
 } as const;
 
 // SoundCloud track shape returned by /api/soundcloud/search
@@ -480,7 +721,17 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const playTrack = usePlaybackController(s => s.playTrack);
+  const currentTrack = usePlaybackController(s => s.currentTrack);
+
+  useFocusEffect(
+    useCallback(() => {
+      return () => clearCuratedPlaylistWarmSession();
+    }, []),
+  );
+
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  // Track-actions bottom sheet (Share / Like / Add to playlist)
+  const [actionsTrack, setActionsTrack] = useState<Track | null>(null);
 
   // Synchronous MMKV reads (lazy initializers) seed state from disk on mount.
   // This means if the cache is warm, the UI paints immediately — no spinner
@@ -522,6 +773,12 @@ export default function HomeScreen() {
   const [scTrendingTracks, setScTrendingTracks] = useState<SCApiTrack[]>(() => {
     const hit = homeMMKV.get<SCApiTrack[]>(HOME_KEYS.scTrendingTracks, TTL.GENRE);
     return hit?.value ?? [];
+  });
+  // playlistId → first-track artwork map for Era Hits (cached so the cards
+  // paint instantly with real album art on every app open).
+  const [eraArtwork, setEraArtwork] = useState<Record<string, string>>(() => {
+    const hit = homeMMKV.get<Record<string, string>>(HOME_KEYS.eraArtwork, TTL.CURATED);
+    return hit?.value ?? {};
   });
   const [isLoadingMixes, setIsLoadingMixes] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -635,6 +892,49 @@ export default function HomeScreen() {
     }
   }, []);
 
+  // Era Hits artwork — independent effect so blank cards don't wait on the
+  // big fetchMixes await chain. Uses the first track's videoId to build a
+  // CANONICAL unsigned YT thumbnail URL. The `thumbnail` field returned by
+  // /playlist-tracks (from yt-dlp) has signed `sqp=`+`rs=` query params that
+  // expo-image sometimes refuses to render, which is why the cards were
+  // blank. The `i.ytimg.com/vi/{id}/hqdefault.jpg` form always works.
+  useEffect(() => {
+    const ERA_IDS = [
+      'OLAK5uy_nNJT7AbBdhV752pwUKXiyYRs6aEiUyh5Y',
+      'RDCLAK5uy_lMzHW51iFg1Kx0d_2EHpzbOgCrwtu8cgI',
+      'RDCLAK5uy_nQkPLhMF6chdzKSlWdX8NHMrLVpdci-eU',
+      'OLAK5uy_k8MpasYgwAswSjuvZN5ilDMNPxT5R-mHk',
+      'PLmyAPRLQRJ6lMbAdXYGuyZ627Y9RoX25i',
+      'RDCLAK5uy_mGYde2Wyx9INZd6GbPcMWkxDOu6Utmedw',
+      'RDCLAK5uy_nZgpioZcDw6oYAp4o3oUNTWdVK0j_XyWo',
+      'RDCLAK5uy_mplKe9BIYCO3ZuNWSHZr48bm9DUDzbWnE',
+    ];
+    let cancelled = false;
+    Promise.all(
+      ERA_IDS.map(id =>
+        api.get<unknown>(`/api/youtube/playlist-tracks?listId=${encodeURIComponent(id)}`)
+          .then((raw) => {
+            const rows = normalizeYoutubePlaylistTracksPayload(raw);
+            const videoId = rows[0]?.videoId ?? '';
+            const art = videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '';
+            return [id, art] as [string, string];
+          })
+          .catch(() => [id, ''] as [string, string])
+      )
+    ).then(pairs => {
+      if (cancelled) return;
+      const map: Record<string, string> = {};
+      for (const [id, art] of pairs) if (art) map[id] = art;
+      if (Object.keys(map).length === 0) return;
+      setEraArtwork(prev => {
+        const merged = { ...prev, ...map };
+        homeMMKV.set(HOME_KEYS.eraArtwork, merged);
+        return merged;
+      });
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   const fetchMixes = async () => {
     setIsLoadingMixes(true);
 
@@ -650,8 +950,11 @@ export default function HomeScreen() {
       const playlistsResponse = await api.get<CuratedPlaylist[]>('/api/youtube/playlists');
       if (playlistsResponse) {
         const filtered = playlistsResponse.filter(p => p.tracks.length > 0);
-        setCuratedPlaylists(filtered);
-        homeMMKV.set(HOME_KEYS.curatedPlaylists, filtered);
+        // Never replace a full home feed with an empty payload (transient API/yt-dlp failures).
+        if (filtered.length > 0) {
+          setCuratedPlaylists(filtered);
+          homeMMKV.set(HOME_KEYS.curatedPlaylists, filtered);
+        }
       }
 
       // Fetch Spotify playlists (bridged to YouTube for playback)
@@ -712,6 +1015,67 @@ export default function HomeScreen() {
         setYtTrendingTracks(ytTrending);
         homeMMKV.set(HOME_KEYS.ytTrendingTracks, ytTrending);
       }
+
+      // Era Hits — prefetch the full track list for each decade playlist and
+      // append to the curatedPlaylists MMKV cache. This is what makes tapping
+      // an Era Hits card load instantly (same path All-time Essentials uses):
+      // playlist-detail.tsx reads curatedPlaylists from MMKV first and only
+      // hits the network as a fallback.
+      const ERA_META: { id: string; name: string }[] = [
+        { id: 'OLAK5uy_nNJT7AbBdhV752pwUKXiyYRs6aEiUyh5Y', name: "The Hits: '70s" },
+        { id: 'RDCLAK5uy_lMzHW51iFg1Kx0d_2EHpzbOgCrwtu8cgI', name: "The Hits: '80s" },
+        { id: 'RDCLAK5uy_nQkPLhMF6chdzKSlWdX8NHMrLVpdci-eU', name: "The Hits: '90s" },
+        { id: 'OLAK5uy_k8MpasYgwAswSjuvZN5ilDMNPxT5R-mHk', name: "90s & 00s Hits Rewind" },
+        { id: 'PLmyAPRLQRJ6lMbAdXYGuyZ627Y9RoX25i', name: "MTV Hits 90's-2000's" },
+        { id: 'RDCLAK5uy_mGYde2Wyx9INZd6GbPcMWkxDOu6Utmedw', name: "The Hits: '10s" },
+        { id: 'RDCLAK5uy_nZgpioZcDw6oYAp4o3oUNTWdVK0j_XyWo', name: "'10s Party" },
+        { id: 'RDCLAK5uy_mplKe9BIYCO3ZuNWSHZr48bm9DUDzbWnE', name: "Millennial Mixtape" },
+      ];
+      Promise.all(
+        ERA_META.map(({ id, name }) =>
+          api.get<unknown>(`/api/youtube/playlist-tracks?listId=${encodeURIComponent(id)}`)
+            .then((raw) => {
+              const arr = normalizeYoutubePlaylistTracksPayload(raw);
+              if (arr.length === 0) return null;
+              const reshaped: CuratedPlaylist = {
+                playlistId: id,
+                name,
+                thumbnailUrl: arr[0]?.thumbnail ?? '',
+                tracks: arr.map(t => ({
+                  videoId: t.videoId,
+                  title: t.title,
+                  channelName: t.channel,
+                  thumbnailUrl: t.thumbnail,
+                  publishedAt: '',
+                })),
+              };
+              return reshaped;
+            })
+            .catch(() => null)
+        )
+      ).then(results => {
+        const eraPlaylists = results.filter((p): p is CuratedPlaylist => !!p);
+        if (eraPlaylists.length === 0) return;
+        // Merge eras into curatedPlaylists so playlist-detail finds them in
+        // its first MMKV check — no network round-trip on tap.
+        setCuratedPlaylists(prev => {
+          const byId = new Map(prev.map(p => [p.playlistId, p]));
+          for (const era of eraPlaylists) byId.set(era.playlistId, era);
+          const merged = Array.from(byId.values());
+          homeMMKV.set(HOME_KEYS.curatedPlaylists, merged);
+          return merged;
+        });
+        // Also keep the artwork map populated as a belt-and-suspenders fallback.
+        const artMap: Record<string, string> = {};
+        for (const era of eraPlaylists) if (era.thumbnailUrl) artMap[era.playlistId] = era.thumbnailUrl;
+        if (Object.keys(artMap).length > 0) {
+          setEraArtwork(prev => {
+            const merged = { ...prev, ...artMap };
+            homeMMKV.set(HOME_KEYS.eraArtwork, merged);
+            return merged;
+          });
+        }
+      });
 
       // From SoundCloud — trending tracks from backend (cached 1h)
       const scTrending = await api.get<SCApiTrack[]>(`/api/soundcloud/search?q=${encodeURIComponent('trending')}&maxResults=15`).catch(() => null);
@@ -782,25 +1146,14 @@ export default function HomeScreen() {
   }, [quickPicks.slice(0, 4).map(t => t.artwork).join()]);
 
   return (
-    <View className="flex-1 bg-[#0A0A0A]">
-      {/* Fixed background gradient that extends behind status bar */}
-      <LinearGradient
-        colors={['#1a1a2e', '#0A0A0A']}
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          height: insets.top + 100, // Extend gradient past header
-        }}
-      />
-
+    <View style={{ flex: 1, backgroundColor: '#000000' }}>
       <ScrollView
-        className="flex-1"
-        contentContainerStyle={{ paddingBottom: 140 }}
+        style={{ flex: 1, backgroundColor: '#000000' }}
+        contentContainerStyle={{ paddingBottom: tabScreenScrollBottomPad(insets.bottom, !!currentTrack) }}
         showsVerticalScrollIndicator={false}
         onScroll={handleScroll}
         scrollEventThrottle={16}
+        removeClippedSubviews
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
@@ -810,10 +1163,8 @@ export default function HomeScreen() {
           />
         }
       >
-        {/* Header - content starts below safe area */}
-        <View style={{ paddingTop: insets.top }}>
-          {/* Logo and profile row */}
-          <View className="flex-row items-center justify-between px-5 pt-4 pb-2">
+        <View style={{ paddingTop: insets.top, backgroundColor: '#000000' }}>
+          <View className="flex-row items-center justify-between px-5 pt-4 pb-1">
             <VybeIcon size={36} variant="primary" />
             <ProfileAvatar
               size={36}
@@ -823,17 +1174,14 @@ export default function HomeScreen() {
               }}
             />
           </View>
-          {/* Dynamic greeting - fades on scroll */}
           <Animated.View style={[{ paddingHorizontal: 20, paddingBottom: 12 }, greetingAnimatedStyle]}>
-            <Text className="text-white/70 text-lg font-light tracking-wide">
-              {greeting}
+            <Text style={{ color: '#fff', fontSize: 30, fontWeight: '800', letterSpacing: -0.5 }}>
+              {greeting || 'Your Heavy Rotation'}
             </Text>
           </Animated.View>
         </View>
 
-
-        {/* ── Daily Mix Hero Card ── */}
-        <View className="mt-5">
+        <View style={{ marginTop: SECTION_GAP }}>
           <DailyMixHeroCard
             title={madeForYou?.title ?? 'Vybe Mix'}
             artistNames={heroArtists || 'Flume, ODESZA, Tycho'}
@@ -878,8 +1226,32 @@ export default function HomeScreen() {
           />
         </View>
 
+        {curatedPlaylists.length > 0 && (
+          <View style={{ marginTop: SECTION_GAP }}>
+            <SectionHeader title="Heavy Rotation" />
+            <View
+              style={{
+                marginHorizontal: 20,
+                borderWidth: 0.5,
+                borderColor: 'rgba(255,255,255,0.1)',
+                borderRadius: 20,
+                padding: 12,
+              }}
+            >
+              <HeavyRotationShadowGrid
+                playlists={curatedPlaylists}
+                onOpen={(pl) => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  prefetchHeroColors(pl.thumbnailUrl);
+                  router.push({ pathname: '/(app)/playlist-detail', params: { playlistId: pl.playlistId, playlistName: pl.name } } as never);
+                }}
+              />
+            </View>
+          </View>
+        )}
+
         {/* ── Quick Picks ── */}
-        <View className="mt-6">
+        <View style={{ marginTop: SECTION_GAP }}>
           <SectionHeader title="Quick picks" />
           {quickPicks.length === 0 ? (
             <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, paddingHorizontal: 20, paddingVertical: 16 }}>
@@ -899,7 +1271,7 @@ export default function HomeScreen() {
                       key={track.id}
                       track={track}
                       onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, quickPicks); }}
-                      onMore={() => {}}
+                      onMore={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setActionsTrack(track); }}
                     />
                   ))}
                 </View>
@@ -913,70 +1285,74 @@ export default function HomeScreen() {
           )}
         </View>
 
+        {/* ── New Releases ── */}
+        {spotifyPlaylists.length > 0 && (
+          <View style={{ marginTop: SECTION_GAP }}>
+            <SectionHeader title="New Releases" onSeeAll={() => router.push('/(app)/discover' as never)} />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }}>
+              {spotifyPlaylists.slice(0, 6).map(pl => (
+                <HeavyRotationCard
+                  key={pl.playlistId}
+                  playlist={{ name: pl.name, artwork: pl.thumbnailUrl, trackCount: pl.tracks.length }}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    const spTracks: Track[] = pl.tracks.map(t => ({
+                      id: `sp-${t.videoId}`,
+                      title: t.title,
+                      artist: t.channelName,
+                      artistId: `sp-artist-${t.videoId}`,
+                      album: pl.name,
+                      albumId: `sp-pl-${pl.playlistId}`,
+                      artwork: t.thumbnailUrl,
+                      duration: Math.round(t.durationMs / 1000),
+                      isLiked: false,
+                      source: 'youtube_music' as const,
+                      youtubeId: t.videoId,
+                      youtubeMusicId: t.videoId,
+                    }));
+                    if (spTracks.length > 0) playTrack(spTracks[0], spTracks);
+                  }}
+                />
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
+        {/* ── Continue Listening ── */}
+        {recentTracks.length > 0 && (
+          <View style={{ marginTop: SECTION_GAP }}>
+            <SectionHeader title="Continue Listening" />
+            {recentTracks.slice(0, 3).map(track => (
+              <QuickPickRow
+                key={track.id}
+                track={track}
+                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, recentTracks); }}
+                onMore={() => setActionsTrack(track)}
+              />
+            ))}
+          </View>
+        )}
+
         {/* All-time Essentials — YouTube Music playlists */}
         {curatedPlaylists.length > 0 && (() => {
-          const renderPlaylistCard = (playlist: CuratedPlaylist) => {
-            const playlistTracks: Track[] = playlist.tracks.map(t => ({
-              id: `ytm-${t.videoId}`,
-              title: t.title,
-              artist: t.channelName,
-              artistId: `ytm-artist-${t.videoId}`,
-              album: playlist.name,
-              albumId: `ytm-pl-${playlist.playlistId}`,
-              artwork: t.thumbnailUrl,
-              duration: 0,
-              isLiked: false,
-              source: 'youtube_music' as const,
-              youtubeId: t.videoId,
-              youtubeMusicId: t.videoId,
-              youtubeMusicUrl: `https://music.youtube.com/watch?v=${t.videoId}`,
-            }));
-            const cover = playlist.thumbnailUrl || playlistTracks[0]?.artwork || '';
-            return (
-              <Pressable
-                key={playlist.playlistId}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                  router.push(`/(app)/playlist-detail?id=${playlist.playlistId}` as never);
-                }}
-                className="mr-4"
-              >
-                <View style={{ width: 150 }}>
-                  <View style={{ width: 150, height: 150, borderRadius: 10, overflow: 'hidden', backgroundColor: '#1C1C1C' }}>
-                    <Image source={{ uri: cover }} style={{ width: 150, height: 150 }} contentFit="cover" />
-                    <View style={{ position: 'absolute', top: 8, left: 8, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
-                      <View style={{ width: 13, height: 13, backgroundColor: '#FF0000', borderRadius: 6.5, alignItems: 'center', justifyContent: 'center' }}>
-                        <View style={{ width: 0, height: 0, borderLeftWidth: 4, borderTopWidth: 2.5, borderBottomWidth: 2.5, borderLeftColor: '#fff', borderTopColor: 'transparent', borderBottomColor: 'transparent', marginLeft: 1 }} />
-                      </View>
-                      <Text style={{ color: '#fff', fontSize: 9, fontWeight: '600', marginLeft: 4 }}>YT Music</Text>
-                    </View>
-                    <Pressable
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                        if (playlistTracks.length > 0) playTrack(playlistTracks[0], playlistTracks);
-                      }}
-                      style={{ position: 'absolute', bottom: 8, right: 8, width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center' }}
-                    >
-                      <Play size={16} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 2 }} />
-                    </Pressable>
-                  </View>
-                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13, marginTop: 8 }} numberOfLines={2}>{playlist.name}</Text>
-                  <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 2 }}>{playlist.tracks.length} songs</Text>
-                </View>
-              </Pressable>
-            );
-          };
-
-          const essentials = curatedPlaylists.filter(p => !p.category);
+          // Exclude era playlists — they get their own dedicated row below.
+          const essentials = curatedPlaylists.filter(p => !p.category && (p as any).section !== 'era');
+          // Hide "Hits / Mainstream" sub-row — those playlists are already
+          // surfaced in other home-screen sections, so it was showing duplicates.
+          // Also exclude any `section: 'popular'` categories here — those
+          // render separately under the "Popular Playlists" section below,
+          // so including them here created the duplicate rows.
+          const HIDDEN_CATEGORIES = new Set(['Hits / Mainstream']);
           const categories = Array.from(new Set(
-            curatedPlaylists.filter(p => p.category).map(p => p.category!)
+            curatedPlaylists
+              .filter(p => p.category && !HIDDEN_CATEGORIES.has(p.category) && (p as any).section !== 'popular')
+              .map(p => p.category!)
           ));
 
           return (
-            <View className="mt-8">
+            <View style={{ marginTop: SECTION_GAP }}>
               <SectionHeader title="All-time Essentials" />
-              <Text className="text-white/50 text-sm px-5 mb-4">
+              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 14, paddingHorizontal: 20, marginBottom: 16, letterSpacing: 0.25 }}>
                 Handpicked YouTube Music playlists
               </Text>
               {essentials.length > 0 && (
@@ -986,15 +1362,17 @@ export default function HomeScreen() {
                   contentContainerStyle={{ paddingHorizontal: 20 }}
                   style={{ flexGrow: 0 }}
                 >
-                  {essentials.map(renderPlaylistCard)}
+                  {essentials.map(pl => (
+                    <HomeYtmCuratedPlaylistCard key={pl.playlistId} playlist={pl} />
+                  ))}
                 </ScrollView>
               )}
               {categories.map(cat => {
                 const catPlaylists = curatedPlaylists.filter(p => p.category === cat);
                 return (
-                  <View key={cat} style={{ marginTop: 24 }}>
+                  <View key={cat} style={{ marginTop: SECTION_GAP }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginBottom: 12 }}>
-                      <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>{cat}</Text>
+                      <Text style={{ color: '#fff', fontSize: 19, fontWeight: '800', letterSpacing: 0.45 }}>{cat}</Text>
                       <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.1)', marginLeft: 12 }} />
                     </View>
                     <ScrollView
@@ -1003,7 +1381,9 @@ export default function HomeScreen() {
                       contentContainerStyle={{ paddingHorizontal: 20 }}
                       style={{ flexGrow: 0 }}
                     >
-                      {catPlaylists.map(renderPlaylistCard)}
+                      {catPlaylists.map(pl => (
+                        <HomeYtmCuratedPlaylistCard key={pl.playlistId} playlist={pl} />
+                      ))}
                     </ScrollView>
                   </View>
                 );
@@ -1014,10 +1394,10 @@ export default function HomeScreen() {
 
         {/* Fresh Finds - New discoveries based on listening */}
         {freshFinds.length > 0 && (
-          <View className="mt-8">
+          <View style={{ marginTop: SECTION_GAP }}>
             <View className="flex-row items-center px-5 mb-4">
               <Sparkles size={20} color="#8B5CF6" />
-              <Text className="text-white text-xl font-bold ml-2">Fresh Finds</Text>
+              <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800', letterSpacing: 0.55, marginLeft: 8 }}>Fresh Finds</Text>
               {newTracksCount > 0 && (
                 <View className="ml-2 bg-[#8B5CF6] px-2 py-0.5 rounded-full">
                   <Text className="text-white text-xs font-bold">{newTracksCount} new</Text>
@@ -1045,30 +1425,36 @@ export default function HomeScreen() {
                   <View className="relative">
                     <Image
                       source={{ uri: track.artwork }}
-                      style={{ width: 140, height: 140, borderRadius: 8 }}
+                      style={{ width: 140, height: 140, borderRadius: ART_RADIUS }}
                       contentFit="cover"
                     />
                     <LinearGradient
-                      colors={['transparent', 'rgba(139,92,246,0.6)']}
+                      colors={['transparent', 'rgba(139,92,246,0.5)']}
                       style={{
                         position: 'absolute',
                         bottom: 0,
                         left: 0,
                         right: 0,
                         height: 60,
-                        borderBottomLeftRadius: 8,
-                        borderBottomRightRadius: 8,
+                        borderBottomLeftRadius: ART_RADIUS,
+                        borderBottomRightRadius: ART_RADIUS,
                       }}
                     />
+                    <View style={{ position: 'absolute', top: 8, right: 8 }}>
+                      <SourceCornerBadge source={track.source} compact />
+                    </View>
                     {track.isNew && (
-                      <View className="absolute top-2 right-2 bg-[#8B5CF6] px-1.5 py-0.5 rounded">
-                        <Text className="text-white text-[9px] font-bold">NEW</Text>
+                      <View
+                        className="absolute top-2 left-2 px-1.5 py-0.5 rounded"
+                        style={{
+                          backgroundColor: 'rgba(57,255,20,0.14)',
+                          borderWidth: StyleSheet.hairlineWidth,
+                          borderColor: 'rgba(57,255,20,0.9)',
+                        }}
+                      >
+                        <Text className="text-[9px] font-extrabold" style={{ color: '#39FF14' }}>NEW</Text>
                       </View>
                     )}
-                    <View className="absolute top-2 left-2 flex-row items-center bg-black/70 rounded px-1.5 py-0.5">
-                      <Cloud size={10} color="#FF5500" />
-                      <Text className="text-[#FF5500] text-[9px] font-medium ml-1">SC</Text>
-                    </View>
                   </View>
                   <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>
                     {track.title}
@@ -1095,46 +1481,69 @@ export default function HomeScreen() {
           onDownload={(track) => startDownload(track)}
         />
 
-        {/* Time Traveler Radio */}
+        {/* Era Hits — curated YouTube Music playlists by decade */}
         {(() => {
-          // Build artwork pool from downloaded library; fall back to mock tracks
-          const artworkPool = allDownloads.length >= 4
-            ? allDownloads.map(d => d.artwork).filter(Boolean) as string[]
-            : tracks.map(t => t.artwork).filter(Boolean) as string[];
+          // Hardcoded first-track videoId per era so the thumbnail resolves
+          // synchronously from the canonical `i.ytimg.com/vi/{id}/hqdefault.jpg`
+          // URL (same format All-time Essentials uses and renders cleanly in
+          // expo-image). No runtime fetch, no MMKV race, no empty state.
+          const ERA_HITS: { name: string; playlistId: string; subtitle: string; seedVideoId: string }[] = [
+            { name: "The Hits: '70s",       playlistId: 'OLAK5uy_nNJT7AbBdhV752pwUKXiyYRs6aEiUyh5Y', subtitle: 'Greatest hits from the 70s', seedVideoId: '7E8-1t-qh4U' },
+            { name: "The Hits: '80s",       playlistId: 'RDCLAK5uy_lMzHW51iFg1Kx0d_2EHpzbOgCrwtu8cgI', subtitle: 'Greatest hits from the 80s', seedVideoId: 'Zi_XLOBDo_Y' },
+            { name: "The Hits: '90s",       playlistId: 'RDCLAK5uy_nQkPLhMF6chdzKSlWdX8NHMrLVpdci-eU', subtitle: 'Greatest hits from the 90s', seedVideoId: 'FrLequ6dUdM' },
+            { name: "90s & 00s Hits Rewind",playlistId: 'OLAK5uy_k8MpasYgwAswSjuvZN5ilDMNPxT5R-mHk', subtitle: 'Throwbacks across two decades', seedVideoId: 'uzlHFKhd1Jo' },
+            { name: "MTV Hits 90's-2000's", playlistId: 'PLmyAPRLQRJ6lMbAdXYGuyZ627Y9RoX25i',         subtitle: 'MTV era classics', seedVideoId: 'TIy3n2b7V9k' },
+            { name: "The Hits: '10s",       playlistId: 'RDCLAK5uy_mGYde2Wyx9INZd6GbPcMWkxDOu6Utmedw', subtitle: 'Greatest hits from the 2010s', seedVideoId: 'fRh_vgS2dFE' },
+            { name: "'10s Party",           playlistId: 'RDCLAK5uy_nZgpioZcDw6oYAp4o3oUNTWdVK0j_XyWo', subtitle: 'Pop party 2010s', seedVideoId: '2zNSgSzhBfM' },
+            { name: "Millennial Mixtape",   playlistId: 'RDCLAK5uy_mplKe9BIYCO3ZuNWSHZr48bm9DUDzbWnE', subtitle: 'Anthems for the millennial', seedVideoId: 'ZSM3w1v-A_Y' },
+          ];
+
+          // Pull each era playlist's artwork directly from YouTube Music if it's
+          // already loaded into the curatedPlaylists cache; otherwise fall back
+          // to a gradient + decade label.
+          const playlistArtworkById = new Map<string, string>();
+          curatedPlaylists.forEach(p => { if (p.thumbnailUrl) playlistArtworkById.set(p.playlistId, p.thumbnailUrl); });
 
           return (
             <View className="mt-8">
-              <SectionHeader title="Time Traveler Radio" />
+              <SectionHeader title="Era Hits" />
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={{ paddingHorizontal: 20 }}
                 style={{ flexGrow: 0 }}
               >
-                {ERA_STATIONS.map((station, stationIdx) => {
-                  // Give each station a different starting offset so grids look distinct
-                  const offset = stationIdx * 3;
-                  const artworks = Array.from({ length: 8 }, (_, i) =>
-                    artworkPool[(offset + i) % artworkPool.length]
-                  );
+                {ERA_HITS.map((era) => {
+                  // Priority:
+                  //   1. Backend curated thumbnail (once era commit is deployed)
+                  //   2. Runtime-fetched first-track thumbnail from MMKV
+                  //   3. Hardcoded seed videoId → canonical YT thumbnail URL
+                  //      (always works, same format All-time Essentials uses)
+                  const artworkUri =
+                    playlistArtworkById.get(era.playlistId)
+                    || eraArtwork[era.playlistId]
+                    || `https://i.ytimg.com/vi/${era.seedVideoId}/hqdefault.jpg`;
                   return (
-                    <EraStationCard
-                      key={station.id}
-                      station={station}
-                      artworks={artworks}
+                    <Pressable
+                      key={era.playlistId}
                       onPress={() => {
-                        router.push({
-                          pathname: '/(app)/era-playlist',
-                          params: {
-                            name: station.name,
-                            query: station.searchQuery,
-                            image: station.image,
-                            color: station.colors[0],
-                            decade: station.decade,
-                          },
-                        } as never);
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                        router.push(`/(app)/playlist-detail?id=${era.playlistId}` as never);
                       }}
-                    />
+                      style={{ marginRight: 14, width: 160 }}
+                    >
+                      <View style={{ width: 160, height: 160, borderRadius: 12, overflow: 'hidden', backgroundColor: '#1a1a1a' }}>
+                        <Image
+                          source={{ uri: artworkUri }}
+                          style={{ width: '100%', height: '100%' }}
+                          contentFit="cover"
+                          cachePolicy="memory-disk"
+                          placeholder={undefined}
+                        />
+                      </View>
+                      <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600', marginTop: 8 }} numberOfLines={1}>{era.name}</Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{era.subtitle}</Text>
+                    </Pressable>
                   );
                 })}
               </ScrollView>
@@ -1220,10 +1629,11 @@ export default function HomeScreen() {
 
         {/* Recently Played - Shows actual recent tracks including imports */}
         {(recentTracks.length > 0 || importedTracks.length > 0) && (
-          <View className="mt-8">
+          <View style={{ marginTop: SECTION_GAP }}>
             <SectionHeader title="Recently Played" onSeeAll={() => router.push('/(app)/downloads' as never)} />
             <ScrollView
               horizontal
+              nestedScrollEnabled
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={{ paddingHorizontal: 20 }}
               style={{ flexGrow: 0 }}
@@ -1244,9 +1654,11 @@ export default function HomeScreen() {
                     style={{
                       width: 140,
                       height: 140,
-                      borderRadius: 8,
+                      borderRadius: ART_RADIUS,
                       overflow: 'hidden',
                       backgroundColor: '#1A1A1A',
+                      borderWidth: 0.5,
+                      borderColor: 'rgba(255,255,255,0.1)',
                     }}
                   >
                     {track.artwork ? (
@@ -1268,6 +1680,9 @@ export default function HomeScreen() {
                         <Play size={32} color="#fff" fill="#fff" />
                       </LinearGradient>
                     )}
+                    <View style={{ position: 'absolute', top: 8, right: 8 }} pointerEvents="none">
+                      <SourceCornerBadge source={track.source} compact />
+                    </View>
                     {/* Imported badge */}
                     {track.isUserImported && (
                       <View
@@ -1330,78 +1745,57 @@ export default function HomeScreen() {
             popularPlaylists.map(p => p.category ?? 'Other')
           ));
 
-          const renderPopularCard = (playlist: CuratedPlaylist) => {
-            const playlistTracks: Track[] = playlist.tracks.map(t => ({
-              id: `ytm-${t.videoId}`,
-              title: t.title,
-              artist: t.channelName,
-              artistId: `ytm-artist-${t.videoId}`,
-              album: playlist.name,
-              albumId: `ytm-pl-${playlist.playlistId}`,
-              artwork: t.thumbnailUrl,
-              duration: 0,
-              isLiked: false,
-              source: 'youtube_music' as const,
-              youtubeId: t.videoId,
-              youtubeMusicId: t.videoId,
-              youtubeMusicUrl: `https://music.youtube.com/watch?v=${t.videoId}`,
-            }));
-            const cover = playlist.thumbnailUrl || playlistTracks[0]?.artwork || '';
-            return (
-              <Pressable
-                key={playlist.playlistId}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                  router.push(`/(app)/playlist-detail?id=${playlist.playlistId}` as never);
-                }}
-                className="mr-4"
-              >
-                <View style={{ width: 150 }}>
-                  <View style={{ width: 150, height: 150, borderRadius: 10, overflow: 'hidden', backgroundColor: '#1C1C1C' }}>
-                    <Image source={{ uri: cover }} style={{ width: 150, height: 150 }} contentFit="cover" />
-                    <View style={{ position: 'absolute', top: 8, left: 8, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 12, paddingHorizontal: 6, paddingVertical: 3 }}>
-                      <View style={{ width: 13, height: 13, backgroundColor: '#FF0000', borderRadius: 6.5, alignItems: 'center', justifyContent: 'center' }}>
-                        <View style={{ width: 0, height: 0, borderLeftWidth: 4, borderTopWidth: 2.5, borderBottomWidth: 2.5, borderLeftColor: '#fff', borderTopColor: 'transparent', borderBottomColor: 'transparent', marginLeft: 1 }} />
-                      </View>
-                      <Text style={{ color: '#fff', fontSize: 9, fontWeight: '600', marginLeft: 4 }}>YT Music</Text>
-                    </View>
-                    <Pressable
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                        if (playlistTracks.length > 0) playTrack(playlistTracks[0], playlistTracks);
-                      }}
-                      style={{ position: 'absolute', bottom: 8, right: 8, width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center' }}
-                    >
-                      <Play size={16} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 2 }} />
-                    </Pressable>
-                  </View>
-                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13, marginTop: 8 }} numberOfLines={2}>{playlist.name}</Text>
-                  <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 2 }}>{playlist.tracks.length} songs</Text>
-                </View>
-              </Pressable>
-            );
-          };
-
           return (
             <View className="mt-8">
               <SectionHeader title="Popular Playlists" />
-              {popularCategories.map(cat => (
-                <View key={cat} style={{ marginTop: 16 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginBottom: 12 }}>
-                    <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>{cat}</Text>
-                    <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.1)', marginLeft: 12 }} />
+              {popularCategories.map(cat => {
+                const catPlaylists = popularPlaylists.filter(p => (p.category ?? 'Other') === cat);
+                // Chill / Relaxed + Workout / Energy render as 2-row grids
+                // so the ~10 playlists in each feel browsable without endless
+                // horizontal scroll. Other categories stay single-row.
+                const useTwoRows = cat === 'Chill / Relaxed' || cat === 'Workout / Energy';
+                if (useTwoRows) {
+                  const pairs: CuratedPlaylist[][] = [];
+                  for (let i = 0; i < catPlaylists.length; i += 2) pairs.push(catPlaylists.slice(i, i + 2));
+                  return (
+                    <View key={cat} style={{ marginTop: 16 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginBottom: 12 }}>
+                        <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>{cat}</Text>
+                        <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.1)', marginLeft: 12 }} />
+                      </View>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }} style={{ flexGrow: 0 }}>
+                        {pairs.map((pair, colIdx) => (
+                          <View key={colIdx} style={{ marginRight: 16 }}>
+                            {pair.map(pl => (
+                              <View key={pl.playlistId} style={{ marginBottom: 14 }}>
+                                <HomeYtmCuratedPlaylistCard playlist={pl} />
+                              </View>
+                            ))}
+                          </View>
+                        ))}
+                      </ScrollView>
+                    </View>
+                  );
+                }
+                return (
+                  <View key={cat} style={{ marginTop: 16 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginBottom: 12 }}>
+                      <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>{cat}</Text>
+                      <View style={{ flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.1)', marginLeft: 12 }} />
+                    </View>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={{ paddingHorizontal: 20 }}
+                      style={{ flexGrow: 0 }}
+                    >
+                      {catPlaylists.map(pl => (
+                        <HomeYtmCuratedPlaylistCard key={pl.playlistId} playlist={pl} />
+                      ))}
+                    </ScrollView>
                   </View>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={{ paddingHorizontal: 20 }}
-                    style={{ flexGrow: 0 }}
-                  >
-                    {popularPlaylists.filter(p => (p.category ?? 'Other') === cat).map(renderPopularCard)}
-                  </ScrollView>
-                </View>
-              ))}
+                );
+              })}
             </View>
           );
         })()}
@@ -1493,13 +1887,14 @@ export default function HomeScreen() {
 
         {/* From YouTube — trending music videos from backend */}
         {ytTrendingTracks.length > 0 ? (
-          <View className="mt-8">
+          <View style={{ marginTop: SECTION_GAP }}>
             <SectionHeader title="From YouTube" />
             <Text className="text-white/50 text-sm px-5 mb-4">
               Music videos and more
             </Text>
             <ScrollView
               horizontal
+              nestedScrollEnabled
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={{ paddingHorizontal: 20 }}
               style={{ flexGrow: 0 }}
@@ -1533,6 +1928,8 @@ export default function HomeScreen() {
                   youtubeId: x.videoId,
                   audioUrl: '',
                 }));
+                const W = 168;
+                const H = Math.round((W * 9) / 16);
                 return (
                   <Pressable
                     key={track.id}
@@ -1542,43 +1939,44 @@ export default function HomeScreen() {
                     }}
                     className="mr-4"
                   >
-                    <View className="relative">
+                    <View
+                      style={{
+                        width: W,
+                        height: H,
+                        borderRadius: 16,
+                        overflow: 'hidden',
+                        backgroundColor: '#0A0A0A',
+                        borderWidth: 0.5,
+                        borderColor: 'rgba(255,255,255,0.1)',
+                      }}
+                    >
                       <Image
                         source={{ uri: track.artwork }}
-                        style={{ width: 160, height: 90, borderRadius: 8 }}
+                        style={{ width: W, height: H }}
                         contentFit="cover"
                       />
-                      {/* Vybe Video badge */}
-                      <View
-                        className="absolute top-2 left-2 flex-row items-center bg-black/70 rounded px-1.5 py-0.5"
-                      >
+                      <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { alignItems: 'center', justifyContent: 'center' }]}>
                         <View
                           style={{
-                            width: 14,
-                            height: 14,
-                            backgroundColor: '#FF0000',
-                            borderRadius: 3,
+                            width: 44,
+                            height: 44,
+                            borderRadius: 22,
+                            backgroundColor: 'rgba(255,255,255,0.36)',
                             alignItems: 'center',
                             justifyContent: 'center',
                           }}
                         >
-                          <Play size={8} color="#fff" fill="#fff" />
+                          <Play size={22} color="#fff" fill="#fff" style={{ marginLeft: 2 }} />
                         </View>
-                        <Text className="text-white text-[10px] font-medium ml-1">
-                          Vybe Video
-                        </Text>
                       </View>
-                      {/* Play overlay */}
-                      <View className="absolute inset-0 items-center justify-center">
-                        <View className="w-10 h-10 bg-white/90 rounded-full items-center justify-center">
-                          <Play size={20} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 2 }} />
-                        </View>
+                      <View style={{ position: 'absolute', top: 8, right: 8 }} pointerEvents="none">
+                        <SourceCornerBadge source="youtube" compact />
                       </View>
                     </View>
-                    <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 160 }}>
+                    <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: W }}>
                       {track.title}
                     </Text>
-                    <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 160 }}>
+                    <Text style={{ width: W, color: '#888888', fontSize: 12 }} numberOfLines={1}>
                       {track.artist}
                     </Text>
                   </Pressable>
@@ -1591,13 +1989,14 @@ export default function HomeScreen() {
 
         {/* YouTube Music — personalised */}
         {ytmTracks.length > 0 ? (
-          <View className="mt-8">
-            <SectionHeader title="From YouTube Music" />
+          <View style={{ marginTop: SECTION_GAP }}>
+            <SectionHeader title="Vybe Music" />
             <Text className="text-white/50 text-sm px-5 mb-4">
               {ytmQueryLabel ? `More like ${ytmQueryLabel}` : 'Picked for you'}
             </Text>
             <ScrollView
               horizontal
+              nestedScrollEnabled
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={{ paddingHorizontal: 20 }}
               style={{ flexGrow: 0 }}
@@ -1617,6 +2016,7 @@ export default function HomeScreen() {
                   audioUrl: '',
                   youtubeMusicId: t.videoId,
                 };
+                const dim = 140;
                 return (
                   <Pressable
                     key={t.videoId}
@@ -1639,24 +2039,30 @@ export default function HomeScreen() {
                     }}
                     className="mr-4"
                   >
-                    <View className="relative">
+                    <View
+                      style={{
+                        width: dim,
+                        height: dim,
+                        borderRadius: 16,
+                        overflow: 'hidden',
+                        backgroundColor: '#0A0A0A',
+                        borderWidth: 0.5,
+                        borderColor: 'rgba(255,255,255,0.1)',
+                      }}
+                    >
                       <Image
                         source={{ uri: t.thumbnailUrl }}
-                        style={{ width: 140, height: 140, borderRadius: 8 }}
+                        style={{ width: dim, height: dim }}
                         contentFit="cover"
                       />
-                      {/* YouTube Music badge */}
-                      <View className="absolute top-2 left-2 flex-row items-center bg-black/70 rounded px-1.5 py-0.5">
-                        <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: '#FF0000', alignItems: 'center', justifyContent: 'center' }}>
-                          <Text style={{ color: '#fff', fontSize: 8, lineHeight: 10 }}>♪</Text>
-                        </View>
-                        <Text className="text-white text-[10px] font-medium ml-1">YouTube Music</Text>
+                      <View style={{ position: 'absolute', top: 8, right: 8 }} pointerEvents="none">
+                        <SourceCornerBadge source="youtube_music" compact />
                       </View>
                     </View>
-                    <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>
+                    <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: dim }}>
                       {t.title}
                     </Text>
-                    <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 140 }}>
+                    <Text style={{ width: dim, color: '#888888', fontSize: 12 }} numberOfLines={1}>
                       {t.channelName}
                     </Text>
                   </Pressable>
@@ -1668,13 +2074,14 @@ export default function HomeScreen() {
 
         {/* From SoundCloud — trending from backend */}
         {scTrendingTracks.length > 0 ? (
-          <View className="mt-8">
+          <View style={{ marginTop: SECTION_GAP }}>
             <SectionHeader title="From SoundCloud" />
             <Text className="text-white/50 text-sm px-5 mb-4">
               Independent artists and remixes
             </Text>
             <ScrollView
               horizontal
+              nestedScrollEnabled
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={{ paddingHorizontal: 20 }}
               style={{ flexGrow: 0 }}
@@ -1708,6 +2115,7 @@ export default function HomeScreen() {
                   soundcloudUrl: x.soundcloudUrl,
                   audioUrl: '',
                 }));
+                const dim = 140;
                 return (
                   <Pressable
                     key={track.id}
@@ -1717,37 +2125,30 @@ export default function HomeScreen() {
                     }}
                     className="mr-4"
                   >
-                    <View className="relative">
+                    <View
+                      style={{
+                        width: dim,
+                        height: dim,
+                        borderRadius: 16,
+                        overflow: 'hidden',
+                        backgroundColor: '#0A0A0A',
+                        borderWidth: 0.5,
+                        borderColor: 'rgba(255,255,255,0.1)',
+                      }}
+                    >
                       <Image
                         source={{ uri: track.artwork }}
-                        style={{ width: 140, height: 140, borderRadius: 8 }}
+                        style={{ width: dim, height: dim }}
                         contentFit="cover"
                       />
-                      {/* Vybe Waves badge */}
-                      <View
-                        className="absolute top-2 left-2 flex-row items-center bg-black/70 rounded px-1.5 py-0.5"
-                      >
-                        <View
-                          style={{
-                            width: 14,
-                            height: 14,
-                            backgroundColor: '#FF5500',
-                            borderRadius: 3,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}
-                        >
-                          <Radio size={8} color="#fff" strokeWidth={2.5} />
-                        </View>
-                        <Text className="text-white text-[10px] font-medium ml-1">
-                          Vybe Waves
-                        </Text>
+                      <View style={{ position: 'absolute', top: 8, right: 8 }} pointerEvents="none">
+                        <SourceCornerBadge source="soundcloud" compact />
                       </View>
                     </View>
-                    <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: 140 }}>
+                    <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: dim }}>
                       {track.title}
                     </Text>
-                    <Text className="text-white/60 text-xs" numberOfLines={1} style={{ width: 140 }}>
+                    <Text style={{ width: dim, color: '#888888', fontSize: 12 }} numberOfLines={1}>
                       {track.artist}
                     </Text>
                   </Pressable>
