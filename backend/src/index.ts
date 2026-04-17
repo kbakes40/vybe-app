@@ -52,15 +52,21 @@ app.use("*", logger());
 
 // Auth middleware - populates user/session for all routes
 app.use("*", async (c, next) => {
-  const session = await auth.api.getSession({ headers: c.req.raw.headers });
-  if (!session) {
+  try {
+    const session = await auth.api.getSession({ headers: c.req.raw.headers });
+    if (!session) {
+      c.set("user", null);
+      c.set("session", null);
+    } else {
+      c.set("user", session.user);
+      c.set("session", session.session);
+    }
+  } catch (e) {
+    // DB down / misconfigured Turso → still serve public API (YouTube home feed, health, etc.)
+    console.error("[session] getSession failed — continuing without user:", e);
     c.set("user", null);
     c.set("session", null);
-    await next();
-    return;
   }
-  c.set("user", session.user);
-  c.set("session", session.session);
   await next();
 });
 
@@ -105,7 +111,6 @@ app.get("/api/auth/callback/google", async (c) => {
 // Mount auth handler
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 
-// Health check endpoint
 app.get("/health", (c) => c.json({ status: "ok" }));
 
 // Get current user
