@@ -1,6 +1,26 @@
 import "@vibecodeapp/proxy"; // DO NOT REMOVE OTHERWISE VIBECODE PROXY WILL NOT WORK
+import { addExcludedDomains } from "@vibecodeapp/proxy";
+
+// The proxy ships with `amazonaws.com` etc. — routing DB / YouTube / Turso through
+// cloudproxy breaks Prisma and the YouTube Data API on Railway (global 500s).
+addExcludedDomains([
+  "amazonaws.com",
+  "rds.amazonaws.com",
+  "turso.io",
+  "libsql.com",
+  "neon.tech",
+  "planetscale.com",
+  "supabase.co",
+  "googleapis.com",
+  "google.com",
+  "youtube.com",
+  "ytimg.com",
+  "ggpht.com",
+  "github.com",
+  "githubusercontent.com",
+]);
+
 import { Hono } from "hono";
-import { compress } from "hono/compress";
 import { cors } from "hono/cors";
 import "./env";
 import { auth } from "./auth";
@@ -43,9 +63,6 @@ app.use(
     credentials: true,
   })
 );
-
-// Gzip/deflate JSON and text responses (skips tiny payloads via default threshold).
-app.use("*", compress());
 
 // Logging
 app.use("*", logger());
@@ -144,7 +161,22 @@ const port = Number(process.env.PORT) || 3000;
 // users hit endpoints — slower first-hit for any single user, but no
 // rate-limit blowback for the whole server.
 
+const honoFetch = app.fetch.bind(app);
+
 export default {
   port,
-  fetch: app.fetch,
+  fetch(req: Request, srv?: unknown) {
+    return Promise.resolve(honoFetch(req, srv as never)).catch((err: unknown) => {
+      console.error("[hono] unhandled fetch error:", err);
+      return Response.json(
+        {
+          error: {
+            code: "INTERNAL",
+            message: err instanceof Error ? err.message : String(err),
+          },
+        },
+        { status: 500 }
+      );
+    });
+  },
 };
