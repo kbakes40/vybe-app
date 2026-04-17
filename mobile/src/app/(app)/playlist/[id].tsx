@@ -22,6 +22,10 @@ import Animated, {
 import { getPlaylistById, getTracksFromPlaylist, playlists } from '@/data/mockData';
 import { usePlaybackController } from '@/stores/playbackController';
 import { TrackCard } from '@/components/TrackCard';
+import { TAB_BAR_HEIGHT, MINI_PLAYER_HEIGHT } from '@/constants/Layout';
+
+/** Clearance below last row: tab bar + mini player + breathing room. */
+const PLAYLIST_LIST_BOTTOM_PADDING = TAB_BAR_HEIGHT + MINI_PLAYER_HEIGHT + 20;
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -62,7 +66,7 @@ export default function PlaylistScreen() {
     <View className="flex-1 bg-[#0A0A0A]">
       <ScrollView
         className="flex-1"
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: PLAYLIST_LIST_BOTTOM_PADDING }}
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}

@@ -20,6 +20,11 @@ const envSchema = z.object({
 
   // YouTube Data API (for Discover feature)
   YOUTUBE_API_KEY: z.string().optional(), // Optional - feature degrades gracefully if not set
+
+  // Twilio SMS (for phone-number OTP). When unset, OTPs are logged to console only.
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  TWILIO_FROM_NUMBER: z.string().optional(),
 });
 
 /**

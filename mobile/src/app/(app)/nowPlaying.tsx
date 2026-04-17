@@ -1,5 +1,18 @@
 import React, { useCallback, useState, useRef, useEffect } from 'react';
-import { View, Text, Pressable, Dimensions, Linking, ActivityIndicator, Share, Modal, ScrollView } from 'react-native';
+import {
+  View,
+  Text,
+  Pressable,
+  Dimensions,
+  Linking,
+  ActivityIndicator,
+  Share,
+  Modal,
+  ScrollView,
+  Animated as RNAnimated,
+  Platform,
+  StyleSheet,
+} from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -25,8 +38,6 @@ import {
   Cloud,
   Download,
   Check,
-  Music,
-  Radio,
   X,
   Trash2,
   ListPlus,
@@ -55,11 +66,16 @@ import { openInSoundCloud } from '@/lib/soundcloudHandoff';
 import { showRoutePicker } from '@/lib/NowPlayingManager';
 import { shareSong } from '@/lib/share-helpers';
 import { formatDuration } from '@/data/mockData';
-import { BlurView } from 'expo-blur';
 import { usePlaylistHeroColors } from '@/lib/usePlaylistHeroColors';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import { usePiPStore } from '@/components/PiPVideoOverlay';
 import { useNowPlayingSheetStore } from '@/stores/nowPlayingSheetStore';
+import {
+  VybeVideoNeonIcon,
+  VybeMusicNeonIcon,
+  VybeWavesNeonIcon,
+  prefetchVybeNowPlayingIcons,
+} from '@/assets/icons';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const ARTWORK_SIZE = SCREEN_WIDTH - 80;
@@ -74,6 +90,76 @@ const INFO_STATIC_STYLE = { opacity: 1, transform: [{ translateY: 0 }] as const 
 function isYouTubeThumbnail(url: string): boolean {
   return !!(url && (url.includes('i.ytimg.com') || url.includes('img.youtube.com')));
 }
+
+const nowPlayingTypography = StyleSheet.create({
+  title: {
+    color: '#FFFFFF',
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+  },
+  artist: {
+    marginTop: 2,
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 14,
+    textTransform: 'uppercase',
+    letterSpacing: 1.5,
+  },
+});
+
+const LIKE_BURST_PARTICLE_ANGLES = Array.from({ length: 8 }, (_, i) => (i * Math.PI * 2) / 8);
+const LIKE_BURST_DISTANCE = 34;
+const LIKE_HEART_CONTAINER = 56;
+
+const nowPlayingChromeStyles = StyleSheet.create({
+  bottomIconCell: {
+    minWidth: 48,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});
+
+const npHeartStyles = StyleSheet.create({
+  heartShadowHost: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heartShadowHostActive: {
+    shadowColor: '#FF00FF',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.88,
+    shadowRadius: 12,
+    ...Platform.select({
+      android: { elevation: 16 },
+      default: {},
+    }),
+  },
+  likeHitArea: {
+    width: LIKE_HEART_CONTAINER,
+    height: LIKE_HEART_CONTAINER,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  likeBurstRing: {
+    position: 'absolute',
+    width: 30,
+    height: 30,
+    borderRadius: 999,
+    borderWidth: 4,
+    borderColor: '#FF00FF',
+    backgroundColor: 'transparent',
+  },
+  likeParticle: {
+    position: 'absolute',
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#FF00FF',
+    left: LIKE_HEART_CONTAINER / 2 - 2,
+    top: LIKE_HEART_CONTAINER / 2 - 2,
+  },
+});
 
 const normalizePlaybackSeconds = (value: number): number => {
   if (!Number.isFinite(value) || value <= 0) return 0;
@@ -264,64 +350,11 @@ function YouTubeInlinePlayer({ videoId, artworkUri, isPlaying }: YouTubeInlinePl
               paddingVertical: 4,
             }}
           >
-            <YouTubeIcon size={13} />
+            <VybeVideoNeonIcon size={13} />
             <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 4 }}>Vybe Video</Text>
           </View>
         </View>
       )}
-    </View>
-  );
-}
-
-// ─── Source icon components (generic purple — no brand logos) ────────────────
-
-function YouTubeIcon({ size = 16 }: { size?: number }) {
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        backgroundColor: '#FF0000',
-        borderRadius: 4,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <Play size={size * 0.6} color="#fff" fill="#fff" />
-    </View>
-  );
-}
-
-function SoundCloudIcon({ size = 16 }: { size?: number }) {
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        backgroundColor: '#FF5500',
-        borderRadius: 4,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <Radio size={size * 0.6} color="#fff" strokeWidth={2.5} />
-    </View>
-  );
-}
-
-function YouTubeMusicIcon({ size = 16 }: { size?: number }) {
-  return (
-    <View
-      style={{
-        width: size,
-        height: size,
-        backgroundColor: '#FF0000',
-        borderRadius: size / 2,
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <Music size={size * 0.6} color="#fff" strokeWidth={2.5} />
     </View>
   );
 }
@@ -331,12 +364,14 @@ function NowPlayingScrubberRow() {
   const progress = usePlaybackController(s => s.progress);
   const duration = usePlaybackController(s => s.duration);
   const seekTo = usePlaybackController(s => s.seekTo);
+  const currentTrackId = usePlaybackController(s => s.currentTrack?.id);
 
   const scrubberWidth = SCREEN_WIDTH - 64;
   const isScrubbing = useSharedValue(false);
   const scrubPercent = useSharedValue(0);
   const thumbScale = useSharedValue(1);
   const seekLockUntil = useRef(0);
+  const lastTrackIdRef = useRef<string | null | undefined>(currentTrackId);
 
   const displayDuration = Math.max(0, normalizePlaybackSeconds(duration));
   const rawProgress = Math.max(0, normalizePlaybackSeconds(progress));
@@ -345,6 +380,18 @@ function NowPlayingScrubberRow() {
 
   const trackPercentSV = useSharedValue(trackPercent);
   const durationSV = useSharedValue(displayDuration);
+
+  // Force scrubber to 0 the instant a new track is loaded, regardless of stale progress
+  // from the previous track still draining out of the audio pipeline.
+  useEffect(() => {
+    if (lastTrackIdRef.current !== currentTrackId) {
+      lastTrackIdRef.current = currentTrackId;
+      trackPercentSV.value = 0;
+      scrubPercent.value = 0;
+      isScrubbing.value = false;
+      seekLockUntil.current = 0;
+    }
+  }, [currentTrackId, trackPercentSV, scrubPercent, isScrubbing]);
 
   useEffect(() => {
     if (Date.now() >= seekLockUntil.current) {
@@ -407,12 +454,12 @@ function NowPlayingScrubberRow() {
     <View style={{ marginTop: 24 }}>
       <GestureDetector gesture={scrubCombined}>
         <View style={{ paddingVertical: 10 }}>
-          <View style={{ height: 3, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, overflow: 'hidden' }}>
-            <Animated.View style={[{ height: 3, backgroundColor: '#fff', borderRadius: 2 }, scrubFillStyle]} />
+          <View style={{ height: 2, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 1, overflow: 'hidden' }}>
+            <Animated.View style={[{ height: 2, backgroundColor: '#FF00FF', borderRadius: 1 }, scrubFillStyle]} />
           </View>
           <Animated.View style={[{
             position: 'absolute',
-            top: 4,
+            top: 5,
             left: 0,
             width: 12,
             height: 12,
@@ -445,6 +492,10 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
   const insets = useSafeAreaInsets();
 
   const [showQueue, setShowQueue] = useState(false);
+
+  useEffect(() => {
+    void prefetchVybeNowPlayingIcons();
+  }, []);
 
   const currentTrack = usePlaybackController(s => s.currentTrack);
   const heroColors = usePlaylistHeroColors(currentTrack?.artwork ?? null);
@@ -539,6 +590,51 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
   const [flyVisible, setFlyVisible] = useState(false);
 
   const isLiked = currentTrack ? likedTracks.has(currentTrack.id) : false;
+
+  const heartScale = useRef(new RNAnimated.Value(1)).current;
+  const likeRingScale = useRef(new RNAnimated.Value(1)).current;
+  const likeRingOpacity = useRef(new RNAnimated.Value(0)).current;
+  const likeBurstDriver = useRef(new RNAnimated.Value(0)).current;
+
+  const pulseHeart = useCallback(() => {
+    RNAnimated.sequence([
+      RNAnimated.timing(heartScale, { toValue: 1.2, duration: 100, useNativeDriver: true }),
+      RNAnimated.timing(heartScale, { toValue: 1, duration: 100, useNativeDriver: true }),
+    ]).start();
+  }, [heartScale]);
+
+  const runLikeRewardAnimation = useCallback(() => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+
+    likeRingScale.setValue(1);
+    likeRingOpacity.setValue(0);
+    likeBurstDriver.setValue(0);
+
+    pulseHeart();
+
+    RNAnimated.parallel([
+      RNAnimated.timing(likeRingScale, {
+        toValue: 1.6,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      RNAnimated.sequence([
+        RNAnimated.timing(likeRingOpacity, { toValue: 1, duration: 100, useNativeDriver: true }),
+        RNAnimated.timing(likeRingOpacity, { toValue: 0, duration: 100, useNativeDriver: true }),
+      ]),
+      RNAnimated.timing(likeBurstDriver, {
+        toValue: 1,
+        duration: 250,
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (finished) {
+        likeRingScale.setValue(1);
+        likeRingOpacity.setValue(0);
+        likeBurstDriver.setValue(0);
+      }
+    });
+  }, [likeRingScale, likeRingOpacity, likeBurstDriver, pulseHeart]);
   const isYouTube = currentSource === 'youtube';
   const isYouTubeMusic = currentSource === 'youtube_music';
   const isSoundCloud = currentSource === 'soundcloud';
@@ -719,18 +815,27 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
             source={{ uri: currentTrack.artwork }}
             style={{ width: '100%', height: '100%' }}
             contentFit="cover"
-            blurRadius={40}
+            blurRadius={20}
           />
-          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.55)' }} />
+          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)' }} />
         </View>
         <LinearGradient
           colors={heroColors.gradient as unknown as readonly [string, string, ...string[]]}
           locations={heroColors.locations as unknown as readonly [number, number, ...number[]]}
           style={{ flex: 1, opacity: 0.6 }}
         >
-          <View style={{ flex: 1, paddingTop: insets.top }}>
+          <View
+            style={{
+              flex: 1,
+              paddingTop: sheetLayout ? 20 : insets.top,
+              paddingBottom: sheetLayout ? insets.bottom + 12 : insets.bottom + 20,
+            }}
+          >
             {/* Header */}
-            <View className="flex-row items-center justify-between px-6 py-4">
+            <View
+              className="flex-row items-center justify-between px-6 py-4"
+              style={{ marginBottom: 12 }}
+            >
               <Pressable onPress={handleClose} className="p-2 -ml-2">
                 <ChevronDown size={28} color="#fff" />
               </Pressable>
@@ -741,17 +846,17 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                 <View className="flex-row items-center mt-1">
                   {isYouTube ? (
                     <>
-                      <YouTubeIcon size={14} />
+                      <VybeVideoNeonIcon size={14} />
                       <Text className="text-white font-semibold text-sm ml-1.5">Vybe Video</Text>
                     </>
                   ) : isYouTubeMusic ? (
                     <>
-                      <YouTubeMusicIcon size={14} />
+                      <VybeMusicNeonIcon size={14} />
                       <Text className="text-white font-semibold text-sm ml-1.5">Vybe Music</Text>
                     </>
                   ) : isSoundCloud ? (
                     <>
-                      <SoundCloudIcon size={14} />
+                      <VybeWavesNeonIcon size={14} />
                       <Text className="text-white font-semibold text-sm ml-1.5">Vybe Waves</Text>
                     </>
                   ) : (
@@ -763,7 +868,7 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
             </View>
 
             {/* Artwork / Video */}
-            <View className="items-center justify-center flex-1 px-10">
+            <View className="items-center justify-center flex-1 px-10" style={{ marginTop: 40 }}>
               {isYouTubeMusic && ytVideoId ? (
                 /* YouTube Music — 16:9 for thumbnails (crops letterbox), square for album art */
                 <Animated.View
@@ -797,7 +902,7 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                         paddingVertical: 5,
                       }}
                     >
-                      <YouTubeMusicIcon size={14} />
+                      <VybeMusicNeonIcon size={14} />
                       <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 5 }}>Vybe Music</Text>
                     </View>
                   </View>
@@ -850,7 +955,7 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                         paddingVertical: 5,
                       }}
                     >
-                      <SoundCloudIcon size={14} />
+                      <VybeWavesNeonIcon size={14} />
                       <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 5 }}>Vybe Waves</Text>
                     </View>
                   </View>
@@ -881,10 +986,14 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
             <Animated.View style={[INFO_STATIC_STYLE, { paddingHorizontal: 32, marginTop: 32 }]}>
               <View className="flex-row items-center justify-between">
                 <View className="flex-1 mr-4">
-                  <Text className="text-white text-2xl font-bold" numberOfLines={1}>
+                  <Text
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                    style={nowPlayingTypography.title}
+                  >
                     {currentTrack.title}
                   </Text>
-                  <Text className="text-white/60 text-lg mt-1" numberOfLines={1}>
+                  <Text numberOfLines={1} ellipsizeMode="tail" style={nowPlayingTypography.artist}>
                     {currentTrack.artist}
                   </Text>
                 </View>
@@ -892,95 +1001,168 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                   <DownloadButton track={currentTrack} size={28} />
                   <Pressable
                     onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      if (isLiked) {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        toggleLike(currentTrack.id);
+                        return;
+                      }
+                      runLikeRewardAnimation();
                       toggleLike(currentTrack.id);
                     }}
                     className="p-2"
+                    accessibilityRole="button"
+                    accessibilityLabel={isLiked ? 'Unlike' : 'Like'}
                   >
-                    <Heart
-                      size={28}
-                      color={isLiked ? '#8B5CF6' : '#fff'}
-                      fill={isLiked ? '#8B5CF6' : 'transparent'}
-                    />
+                    <View style={npHeartStyles.likeHitArea}>
+                      {LIKE_BURST_PARTICLE_ANGLES.map((angle, idx) => {
+                        const dx = Math.cos(angle) * LIKE_BURST_DISTANCE;
+                        const dy = Math.sin(angle) * LIKE_BURST_DISTANCE;
+                        return (
+                          <RNAnimated.View
+                            key={`like-particle-${idx}`}
+                            style={[
+                              npHeartStyles.likeParticle,
+                              {
+                                opacity: likeBurstDriver.interpolate({
+                                  inputRange: [0, 0.08, 1],
+                                  outputRange: [0, 1, 0],
+                                }),
+                                transform: [
+                                  {
+                                    translateX: likeBurstDriver.interpolate({
+                                      inputRange: [0, 1],
+                                      outputRange: [0, dx],
+                                    }),
+                                  },
+                                  {
+                                    translateY: likeBurstDriver.interpolate({
+                                      inputRange: [0, 1],
+                                      outputRange: [0, dy],
+                                    }),
+                                  },
+                                  {
+                                    rotate: likeBurstDriver.interpolate({
+                                      inputRange: [0, 1],
+                                      outputRange: ['0deg', '90deg'],
+                                    }),
+                                  },
+                                ],
+                              },
+                            ]}
+                          />
+                        );
+                      })}
+                      <RNAnimated.View
+                        pointerEvents="none"
+                        style={[
+                          npHeartStyles.likeBurstRing,
+                          {
+                            opacity: likeRingOpacity,
+                            transform: [{ scale: likeRingScale }],
+                            left: LIKE_HEART_CONTAINER / 2 - 15,
+                            top: LIKE_HEART_CONTAINER / 2 - 15,
+                          },
+                        ]}
+                      />
+                      <View
+                        style={[
+                          npHeartStyles.heartShadowHost,
+                          isLiked && npHeartStyles.heartShadowHostActive,
+                        ]}
+                      >
+                        <RNAnimated.View style={{ transform: [{ scale: heartScale }] }}>
+                          <Heart
+                            size={28}
+                            color={isLiked ? '#FF00FF' : '#fff'}
+                            fill={isLiked ? '#FF00FF' : 'transparent'}
+                          />
+                        </RNAnimated.View>
+                      </View>
+                    </View>
                   </Pressable>
                 </View>
               </View>
 
-              <NowPlayingScrubberRow />
+              <View style={{ marginBottom: sheetLayout ? 20 : 0, zIndex: 2, elevation: 4 }}>
+                <NowPlayingScrubberRow />
 
-              {/* Controls */}
-              <View className="flex-row items-center justify-between mt-4">
-                <Pressable
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    toggleShuffle();
-                  }}
-                  className="p-3"
-                >
-                  <Shuffle size={24} color={isShuffled ? '#8B5CF6' : '#fff'} />
-                </Pressable>
+                {/* Controls */}
+                <View className="flex-row items-center justify-between mt-4">
+                  <Pressable
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      toggleShuffle();
+                    }}
+                    className="p-3"
+                  >
+                    <Shuffle size={24} color={isShuffled ? '#8B5CF6' : '#fff'} />
+                  </Pressable>
 
-                <Pressable onPress={previous} className="p-3">
-                  <SkipBack size={32} color="#fff" fill="#fff" />
-                </Pressable>
+                  <Pressable onPress={previous} className="p-3">
+                    <SkipBack size={32} color="#fff" fill="#fff" />
+                  </Pressable>
 
-                <AnimatedPressable
-                  onPress={handlePlayPause}
-                  onPressIn={() => { playScale.value = withSpring(0.9); }}
-                  onPressOut={() => { playScale.value = withSpring(1); }}
-                  style={playButtonStyle}
-                  className="w-18 h-18 bg-white rounded-full items-center justify-center"
-                  disabled={isPlayButtonBusy}
-                >
-                  <View className={`w-[72px] h-[72px] rounded-full items-center justify-center ${isError ? 'bg-red-500' : 'bg-white'}`}>
-                    {isPlayButtonBusy ? (
-                      <LoadingRing
-                        size={44}
-                        color={isYouTube || isYouTubeMusic ? '#FF0000' : isSoundCloud ? '#FF7700' : '#8B5CF6'}
-                        trackColor="rgba(10,10,10,0.15)"
-                        strokeWidth={3}
-                      />
-                    ) : isPlaying ? (
-                      <Pause size={36} color="#0A0A0A" fill="#0A0A0A" />
+                  <AnimatedPressable
+                    onPress={handlePlayPause}
+                    onPressIn={() => { playScale.value = withSpring(0.9); }}
+                    onPressOut={() => { playScale.value = withSpring(1); }}
+                    style={playButtonStyle}
+                    className="w-18 h-18 bg-white rounded-full items-center justify-center"
+                    disabled={isPlayButtonBusy}
+                  >
+                    <View className={`w-[72px] h-[72px] rounded-full items-center justify-center ${isError ? 'bg-red-500' : 'bg-white'}`}>
+                      {isPlayButtonBusy ? (
+                        <LoadingRing
+                          size={44}
+                          color={isYouTube || isYouTubeMusic ? '#FF0000' : isSoundCloud ? '#FF7700' : '#8B5CF6'}
+                          trackColor="rgba(10,10,10,0.15)"
+                          strokeWidth={3}
+                        />
+                      ) : isPlaying ? (
+                        <Pause size={36} color="#0A0A0A" fill="#0A0A0A" />
+                      ) : (
+                        <Play size={36} color={isError ? '#fff' : '#0A0A0A'} fill={isError ? '#fff' : '#0A0A0A'} style={{ marginLeft: 4 }} />
+                      )}
+                    </View>
+                  </AnimatedPressable>
+
+                  <Pressable onPress={handleSkip} className="p-3">
+                    <SkipForward size={32} color="#fff" fill="#fff" />
+                  </Pressable>
+
+                  <Pressable
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      toggleRepeat();
+                    }}
+                    className="p-3"
+                  >
+                    {repeatMode === 'one' ? (
+                      <Repeat1 size={24} color='#8B5CF6' />
                     ) : (
-                      <Play size={36} color={isError ? '#fff' : '#0A0A0A'} fill={isError ? '#fff' : '#0A0A0A'} style={{ marginLeft: 4 }} />
+                      <Repeat size={24} color={repeatMode === 'all' ? '#8B5CF6' : '#fff'} />
                     )}
-                  </View>
-                </AnimatedPressable>
+                  </Pressable>
+                </View>
 
-                <Pressable onPress={handleSkip} className="p-3">
-                  <SkipForward size={32} color="#fff" fill="#fff" />
-                </Pressable>
-
-                <Pressable
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    toggleRepeat();
-                  }}
-                  className="p-3"
-                >
-                  {repeatMode === 'one' ? (
-                    <Repeat1 size={24} color='#8B5CF6' />
-                  ) : (
-                    <Repeat size={24} color={repeatMode === 'all' ? '#8B5CF6' : '#fff'} />
-                  )}
-                </Pressable>
-              </View>
-
-              {/* Bottom Actions */}
-              <View
-                className="flex-row items-center justify-between mt-6"
-                style={{ paddingBottom: Math.max(insets.bottom + 24, 88) }}
-              >
-                <Pressable className="p-3" onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowQueue(true); }}>
-                  <ListMusic size={24} color="#fff" />
-                </Pressable>
-                <Pressable className="p-3" onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); showRoutePicker(); }}>
-                  <Airplay size={22} color="#fff" />
-                </Pressable>
-                <Pressable className="p-3" onPress={handleShareTrack}>
-                  <Share2 size={24} color="#fff" />
-                </Pressable>
+                {/* Bottom Actions — icon cells share height so Queue / AirPlay / Share stay vertically aligned */}
+                <View className="flex-row items-center justify-between mt-6" style={{ zIndex: 4, elevation: 6 }}>
+                  <Pressable
+                    style={nowPlayingChromeStyles.bottomIconCell}
+                    onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowQueue(true); }}
+                  >
+                    <ListMusic size={24} color="#fff" />
+                  </Pressable>
+                  <Pressable
+                    style={nowPlayingChromeStyles.bottomIconCell}
+                    onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); showRoutePicker(); }}
+                  >
+                    <Airplay size={22} color="#fff" />
+                  </Pressable>
+                  <Pressable style={nowPlayingChromeStyles.bottomIconCell} onPress={handleShareTrack}>
+                    <Share2 size={24} color="#fff" />
+                  </Pressable>
+                </View>
               </View>
             </Animated.View>
           </View>
@@ -1028,7 +1210,16 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
 
         {/* Now Playing row */}
         {currentTrack && (
-          <View style={{ paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(212,175,55,0.1)' }}>
+          <View
+            style={{
+              paddingHorizontal: 20,
+              paddingTop: 16,
+              paddingBottom: 18,
+              marginBottom: 16,
+              borderBottomWidth: 1,
+              borderBottomColor: 'rgba(212,175,55,0.1)',
+            }}
+          >
             <Text style={{ color: '#D4AF37', fontSize: 11, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 10 }}>Now Playing</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Image source={{ uri: currentTrack.artwork }} style={{ width: 44, height: 44, borderRadius: 6, borderWidth: 2, borderColor: '#D4AF37' }} contentFit="cover" />
@@ -1042,7 +1233,10 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
         )}
 
         {/* Up next list + related */}
-        <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 32 }} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={{ paddingBottom: insets.bottom + 44 }}
+          showsVerticalScrollIndicator={false}
+        >
           {upNext.length === 0 ? (
             <View style={{ alignItems: 'center', paddingTop: 32 }}>
               <ListMusic size={36} color="rgba(255,255,255,0.2)" />

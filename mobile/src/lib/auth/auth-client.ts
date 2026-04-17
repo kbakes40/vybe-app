@@ -3,7 +3,7 @@
 // gets reached. See that file for the full rationale.
 import { createAuthClient } from "better-auth/react";
 import { expoClient } from "@better-auth/expo/client";
-import { emailOTPClient, genericOAuthClient } from "better-auth/client/plugins";
+import { emailOTPClient, genericOAuthClient, phoneNumberClient } from "better-auth/client/plugins";
 import * as SecureStore from "expo-secure-store";
 // Pre-import @better-auth/expo's other dynamic dep (web browser flow) so it's
 // bundled statically.
@@ -18,6 +18,7 @@ export const authClient = createAuthClient({
       storage: SecureStore,
     }),
     emailOTPClient(),
+    phoneNumberClient(),
     genericOAuthClient(),
   ],
 });

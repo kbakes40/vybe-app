@@ -1,7 +1,7 @@
 import { betterAuth } from "better-auth";
 import { expo } from "@better-auth/expo";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { emailOTP } from "better-auth/plugins";
+import { emailOTP, phoneNumber } from "better-auth/plugins";
 import { prisma } from "./prisma";
 import { env } from "./env";
 
@@ -59,6 +59,55 @@ export const auth = betterAuth({
 
   plugins: [
     expo(),
+    phoneNumber({
+      // When Twilio creds are present, actually send an SMS. Otherwise always
+      // log the code so you can grab it from Railway logs during dev/testing.
+      async sendOTP({ phoneNumber: to, code }) {
+        console.log(`[VYBE Auth] SMS OTP for ${to}: ${code}`);
+
+        const sid = env.TWILIO_ACCOUNT_SID;
+        const token = env.TWILIO_AUTH_TOKEN;
+        const from = env.TWILIO_FROM_NUMBER;
+        if (!sid || !token || !from) {
+          return;
+        }
+
+        try {
+          const body = new URLSearchParams({
+            To: to,
+            From: from,
+            Body: `Your VYBE code is ${code}. It expires in 5 minutes.`,
+          });
+          const res = await fetch(
+            `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString("base64")}`,
+                "Content-Type": "application/x-www-form-urlencoded",
+              },
+              body,
+            },
+          );
+          if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            console.error(`[VYBE Auth] Twilio send failed (HTTP ${res.status}):`, text);
+          }
+        } catch (err) {
+          console.error("[VYBE Auth] Twilio send error:", err);
+        }
+      },
+      // Auto-create an account the first time a phone number verifies so
+      // there is no separate "sign up" step. A placeholder email is required
+      // by the User schema — it's never shown to the user.
+      signUpOnVerification: {
+        getTempEmail: (ph: string) => `${ph.replace(/[^0-9]/g, "")}@phone.vybe.local`,
+        getTempName: (ph: string) => ph,
+      },
+      otpLength: 6,
+      expiresIn: 300,
+      allowedAttempts: 5,
+    }),
     emailOTP({
       async sendVerificationOTP({ email, otp, type }) {
         if (type !== "sign-in") return;

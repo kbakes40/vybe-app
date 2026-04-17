@@ -1,13 +1,25 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { View, Pressable, Animated, StyleSheet, Easing } from 'react-native';
+import { View, Pressable, Animated, StyleSheet, Easing, Platform } from 'react-native';
 import { Svg, Circle, Path } from 'react-native-svg';
-import { XCircle } from 'lucide-react-native';
+import { XCircle, Cloud } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import AnimatedRN, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withTiming,
+  withDelay,
+} from 'react-native-reanimated';
 import { downloadYouTubeTrack, downloadSoundCloudTrack, useDownloadsStore, enqueueDownload } from '@/stores/downloadsStore';
 import { ensurePrefetchListeners, usePrefetchStore } from '@/stores/prefetchStore';
 import { Track } from '@/types/music';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
+
+const CYAN_GLOW = '#00FFFF';
+const CLOUD_OUTLINE = 'rgba(255,255,255,0.95)';
+
+const AnimatedPressableRN = AnimatedRN.createAnimatedComponent(Pressable);
 
 /** “Shadow” palette — stealth, not corporate blue/green */
 const SHADOW = {
@@ -114,6 +126,11 @@ interface DownloadButtonProps {
   size?: number;
   onDownloadComplete?: () => void;
   /**
+   * `ghost` — OLED outline (transparent fill, thin white ring) + light haptic on enqueue.
+   * `brand` — source-colored ring (default).
+   */
+  chrome?: 'brand' | 'ghost';
+  /**
    * Accent color for the idle download icon (arrow + ring border).
    * If omitted, auto-derives from the track's source:
    *  - youtube / youtube_music → #FF0000 (red)
@@ -123,7 +140,13 @@ interface DownloadButtonProps {
   idleColor?: string;
 }
 
-export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor }: DownloadButtonProps) {
+export function DownloadButton({
+  track,
+  size = 28,
+  onDownloadComplete,
+  chrome = 'brand',
+  idleColor: _idleColor,
+}: DownloadButtonProps) {
   const isTrackDownloaded = useDownloadsStore(s => s.isTrackDownloaded);
   const downloaded = isTrackDownloaded(track.id);
   const prefetchReady = usePrefetchStore(s => s.byTrackId[track.id]?.ready ?? false);
@@ -204,16 +227,61 @@ export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor
   const RADIUS = (size - 4) / 2;
   const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
+  const cloudScale = useSharedValue(1);
+  const rain0 = useSharedValue(0);
+  const rain1 = useSharedValue(0);
+  const rain2 = useSharedValue(0);
+  const rainOpacity = useSharedValue(0);
+
+  const triggerRain = useCallback(() => {
+    rain0.value = 0;
+    rain1.value = 0;
+    rain2.value = 0;
+    rainOpacity.value = 1;
+    rain0.value = withTiming(10, { duration: 280 });
+    rain1.value = withDelay(70, withTiming(10, { duration: 280 }));
+    rain2.value = withDelay(140, withTiming(10, { duration: 280 }));
+    rainOpacity.value = withSequence(
+      withTiming(1, { duration: 50 }),
+      withTiming(0, { duration: 350 })
+    );
+  }, [rain0, rain1, rain2, rainOpacity]);
+
+  const cloudPressStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: cloudScale.value }],
+  }));
+
+  const rainStyle0 = useAnimatedStyle(() => ({
+    opacity: rainOpacity.value,
+    transform: [{ translateY: rain0.value }],
+  }));
+  const rainStyle1 = useAnimatedStyle(() => ({
+    opacity: rainOpacity.value,
+    transform: [{ translateY: rain1.value }],
+  }));
+  const rainStyle2 = useAnimatedStyle(() => ({
+    opacity: rainOpacity.value,
+    transform: [{ translateY: rain2.value }],
+  }));
+
   const handleDownload = useCallback(() => {
     if (isDownloading || downloaded || animating) return;
     const hasYt = !!(track.youtubeId || track.youtubeMusicId);
     const hasSc = !!track.soundcloudUrl;
     if (!hasYt && !hasSc) return;
 
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    cloudScale.value = withSequence(
+      withTiming(1.3, { duration: 90 }),
+      withTiming(1, { duration: 220 })
+    );
+    triggerRain();
+
     setIsDownloading(true);
     setProgress(0);
     setFailed(false);
+
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
     enqueueDownload(track.id, async () => {
       let succeeded = false;
@@ -226,7 +294,6 @@ export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor
         }
         if (result.success) {
           succeeded = true;
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           setIsDownloading(false);
           setProgress(0);
           runCompletionAnimation();
@@ -246,7 +313,7 @@ export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor
         }
       }
     });
-  }, [track, isDownloading, downloaded, animating, runCompletionAnimation, onDownloadComplete]);
+  }, [track, isDownloading, downloaded, animating, runCompletionAnimation, onDownloadComplete, cloudScale, triggerRain]);
 
   // ── Render helpers ────────────────────────────────────────────────────────
 
@@ -279,15 +346,7 @@ export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor
                 borderWidth: 1.25, borderColor: 'rgba(255,255,255,0.35)',
                 alignItems: 'center', justifyContent: 'center',
               }}>
-                <View style={{ alignItems: 'center' }}>
-                  <View style={{ width: 1.25, height: size * 0.27, backgroundColor: 'rgba(255,255,255,0.55)', borderRadius: 1 }} />
-                  <View style={{
-                    width: 0, height: 0,
-                    borderLeftWidth: size * 0.18, borderRightWidth: size * 0.18, borderTopWidth: size * 0.18,
-                    borderLeftColor: 'transparent', borderRightColor: 'transparent',
-                    borderTopColor: 'rgba(255,255,255,0.55)',
-                  }} />
-                </View>
+                <Cloud size={Math.max(14, size * 0.55)} color="rgba(255,255,255,0.65)" strokeWidth={1} />
               </View>
             </Animated.View>
           </Animated.View>
@@ -375,41 +434,70 @@ export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor
       );
     }
 
-    // Idle
-    const derivedColor =
-      idleColor ??
-      (track.source === 'youtube' || track.source === 'youtube_music'
-        ? '#FF0000'
-        : track.source === 'soundcloud'
-          ? '#FF7700'
-          : 'rgba(255,255,255,0.75)');
-    // Fade the ring border 20% lower than the arrow for a softer edge.
-    const borderColor = derivedColor.startsWith('rgba')
-      ? 'rgba(255,255,255,0.35)'
-      : derivedColor;
+    // Idle — minimalist cloud + cyan rain on press
+    const outline = chrome === 'ghost' ? 'rgba(255,255,255,0.78)' : CLOUD_OUTLINE;
+    void _idleColor; // cloud chrome is fixed white/cyan per Shadow Sexy
+    const cloudSz = Math.max(18, Math.round(size * 0.78));
     return (
-      <Pressable
+      <AnimatedPressableRN
         onPress={handleDownload}
         accessibilityLabel="Keep offline"
-        style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}
+        style={[
+          {
+            width: size + 8,
+            height: size + 8,
+            alignItems: 'center',
+            justifyContent: 'center',
+          },
+          cloudPressStyle,
+        ]}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       >
-        <View style={{
-          width: size, height: size, borderRadius: size / 2,
-          borderWidth: 1.5, borderColor,
-          alignItems: 'center', justifyContent: 'center',
-        }}>
-          <View style={{ alignItems: 'center' }}>
-            <View style={{ width: 1.5, height: size * 0.27, backgroundColor: derivedColor, borderRadius: 1 }} />
-            <View style={{
-              width: 0, height: 0,
-              borderLeftWidth: size * 0.18, borderRightWidth: size * 0.18, borderTopWidth: size * 0.18,
-              borderLeftColor: 'transparent', borderRightColor: 'transparent',
-              borderTopColor: derivedColor,
-            }} />
+        <View style={{ alignItems: 'center', justifyContent: 'center', width: size + 8, height: size + 8 }}>
+          <Cloud
+            size={cloudSz}
+            color={outline}
+            strokeWidth={1}
+            style={{
+              shadowColor: CYAN_GLOW,
+              shadowOffset: { width: 0, height: 0 },
+              shadowOpacity: 0.5,
+              shadowRadius: 8,
+              ...Platform.select({ android: { elevation: 6 } }),
+            }}
+          />
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              bottom: 2,
+              flexDirection: 'row',
+              gap: 5,
+              justifyContent: 'center',
+              width: size + 8,
+            }}
+          >
+            <AnimatedRN.View
+              style={[
+                { width: 3, height: 3, borderRadius: 1.5, backgroundColor: CYAN_GLOW },
+                rainStyle0,
+              ]}
+            />
+            <AnimatedRN.View
+              style={[
+                { width: 3, height: 3, borderRadius: 1.5, backgroundColor: CYAN_GLOW },
+                rainStyle1,
+              ]}
+            />
+            <AnimatedRN.View
+              style={[
+                { width: 3, height: 3, borderRadius: 1.5, backgroundColor: CYAN_GLOW },
+                rainStyle2,
+              ]}
+            />
           </View>
         </View>
-      </Pressable>
+      </AnimatedPressableRN>
     );
   };
 

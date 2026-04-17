@@ -25,26 +25,80 @@ export function setCachedYoutubeResolveUrl(videoId: string, url: string): void {
   cache.set(videoId, { url, expires: Date.now() + TTL_MS });
 }
 
-async function fetchResolveUrl(videoId: string): Promise<string | null> {
-  const base = backendBase();
-  if (!base || !videoId) return null;
+/**
+ * Retry policy for /api/youtube/resolve/:videoId:
+ * - Up to 3 attempts total (initial + 2 retries).
+ * - Retry only on network failure / abort / 5xx.
+ * - 403 and other 4xx are terminal: the backend already gave up on this
+ *   video, so the caller falls back to the `/audio` proxy path instead.
+ * - Backoff: 400ms, 900ms (with small jitter).
+ */
+const RESOLVE_MAX_ATTEMPTS = 3;
+const RESOLVE_BASE_BACKOFF_MS = 400;
+
+function computeBackoffMs(attempt: number): number {
+  const base = RESOLVE_BASE_BACKOFF_MS * Math.pow(2, attempt - 1);
+  const jitter = Math.floor(Math.random() * 120);
+  return base + jitter;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function attemptResolveFetch(
+  base: string,
+  videoId: string,
+): Promise<
+  | { kind: 'ok'; url: string }
+  | { kind: 'terminal'; status: number }
+  | { kind: 'retryable'; reason: 'network' | 'server'; status?: number }
+> {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), 25_000);
   try {
     const res = await fetch(`${base}/api/youtube/resolve/${videoId}`, {
       signal: ac.signal,
     });
-    if (!res.ok) return null;
-    const j = (await res.json()) as { data?: { url?: string } };
-    const url = j.data?.url;
-    if (url && url.startsWith('http')) {
-      setCachedYoutubeResolveUrl(videoId, url);
-      return url;
+    if (res.ok) {
+      try {
+        const j = (await res.json()) as { data?: { url?: string } };
+        const url = j.data?.url;
+        if (url && url.startsWith('http')) {
+          return { kind: 'ok', url };
+        }
+        return { kind: 'terminal', status: res.status };
+      } catch {
+        return { kind: 'terminal', status: res.status };
+      }
     }
+    if (res.status >= 500) {
+      return { kind: 'retryable', reason: 'server', status: res.status };
+    }
+    return { kind: 'terminal', status: res.status };
   } catch {
-    /* ignore */
+    return { kind: 'retryable', reason: 'network' };
   } finally {
     clearTimeout(t);
+  }
+}
+
+async function fetchResolveUrl(videoId: string): Promise<string | null> {
+  const base = backendBase();
+  if (!base || !videoId) return null;
+
+  for (let attempt = 1; attempt <= RESOLVE_MAX_ATTEMPTS; attempt++) {
+    const result = await attemptResolveFetch(base, videoId);
+    if (result.kind === 'ok') {
+      setCachedYoutubeResolveUrl(videoId, result.url);
+      return result.url;
+    }
+    if (result.kind === 'terminal') {
+      return null;
+    }
+    if (attempt < RESOLVE_MAX_ATTEMPTS) {
+      await sleep(computeBackoffMs(attempt));
+    }
   }
   return null;
 }

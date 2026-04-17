@@ -9,13 +9,15 @@ datasource db {
 
 // Better Auth required models
 model User {
-  id            String    @id
-  name          String
-  email         String    @unique
-  emailVerified Boolean   @default(false)
-  image         String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id                  String    @id
+  name                String
+  email               String    @unique
+  emailVerified       Boolean   @default(false)
+  phoneNumber         String?   @unique
+  phoneNumberVerified Boolean   @default(false)
+  image               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
   sessions      Session[]
   accounts      Account[]
 
