@@ -707,7 +707,7 @@ export async function fetchCuratedPlaylists(): Promise<CuratedPlaylistResult[]> 
   const results = await Promise.all(
     meta.map(async ({ id, name, category, section }) => {
       const [tracks, playlistThumbnail] = await Promise.all([
-        fetchPlaylistTracksForCurated(id, 15, name, { searchFallbackBudget }),
+        fetchPlaylistTracksForCurated(id, 200, name, { searchFallbackBudget }),
         fetchPlaylistThumbnailFromAPI(id),
       ]);
       return {
