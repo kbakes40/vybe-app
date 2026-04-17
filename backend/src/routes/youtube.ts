@@ -85,17 +85,13 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
     const output = await ytDlp.execPromise([
       `https://www.youtube.com/watch?v=${videoId}`,
       "-f",
-      "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio[acodec=aac]/bestaudio[acodec^=opus]/bestaudio/ba",
+      "bestaudio/best",
       "--get-url",
       "--no-playlist",
       "--no-warnings",
       "--quiet",
-      // ios + web clients tend to return playable audio manifests fastest;
-      // tv_embedded is a slower fallback path for restricted videos.
       "--extractor-args",
-      "youtube:player_client=ios,web,tv_embedded",
-      "--js-runtimes",
-      "node",
+      "youtube:player_client=web,mweb",
       ...cookieArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
