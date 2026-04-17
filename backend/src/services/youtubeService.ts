@@ -536,10 +536,17 @@ export interface CuratedPlaylistResult {
 
 let curatedPlaylistsCache: { results: CuratedPlaylistResult[]; expiresAt: number } | null = null;
 
-// Use the same binary path as youtube.ts route (downloaded on startup)
-const YTDLP_BIN = process.platform === 'darwin'
-  ? '/opt/homebrew/bin/yt-dlp'
-  : path.join(os.tmpdir(), 'yt-dlp');
+const YTDLP_TMP = path.join(os.tmpdir(), 'yt-dlp');
+
+/** Prefer downloaded binary, then Nixpacks/PATH `yt-dlp` (Linux prod). */
+function resolveYtdlpBinForService(): string {
+  if (process.platform === 'darwin') return '/opt/homebrew/bin/yt-dlp';
+  try {
+    const fs = require('fs') as typeof import('fs');
+    if (fs.existsSync(YTDLP_TMP)) return YTDLP_TMP;
+  } catch { /* ignore */ }
+  return 'yt-dlp';
+}
 
 const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), 'youtube-cookies.txt');
 
@@ -561,17 +568,53 @@ function playlistTrackInfoToPlaylistTracks(items: PlaylistTrackInfo[]): Playlist
 }
 
 /**
- * Prefer Data API on server IPs where yt-dlp is often blocked; fall back to yt-dlp locally / when API fails.
+ * YouTube Music "mix" lists (RDCLAK5uy_*, RD…) do not reliably return items from
+ * playlistItems.list; try yt-dlp + search instead of burning quota on a doomed API call.
  */
-async function fetchPlaylistTracksForCurated(playlistId: string, maxTracks: number): Promise<PlaylistTrack[]> {
-  if (isYouTubeApiAvailable()) {
+function isMixStylePlaylistId(playlistId: string): boolean {
+  return playlistId.startsWith('RD');
+}
+
+/**
+ * Prefer Data API for normal playlists; yt-dlp for mixes / API gaps; then search by title
+ * so the home feed still fills when both fail on datacenter IPs.
+ */
+type CuratedFetchOpts = { searchFallbackBudget?: { left: number } };
+
+async function fetchPlaylistTracksForCurated(
+  playlistId: string,
+  maxTracks: number,
+  playlistDisplayName?: string,
+  opts?: CuratedFetchOpts
+): Promise<PlaylistTrack[]> {
+  if (isYouTubeApiAvailable() && !isMixStylePlaylistId(playlistId)) {
     const apiTracks = await getPlaylistTracksViaApi(playlistId, { maxTracks });
     if (apiTracks && apiTracks.length > 0) {
       return playlistTrackInfoToPlaylistTracks(apiTracks).slice(0, maxTracks);
     }
   }
+
   const viaDlp = await fetchPlaylistTracksViaYTDLP(playlistId);
-  return viaDlp.slice(0, maxTracks);
+  if (viaDlp.length > 0) return viaDlp.slice(0, maxTracks);
+
+  const label = (playlistDisplayName ?? '').trim();
+  const budget = opts?.searchFallbackBudget;
+  if (isYouTubeApiAvailable() && label.length > 0 && (!budget || budget.left > 0)) {
+    const discovered = await searchYouTube(`${label} music`, maxTracks);
+    if (discovered.length > 0) {
+      if (budget) budget.left -= 1;
+      console.log(`[Curated] search fallback for "${label}" (${playlistId}) → ${discovered.length} tracks`);
+      return discovered.map((d) => ({
+        videoId: d.videoId,
+        title: d.title,
+        channelName: d.channelName,
+        thumbnailUrl: d.thumbnailUrl,
+        publishedAt: d.publishedAt,
+      }));
+    }
+  }
+
+  return [];
 }
 
 /**
@@ -580,10 +623,11 @@ async function fetchPlaylistTracksForCurated(playlistId: string, maxTracks: numb
 function fetchPlaylistTracksViaYTDLP(playlistId: string): Promise<PlaylistTrack[]> {
   return new Promise((resolve) => {
     const { spawn } = require('child_process');
+    const bin = resolveYtdlpBinForService();
     const url = playlistId.startsWith('PL')
       ? `https://www.youtube.com/playlist?list=${playlistId}`
       : `https://music.youtube.com/playlist?list=${playlistId}`;
-    const proc = spawn(YTDLP_BIN, [
+    const proc = spawn(bin, [
       url, '--flat-playlist', '--dump-json', '--no-warnings', '--quiet',
       '--extractor-args', 'youtube:player_client=ios',
       ...cookieArgs(),
@@ -626,7 +670,7 @@ function fetchPlaylistTracksViaYTDLP(playlistId: string): Promise<PlaylistTrack[
  * Fetch tracks from a single YouTube playlist (kept for external callers).
  */
 export async function fetchPlaylistTracks(playlistId: string): Promise<PlaylistTrack[]> {
-  if (isYouTubeApiAvailable()) {
+  if (isYouTubeApiAvailable() && !isMixStylePlaylistId(playlistId)) {
     const apiTracks = await getPlaylistTracksViaApi(playlistId, { maxTracks: 200 });
     if (apiTracks && apiTracks.length > 0) return playlistTrackInfoToPlaylistTracks(apiTracks);
   }
@@ -658,10 +702,12 @@ export async function fetchCuratedPlaylists(): Promise<CuratedPlaylistResult[]> 
   }
 
   const meta = await getCuratedPlaylistsMeta();
+  /** Each search fallback costs ~100 quota units; cap per refresh to protect the daily pool. */
+  const searchFallbackBudget = { left: 32 };
   const results = await Promise.all(
     meta.map(async ({ id, name, category, section }) => {
       const [tracks, playlistThumbnail] = await Promise.all([
-        fetchPlaylistTracksForCurated(id, 15),
+        fetchPlaylistTracksForCurated(id, 15, name, { searchFallbackBudget }),
         fetchPlaylistThumbnailFromAPI(id),
       ]);
       return {
