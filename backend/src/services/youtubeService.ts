@@ -629,7 +629,7 @@ function fetchPlaylistTracksViaYTDLP(playlistId: string): Promise<PlaylistTrack[
       : `https://music.youtube.com/playlist?list=${playlistId}`;
     const proc = spawn(bin, [
       url, '--flat-playlist', '--dump-json', '--no-warnings', '--quiet',
-      '--extractor-args', 'youtube:player_client=ios',
+      '--extractor-args', 'youtube:player_client=web,mweb',
       ...cookieArgs(),
     ]);
     const timeout = setTimeout(() => { proc.kill('SIGKILL'); resolve([]); }, 30_000);
