@@ -535,13 +535,8 @@ export default function DiscoverScreen() {
           console.log('[Discover] Failed to fetch preferences, checking local state');
         }
 
-        // Re-check after fetch attempt
-        const updatedStore = useDiscoverFeedStore.getState();
-        if (updatedStore.needsOnboarding()) {
-          router.replace('/(app)/discover-onboarding');
-        } else {
-          refreshFeed();
-        }
+        // Onboarding redirect disabled — always try to refresh feed.
+        refreshFeed();
       };
       init();
     }, [refreshFeed, fetchPreferences, completeOnboardingWithInstantFeed, router])

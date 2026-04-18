@@ -110,10 +110,10 @@ export default function SignInScreen() {
           router.replace('/(app)/(tabs)');
         }
       } else {
-        router.replace('/onboarding');
+        router.replace('/(app)/(tabs)');
       }
     } catch {
-      router.replace('/onboarding');
+      router.replace('/(app)/(tabs)');
     }
   };
 

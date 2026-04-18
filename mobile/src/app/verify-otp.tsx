@@ -55,7 +55,7 @@ export default function VerifyOtpScreen() {
           router.replace('/(app)/(tabs)');
         }
       } else {
-        router.replace('/onboarding');
+        router.replace('/(app)/(tabs)');
       }
     } catch (error: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
