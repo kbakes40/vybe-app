@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -16,7 +16,6 @@
 		7E2D88F32F8F24F50083D908 /* VybeDownloadAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E2D88F12F8F24F50083D908 /* VybeDownloadAttributes.swift */; };
 		7E30AABD2F909EC90063C482 /* VybeDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E30AABC2F909EC90063C482 /* VybeDownloader.swift */; };
 		7E30AABE2F909EC90063C482 /* VybeDownloader.m in Sources */ = {isa = PBXBuildFile; fileRef = 7E30AABB2F909EC90063C482 /* VybeDownloader.m */; };
-		7E40B0AB2F909EC90063C481 /* VybeAVPlayerTuning.m in Sources */ = {isa = PBXBuildFile; fileRef = 7E40B0AA2F909EC90063C481 /* VybeAVPlayerTuning.m */; };
 		B195FDFFC3F2C59B2B0F197E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9E483C0E3678D1A7950AE571 /* PrivacyInfo.xcprivacy */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
 		BE6A366DDF34ADA6B6F7712F /* libPods-vibecode.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 64485A74CDF591FF37A706CE /* libPods-vibecode.a */; };
@@ -75,7 +74,6 @@
 		7E2D88F12F8F24F50083D908 /* VybeDownloadAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VybeDownloadAttributes.swift; path = vibecode/VybeDownloadAttributes.swift; sourceTree = "<group>"; };
 		7E30AABB2F909EC90063C482 /* VybeDownloader.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = VybeDownloader.m; path = vibecode/VybeDownloader.m; sourceTree = "<group>"; };
 		7E30AABC2F909EC90063C482 /* VybeDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VybeDownloader.swift; path = vibecode/VybeDownloader.swift; sourceTree = "<group>"; };
-		7E40B0AA2F909EC90063C481 /* VybeAVPlayerTuning.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = VybeAVPlayerTuning.m; path = vibecode/VybeAVPlayerTuning.m; sourceTree = "<group>"; };
 		9E483C0E3678D1A7950AE571 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = vibecode/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = vibecode/SplashScreen.storyboard; sourceTree = "<group>"; };
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
@@ -140,7 +138,6 @@
 			isa = PBXGroup;
 			children = (
 				7E30AABB2F909EC90063C482 /* VybeDownloader.m */,
-				7E40B0AA2F909EC90063C481 /* VybeAVPlayerTuning.m */,
 				7E30AABC2F909EC90063C482 /* VybeDownloader.swift */,
 				F11748412D0307B40044C1D9 /* AppDelegate.swift */,
 				F11748442D0722820044C1D9 /* vibecode-Bridging-Header.h */,
@@ -505,7 +502,6 @@
 				VYBE00000000000000000015 /* VybeDownloadActivityModule.swift in Sources */,
 				7E30AABD2F909EC90063C482 /* VybeDownloader.swift in Sources */,
 				7E30AABE2F909EC90063C482 /* VybeDownloader.m in Sources */,
-				7E40B0AB2F909EC90063C481 /* VybeAVPlayerTuning.m in Sources */,
 				VYBE00000000000000000016 /* VybeDownloadActivityModule.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -563,7 +559,6 @@
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = com.vibecode.vybe;
 				PRODUCT_NAME = vibecode;
-				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_OBJC_BRIDGING_HEADER = "vibecode/vibecode-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -597,7 +592,6 @@
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = com.vibecode.vybe;
 				PRODUCT_NAME = vibecode;
-				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_OBJC_BRIDGING_HEADER = "vibecode/vibecode-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -647,7 +641,6 @@
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
@@ -697,7 +690,6 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";

@@ -57,12 +57,6 @@ struct VybeDownloadWidget: Widget {
                             .foregroundColor(.white.opacity(0.6))
                             .lineLimit(1)
                             .truncationMode(.tail)
-                        if context.state.queueTotal > 1 {
-                            Text("Downloading \(context.state.queuePosition) of \(context.state.queueTotal)")
-                                .font(.system(size: 11, weight: .medium, design: .rounded))
-                                .foregroundColor(.white.opacity(0.45))
-                                .lineLimit(1)
-                        }
                         ProgressView(value: context.state.progress)
                             .progressViewStyle(.linear)
                             .tint(Self.vybePurple)
@@ -127,11 +121,6 @@ struct LockScreenView: View {
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.55))
                     .lineLimit(1)
-                if context.state.queueTotal > 1 {
-                    Text("Downloading \(context.state.queuePosition) of \(context.state.queueTotal)")
-                        .font(.caption2)
-                        .foregroundColor(.white.opacity(0.45))
-                }
                 ProgressView(value: context.state.progress)
                     .progressViewStyle(.linear)
                     .tint(vybePurple)

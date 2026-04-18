@@ -24,6 +24,7 @@ import {
   isPremiumActive,
   VybePackages,
 } from '@/lib/purchases';
+import { VybePlusWordmark } from '@/components/VybePlusWordmark';
 
 type PlanType = 'monthly' | 'lifetime';
 
@@ -112,7 +113,7 @@ export default function PaywallScreen() {
       } else {
         showVybePopup({
           title: 'No Purchase Found',
-          message: 'No previous VYBE Plus subscription was found on this account.',
+          message: 'No previous Vybe+ subscription was found on this account.',
           type: 'info',
         });
       }
@@ -171,9 +172,11 @@ export default function PaywallScreen() {
             >
               <Sparkles size={36} color="#fff" />
             </LinearGradient>
-            <Text className="text-white text-3xl font-bold mb-1">VYBE Plus</Text>
+            <View className="items-center mb-1">
+              <VybePlusWordmark variant="hero" />
+            </View>
             <Text className="text-white/50 text-base text-center mb-6">
-              Unlock the full experience
+              Unlock the Vault — the full Vybe+ experience
             </Text>
           </View>
 

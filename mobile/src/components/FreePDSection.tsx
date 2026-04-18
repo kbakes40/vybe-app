@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { ChevronRight, Music, RefreshCw } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Track } from '@/types/music';
@@ -14,6 +15,8 @@ interface FreePDSectionProps {
   onSeeAll?: () => void;
   onDownload?: (track: Track) => void;
   className?: string;
+  /** Server-reported total; when set, "See all" hides if this list already shows every track. */
+  catalogTrackTotal?: number | null;
 }
 
 /**
@@ -28,6 +31,7 @@ export function FreePDSection({
   onSeeAll,
   onDownload,
   className,
+  catalogTrackTotal = null,
 }: FreePDSectionProps) {
   const handleSeeAll = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -38,6 +42,10 @@ export function FreePDSection({
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     onRetry?.();
   };
+
+  const showSeeAll =
+    Boolean(onSeeAll) &&
+    (catalogTrackTotal == null || tracks.length < catalogTrackTotal);
 
   // Loading skeleton
   if (isLoading) {
@@ -117,7 +125,7 @@ export function FreePDSection({
           <Music size={20} color="#4CAF50" />
           <Text className="text-white text-xl font-bold ml-2">Royalty Free</Text>
         </View>
-        {onSeeAll ? (
+        {showSeeAll ? (
           <Pressable onPress={handleSeeAll} className="flex-row items-center">
             <Text className="text-white/60 text-sm mr-1">See all</Text>
             <ChevronRight size={16} color="rgba(255,255,255,0.6)" />
@@ -130,22 +138,19 @@ export function FreePDSection({
         Clean audio you can download
       </Text>
 
-      {/* Horizontal carousel */}
-      <ScrollView
+      <FlashList
+        data={tracks}
         horizontal
+        keyExtractor={(item) => item.id}
+        estimatedItemSize={176}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingHorizontal: 20 }}
-        style={{ flexGrow: 0 }}
-      >
-        {tracks.map(track => (
-          <FreePDTrackCard
-            key={track.id}
-            track={track}
-            queue={tracks}
-            onDownload={onDownload}
-          />
-        ))}
-      </ScrollView>
+        renderItem={({ item }) => (
+          <View style={{ marginRight: 16 }}>
+            <FreePDTrackCard track={item} queue={tracks} onDownload={onDownload} />
+          </View>
+        )}
+      />
     </View>
   );
 }

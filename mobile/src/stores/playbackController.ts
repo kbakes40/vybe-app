@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { MMKV } from 'react-native-mmkv';
 import { AppState, AppStateStatus, NativeEventEmitter, NativeModules, Platform } from 'react-native';
 import { Audio, AVPlaybackStatus, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 import { Track, TrackSource, RepeatMode } from '@/types/music';
@@ -8,14 +9,19 @@ import { useRecentsStore } from '@/stores/recentsStore';
 import { updateNowPlaying, updateNowPlayingProgress, clearNowPlaying, registerRemoteHandlers, setNowPlayingArtwork } from '@/lib/NowPlayingManager';
 import { startNowPlayingActivity, updateNowPlayingActivity, endNowPlayingActivity } from '@/lib/NowPlayingActivityManager';
 import { usePlaybackSettingsStore } from '@/stores/playbackSettingsStore';
+import { useRecommendationSignalStore } from '@/stores/recommendationSignalStore';
 import { useDownloadsStore, downloadSoundCloudTrack, enqueueDownload } from '@/stores/downloadsStore';
 import { openNowPlayingSheet } from '@/lib/openNowPlayingSheet';
+import { VYBE_TRACK_PLAYER_BUFFER_CONFIG } from '@/constants/playbackBuffer';
+import { useShadowPlaybackToastStore } from '@/stores/shadowPlaybackToastStore';
+import { getCachedYoutubeResolveUrl, preResolveYoutubeVideoId } from '@/lib/youtubeResolvePreloadCache';
 import {
-  getCachedYoutubeResolveUrl,
-  preResolveYoutubeVideoId,
-  resolveYoutubeUrlForPlayback,
-  resolveYoutubeUrlForPlaybackWithBudget,
-} from '@/lib/youtubeResolvePreloadCache';
+  createYoutubeAvPlaybackSource,
+  extractYoutubeVideoId,
+  normalizeYoutubeTrackForPlayback,
+  resolveYoutubeStreamForVideoId,
+  trackToPlayerDebugPayload,
+} from '@/lib/audio/playbackService';
 import {
   preResolveSoundcloudStreamUrl,
   resolveSoundcloudStreamUrlForPlayback,
@@ -25,12 +31,37 @@ import {
 let _subStore: any = null;
 function getSubStore() { return _subStore ?? (_subStore = require('./subscriptionStore').useSubscriptionStore); }
 
+/** iOS NSURLError / AVPlayer -1008 (resource unavailable) and similar transient vault failures */
+function isYoutubeVaultReconnectError(err: unknown): boolean {
+  const msg =
+    typeof err === 'string'
+      ? err
+      : err instanceof Error
+        ? err.message
+        : '';
+  const code =
+    err && typeof err === 'object' && 'code' in err && err.code != null
+      ? String((err as { code: unknown }).code)
+      : '';
+  const flat = `${msg} ${code}`;
+  return (
+    flat.includes('-1008') ||
+    flat.includes('1008') ||
+    flat.includes('NSURLError') ||
+    /resource unavailable/i.test(flat)
+  );
+}
+
 /**
  * Unified Playback Controller
  *
  * Single source of truth for all audio playback in VYBE.
- * Ensures only one audio source plays at a time.
- * All UI subscribes to this controller for playback state.
+ * Engine: **expo-av** (`Audio.Sound`). YouTube / YT Music streams are resolved
+ * via `@/lib/audio/playbackService` (Railway `/api/youtube/resolve` + `/audio` proxy).
+ *
+ * UI (MiniPlayer, Now Playing) should **subscribe to this store** — there is no
+ * `react-native-track-player` `PlaybackTrackChanged` event; progress/state flow
+ * from `setOnPlaybackStatusUpdate` into Zustand instead.
  */
 
 // Playback states
@@ -98,6 +129,25 @@ function startGhostProgressForTrack(trackId: string, estDurationSec: number) {
   }, 100);
 }
 
+/** expo-av loadAsync/playAsync can stall indefinitely on bad streams; fail loudly instead of hanging. */
+const NATIVE_LOAD_TIMEOUT_MS = 45_000;
+
+function isAbsoluteHttpUrl(uri: string): boolean {
+  return /^https?:\/\//i.test(uri);
+}
+
+async function withLoadTimeout<T>(label: string, promise: Promise<T>, ms: number): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 // ── Crossfade state ───────────────────────────────────────────────────────────
 let crossfadeSound: Audio.Sound | null = null;   // next track being faded in
 let oldFadingSound: Audio.Sound | null = null;   // current track being faded out
@@ -155,8 +205,7 @@ async function triggerCrossfade(fadeSecs: number) {
     if (!nextScUrl) { crossfadeTriggeredForTrackId = null; return; }
     nextUri = `${backendBase}/api/soundcloud/audio?url=${encodeURIComponent(nextScUrl)}`;
   } else if (nextSource === 'youtube' || nextSource === 'youtube_music') {
-    const ytId = (nextTrack as Track & { youtubeId?: string; youtubeMusicId?: string }).youtubeId
-      || (nextTrack as Track & { youtubeId?: string; youtubeMusicId?: string }).youtubeMusicId;
+    const ytId = extractYoutubeVideoId(normalizeYoutubeTrackForPlayback(nextTrack));
     if (!ytId) return;
     const cached = getCachedYoutubeResolveUrl(ytId);
     nextUri = cached ?? `${backendBase}/api/youtube/audio/${ytId}`;
@@ -169,7 +218,21 @@ async function triggerCrossfade(fadeSecs: number) {
   try {
     const newSound = new Audio.Sound();
     crossfadeSound = newSound;
-    await newSound.loadAsync({ uri: nextUri }, { shouldPlay: true, volume: 0 });
+    const nextIsHttpYt =
+      (nextSource === 'youtube' || nextSource === 'youtube_music') &&
+      nextUri.startsWith('http');
+    const crossfadeYtDownloadFirst =
+      nextUri.includes('/api/youtube/audio/') ||
+      (VYBE_TRACK_PLAYER_BUFFER_CONFIG.minBufferMs >= 15_000 &&
+        VYBE_TRACK_PLAYER_BUFFER_CONFIG.playBufferMs >= 3_000);
+    const crossfadeSource = nextIsHttpYt
+      ? createYoutubeAvPlaybackSource(nextUri)
+      : { uri: nextUri };
+    await newSound.loadAsync(
+      crossfadeSource,
+      { shouldPlay: true, volume: 0 },
+      crossfadeYtDownloadFirst,
+    );
 
     // Update store to reflect the new current track (UI updates immediately)
     usePlaybackController.setState({
@@ -178,14 +241,14 @@ async function triggerCrossfade(fadeSecs: number) {
       progress: 0,
       duration: nextTrack.duration || 0,
       playbackState: 'playing',
+      playbackRevision: usePlaybackController.getState().playbackRevision + 1,
     });
 
     // Same duration-override setup as playTrack — the m4a containers from
     // YouTube downloads / streams sometimes report ~2× the real audio length.
     // Without this the crossfaded-in track would play silence at the end and
     // never advance properly.
-    const nextYtId = (nextTrack as Track & { youtubeId?: string; youtubeMusicId?: string }).youtubeId
-      || (nextTrack as Track & { youtubeId?: string; youtubeMusicId?: string }).youtubeMusicId;
+    const nextYtId = extractYoutubeVideoId(normalizeYoutubeTrackForPlayback(nextTrack));
     const nextIsYt = (nextSource === 'youtube' || nextSource === 'youtube_music') && !!nextYtId;
     let nextRealDurationSec = nextTrack.duration || 0;
     if (nextIsYt && nextYtId) {
@@ -443,6 +506,9 @@ interface PlaybackControllerState {
   // events. Used by the top-right AirPlay pill on the root layout.
   isAirPlayConnected: boolean;
 
+  /** Bumps when the active track/queue identity changes so UI can force-refresh. */
+  playbackRevision: number;
+
   // Actions
   playTrack: (track: Track, queue?: Track[], options?: { expandNowPlaying?: boolean }) => Promise<void>;
   play: () => Promise<void>;
@@ -554,6 +620,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
   lastProgressTime: 0,
   silentRetryCount: 0,
   isAirPlayConnected: false,
+  playbackRevision: 0,
 
   playTrack: async (track: Track, queue?: Track[], options?: { expandNowPlaying?: boolean }) => {
     // Guard against event objects being passed as track
@@ -563,6 +630,8 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       }
       return;
     }
+
+    track = normalizeYoutubeTrackForPlayback(track);
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
@@ -605,6 +674,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       queueIndex: trackIndex,
       lastProgressTime: Date.now(),
       silentRetryCount: 0,
+      playbackRevision: get().playbackRevision + 1,
     });
 
     // Open the in-app sheet when the user starts playback from a list (not skip / auto-advance).
@@ -655,7 +725,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     // If the track has been downloaded locally, always play from the local file
     // regardless of its original source (handles downloaded SoundCloud/YouTube tracks)
     if (localUri) {
-      const ytVideoIdForDownload = track.youtubeId || track.youtubeMusicId;
+      const ytVideoIdForDownload = extractYoutubeVideoId(track);
       const isYt = (source === 'youtube' || source === 'youtube_music') && !!ytVideoIdForDownload;
       // Mutable so the background /info fetch below can correct an inflated
       // value without re-creating the sound. The status callback reads this
@@ -745,7 +815,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     }
 
     // YouTube tracks: stream via backend proxy and/or pre-resolved CDN URL (mobile-only warm cache).
-    const ytVideoId = track.youtubeId || track.youtubeMusicId;
+    const ytVideoId = extractYoutubeVideoId(track);
     if ((source === 'youtube' || source === 'youtube_music') && ytVideoId) {
       const playTapAt = Date.now();
       let ghostCleared = false;
@@ -756,29 +826,49 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       };
 
       const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
-      const proxyUrl = `${backendBase}/api/youtube/audio/${ytVideoId}`;
+      if (!backendBase) {
+        clearGhostOnce();
+        console.error(
+          '[PlaybackController] YouTube: EXPO_PUBLIC_BACKEND_URL is empty — cannot build a playable stream URL',
+        );
+        set({ playbackState: 'error', error: 'Playback unavailable (backend URL not configured).' });
+        return;
+      }
 
-      // Parallel resolve: budgeted URL for immediate play + unbounded fetch to fill cache.
       set({ playbackState: 'playing' });
       startGhostProgressForTrack(track.id, track.duration || 0);
       preResolveYoutubeVideoId(ytVideoId);
-      void resolveYoutubeUrlForPlayback(ytVideoId);
 
       const q0 = get().queue;
       const qi0 = get().queueIndex;
       for (let i = 1; i <= 2 && qi0 + i < q0.length; i++) {
-        const n = q0[qi0 + i];
-        const nid = n.youtubeId || n.youtubeMusicId;
+        const n = normalizeYoutubeTrackForPlayback(q0[qi0 + i]);
+        const nid = extractYoutubeVideoId(n);
         if (nid) preResolveYoutubeVideoId(nid);
       }
 
-      const directUrl = await resolveYoutubeUrlForPlaybackWithBudget(ytVideoId, 2_800);
-      const playUri = directUrl ?? proxyUrl;
+      console.log('[PlaybackController] YouTube: resolving stream…', { ytVideoId });
+      let { playUri, fromCdn } = await resolveYoutubeStreamForVideoId(ytVideoId, backendBase);
+      console.log('[PlaybackController] YouTube: resolved', {
+        fromCdn,
+        scheme: playUri.split(':')[0],
+        pathPrefix: playUri.split('?')[0].slice(0, 96),
+      });
+      if (!isAbsoluteHttpUrl(playUri)) {
+        clearGhostOnce();
+        console.error('[PlaybackController] YouTube: playUri is not absolute http(s):', playUri);
+        set({ playbackState: 'error', error: 'Playback unavailable (invalid stream URL).' });
+        return;
+      }
+      let trackForPlayer = { ...track, audioUrl: playUri };
+      set({ currentTrack: trackForPlayer });
+
       if (__DEV__) {
         console.log(
           '[PlaybackController] YouTube play:',
-          directUrl ? 'CDN (pre-resolved)' : 'proxy',
+          fromCdn ? 'CDN (pre-resolved)' : 'proxy',
           playUri.split('?')[0].slice(0, 96),
+          trackToPlayerDebugPayload(trackForPlayer, playUri, ytVideoId),
         );
       }
 
@@ -786,7 +876,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         import('@/stores/prefetchStore')
           .then(({ queueYoutubeHeadPrefetchForPlayback }) => {
             void queueYoutubeHeadPrefetchForPlayback(
-              track,
+              trackForPlayer,
               get().queue,
               get().queueIndex,
               playUri,
@@ -818,110 +908,161 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         set({ duration: realDurationSec });
       }
 
-      try {
-        const sound = new Audio.Sound();
-        // Set vybeSound immediately so play/pause controls work during buffering
-        vybeSound = sound;
+      const ytProgressTick = Math.max(
+        250,
+        Math.min(1000, Math.round(VYBE_TRACK_PLAYER_BUFFER_CONFIG.playBufferMs / 4)),
+      );
 
-        sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
-          const { currentTrack } = get();
-          if (currentTrack?.id !== track.id) return;
-          if (status.isLoaded) {
-            if (
-              !ghostCleared &&
-              (status.isPlaying || (status.positionMillis ?? 0) > 40)
-            ) {
+      let youtubeLoadSucceeded = false;
+      for (let loadAttempt = 0; loadAttempt < 2 && !youtubeLoadSucceeded; loadAttempt++) {
+        const ytDownloadFirst =
+          !fromCdn ||
+          (VYBE_TRACK_PLAYER_BUFFER_CONFIG.minBufferMs >= 15_000 &&
+            VYBE_TRACK_PLAYER_BUFFER_CONFIG.playBufferMs >= 3_000);
+        try {
+          const sound = new Audio.Sound();
+          vybeSound = sound;
+
+          sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
+            const { currentTrack } = get();
+            if (currentTrack?.id !== track.id) return;
+            if (status.isLoaded) {
+              if (
+                !ghostCleared &&
+                (status.isPlaying || (status.positionMillis ?? 0) > 40)
+              ) {
+                clearGhostOnce();
+                if (__DEV__) {
+                  console.log(
+                    `[PlaybackLatency] tap→playback ~${Date.now() - playTapAt}ms (${track.title.slice(0, 40)})`,
+                  );
+                }
+              }
+
+              const progressSec = status.positionMillis / 1000;
+              const rawDurationSec = (status.durationMillis ?? 0) / 1000;
+
+              const overrideDuration =
+                realDurationSec > 0 && rawDurationSec > realDurationSec * 1.5;
+              const durationSec = overrideDuration ? realDurationSec : rawDurationSec;
+
+              set({
+                progress: progressSec,
+                duration: durationSec,
+                playbackState: status.isPlaying ? 'playing' : 'paused',
+              });
+
+              const { crossfadeEnabled, crossfadeDuration } = usePlaybackSettingsStore.getState();
+              if (
+                crossfadeEnabled &&
+                crossfadeTriggeredForTrackId !== track.id &&
+                durationSec > 0 &&
+                progressSec > 0 &&
+                durationSec - progressSec <= crossfadeDuration
+              ) {
+                crossfadeTriggeredForTrackId = track.id;
+                triggerCrossfade(crossfadeDuration);
+              }
+
+              if (
+                overrideDuration &&
+                progressSec >= realDurationSec - 0.5 &&
+                crossfadeTriggeredForTrackId !== track.id
+              ) {
+                const { repeatMode } = get();
+                if (repeatMode === 'one') {
+                  sound.setPositionAsync(0).catch(() => {});
+                } else {
+                  set({ playbackState: 'ended' });
+                  get().next();
+                }
+                return;
+              }
+
+              if (status.didJustFinish) {
+                const { repeatMode } = get();
+                if (repeatMode === 'one') {
+                  sound.replayAsync();
+                } else if (crossfadeTriggeredForTrackId !== track.id) {
+                  set({ playbackState: 'ended' });
+                  get().next();
+                }
+              }
+            } else if ('error' in status && status.error) {
               clearGhostOnce();
-              if (__DEV__) {
-                console.log(
-                  `[PlaybackLatency] tap→playback ~${Date.now() - playTapAt}ms (${track.title.slice(0, 40)})`,
-                );
+              const errStr = String(status.error);
+              console.error('[PlaybackController] Playback error:', errStr);
+              if (isYoutubeVaultReconnectError(errStr)) {
+                useShadowPlaybackToastStore.getState().showReconnectingVault();
               }
+              set({ playbackState: 'error', error: 'Playback failed' });
             }
+          });
 
-            const progressSec = status.positionMillis / 1000;
-            const rawDurationSec = (status.durationMillis ?? 0) / 1000;
-
-            // Trust /info over AVPlayer when AVPlayer's duration is clearly
-            // wrong (more than 1.5× the YouTube-reported length). This keeps
-            // the UI honest AND gives us a real end-of-track signal without
-            // waiting for AVPlayer's padded silence to run out.
-            const overrideDuration =
-              realDurationSec > 0 && rawDurationSec > realDurationSec * 1.5;
-            const durationSec = overrideDuration ? realDurationSec : rawDurationSec;
-
-            set({
-              progress: progressSec,
-              duration: durationSec,
-              playbackState: status.isPlaying ? 'playing' : 'paused',
-            });
-
-            // Crossfade trigger — uses the trusted duration so it fires at
-            // the real tail of the song, not the silence at the end.
-            const { crossfadeEnabled, crossfadeDuration } = usePlaybackSettingsStore.getState();
-            if (
-              crossfadeEnabled &&
-              crossfadeTriggeredForTrackId !== track.id &&
-              durationSec > 0 &&
-              progressSec > 0 &&
-              durationSec - progressSec <= crossfadeDuration
-            ) {
-              crossfadeTriggeredForTrackId = track.id;
-              triggerCrossfade(crossfadeDuration);
-            }
-
-            // Force-advance when we're using an overridden duration and the
-            // real audio has ended. Without this the track would sit in
-            // silence until AVPlayer hits its own (wrong) didJustFinish.
-            if (
-              overrideDuration &&
-              progressSec >= realDurationSec - 0.5 &&
-              crossfadeTriggeredForTrackId !== track.id
-            ) {
-              const { repeatMode } = get();
-              if (repeatMode === 'one') {
-                sound.setPositionAsync(0).catch(() => {});
-              } else {
-                set({ playbackState: 'ended' });
-                get().next();
-              }
-              return;
-            }
-
-            if (status.didJustFinish) {
-              const { repeatMode } = get();
-              if (repeatMode === 'one') {
-                sound.replayAsync();
-              } else if (crossfadeTriggeredForTrackId !== track.id) {
-                // Only call next() if crossfade didn't already handle it
-                set({ playbackState: 'ended' });
-                get().next();
-              }
-            }
-          } else if ('error' in status && status.error) {
+          await withLoadTimeout(
+            'YouTube loadAsync',
+            sound.loadAsync(
+              createYoutubeAvPlaybackSource(playUri),
+              {
+                shouldPlay: false,
+                volume: get().volume,
+                progressUpdateIntervalMillis: ytProgressTick,
+              },
+              ytDownloadFirst,
+            ),
+            NATIVE_LOAD_TIMEOUT_MS,
+          );
+          if (!isStillCurrent()) {
+            sound.stopAsync().catch(() => {});
+            sound.unloadAsync().catch(() => {});
+            if (vybeSound === sound) vybeSound = null;
             clearGhostOnce();
-            console.error('[PlaybackController] Playback error:', status.error);
-            set({ playbackState: 'error', error: 'Playback failed' });
+            return;
           }
-        });
-
-        await sound.loadAsync({ uri: playUri }, { shouldPlay: false, volume: get().volume });
-        if (!isStillCurrent()) {
-          sound.stopAsync().catch(() => {});
-          sound.unloadAsync().catch(() => {});
-          // Only clear the global ref if it still points to us — otherwise a
-          // newer playTrack already took over and we'd orphan its sound.
-          if (vybeSound === sound) vybeSound = null;
-          clearGhostOnce();
+          await withLoadTimeout('YouTube playAsync', sound.playAsync(), NATIVE_LOAD_TIMEOUT_MS);
+          set({ playbackState: 'playing' });
+          youtubeLoadSucceeded = true;
+          useShadowPlaybackToastStore.getState().hide();
+        } catch (error) {
+          const errDetail =
+            error instanceof Error ? error.message : typeof error === 'string' ? error : JSON.stringify(error);
+          console.error('[PlaybackController] YouTube load/play threw:', errDetail, error);
+          const retriable =
+            loadAttempt === 0 && isYoutubeVaultReconnectError(error) && isStillCurrent();
+          if (retriable) {
+            useShadowPlaybackToastStore.getState().showReconnectingVault();
+            const again = await resolveYoutubeStreamForVideoId(ytVideoId, backendBase, {
+              forceRefresh: true,
+            });
+            playUri = again.playUri;
+            fromCdn = again.fromCdn;
+            trackForPlayer = { ...track, audioUrl: playUri };
+            set({ currentTrack: trackForPlayer });
+            if (vybeSound) {
+              try {
+                await vybeSound.unloadAsync();
+              } catch {
+                /* noop */
+              }
+            }
+            vybeSound = null;
+            continue;
+          }
+          clearGhostProgress();
+          useShadowPlaybackToastStore.getState().hide();
+          if (vybeSound) {
+            try {
+              await vybeSound.unloadAsync();
+            } catch {
+              /* noop */
+            }
+            vybeSound = null;
+          }
+          const msg = error instanceof Error ? error.message : 'Unknown error';
+          console.error('[PlaybackController] YouTube proxy error:', msg);
+          set({ playbackState: 'error', error: `Failed to play: ${msg}` });
           return;
         }
-        await sound.playAsync();
-        set({ playbackState: 'playing' });
-      } catch (error) {
-        clearGhostProgress();
-        const msg = error instanceof Error ? error.message : 'Unknown error';
-        console.error('[PlaybackController] YouTube proxy error:', msg);
-        set({ playbackState: 'error', error: `Failed to play: ${msg}` });
       }
       return;
     }
@@ -931,12 +1072,30 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     const scUrl = (track as Track & { soundcloudUrl?: string }).soundcloudUrl;
     if (source === 'soundcloud' && scUrl) {
       const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
+      if (!backendBase) {
+        console.error(
+          '[PlaybackController] SoundCloud: EXPO_PUBLIC_BACKEND_URL is empty — cannot stream',
+        );
+        set({ playbackState: 'error', error: 'Playback unavailable (backend URL not configured).' });
+        return;
+      }
       const lqUrl = `${backendBase}/api/soundcloud/audio?url=${encodeURIComponent(scUrl)}&quality=low`;
 
       preResolveSoundcloudStreamUrl(scUrl);
       void resolveSoundcloudStreamUrlForPlayback(scUrl);
+      console.log('[PlaybackController] SoundCloud: resolving stream…');
       const directSc = await resolveSoundcloudStreamUrlWithBudget(scUrl, 2_400);
       const playScUri = directSc ?? lqUrl;
+      console.log('[PlaybackController] SoundCloud: resolved', {
+        direct: !!directSc,
+        scheme: playScUri.split(':')[0],
+        pathPrefix: playScUri.split('?')[0].slice(0, 88),
+      });
+      if (!isAbsoluteHttpUrl(playScUri)) {
+        console.error('[PlaybackController] SoundCloud: play URI is not absolute http(s):', playScUri);
+        set({ playbackState: 'error', error: 'Playback unavailable (invalid stream URL).' });
+        return;
+      }
       if (__DEV__) {
         console.log(
           '[PlaybackController] SoundCloud play:',
@@ -972,14 +1131,18 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         const sound = new Audio.Sound();
         vybeSound = sound;
         sound.setOnPlaybackStatusUpdate(makeSCStatusCallback(sound));
-        await sound.loadAsync({ uri: playScUri }, { shouldPlay: false, volume: get().volume });
+        await withLoadTimeout(
+          'SoundCloud loadAsync',
+          sound.loadAsync({ uri: playScUri }, { shouldPlay: false, volume: get().volume }),
+          NATIVE_LOAD_TIMEOUT_MS,
+        );
         if (!isStillCurrent()) {
           sound.stopAsync().catch(() => {});
           sound.unloadAsync().catch(() => {});
           if (vybeSound === sound) vybeSound = null;
           return;
         }
-        await sound.playAsync();
+        await withLoadTimeout('SoundCloud playAsync', sound.playAsync(), NATIVE_LOAD_TIMEOUT_MS);
         set({ playbackState: 'playing' });
 
         // Background: download HQ version, then seamlessly switch to it
@@ -1036,7 +1199,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
       } catch (error) {
         const msg = error instanceof Error ? error.message : 'Unknown error';
-        console.error('[PlaybackController] SoundCloud stream error:', msg);
+        console.error('[PlaybackController] SoundCloud stream error (full):', msg, error);
         set({ playbackState: 'error', error: `Failed to play: ${msg}` });
       }
       return;
@@ -1047,11 +1210,21 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
     if (adapter) {
       try {
+        if (
+          (source === 'youtube' || source === 'youtube_music') &&
+          !extractYoutubeVideoId(track)
+        ) {
+          console.warn(
+            '[PlaybackController] WebView adapter: YouTube/YTM track missing youtubeMusicId/youtubeId — loadVideo may no-op',
+            track.id,
+          );
+        }
+        console.log('[PlaybackController] WebView adapter prepare+play', { source });
         await adapter.prepare(track);
         await adapter.play();
         set({ playbackState: 'playing' });
       } catch (e) {
-        console.log('[PlaybackController] Adapter error:', e);
+        console.error('[PlaybackController] Adapter error:', e);
         set({ playbackState: 'error', error: 'Failed to start playback' });
       }
     } else {
@@ -1383,15 +1556,20 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    let addedLike = false;
     set(state => {
       const newLikedTracks = new Set(state.likedTracks);
       if (newLikedTracks.has(trackId)) {
         newLikedTracks.delete(trackId);
       } else {
         newLikedTracks.add(trackId);
+        addedLike = true;
       }
       return { likedTracks: newLikedTracks };
     });
+    if (addedLike) {
+      queueMicrotask(() => useRecommendationSignalStore.getState().bumpLikeRefresh());
+    }
   },
 
   isLiked: (trackId: string) => {
@@ -1487,6 +1665,115 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     set({ silentRetryCount: 0 });
   },
 }));
+
+// ── MMKV: restore last-known track/queue after refresh (metadata + queue only) ─
+const PLAYBACK_SNAPSHOT_KEY = 'playback-snapshot-v1';
+const playbackSnapshotStorage = new MMKV({ id: 'vybe-playback-snapshot' });
+
+function persistPlaybackSnapshot() {
+  try {
+    const s = usePlaybackController.getState();
+    if (!s.currentTrack) {
+      playbackSnapshotStorage.delete(PLAYBACK_SNAPSHOT_KEY);
+      return;
+    }
+    playbackSnapshotStorage.set(
+      PLAYBACK_SNAPSHOT_KEY,
+      JSON.stringify({
+        currentTrack: s.currentTrack,
+        queue: s.queue,
+        queueIndex: s.queueIndex,
+        currentSource: s.currentSource,
+        playbackRevision: s.playbackRevision,
+      }),
+    );
+  } catch {
+    /* best-effort */
+  }
+}
+
+function playbackPersistSignature(s: {
+  currentTrack: Track | null;
+  queue: Track[];
+  queueIndex: number;
+  currentSource: TrackSource | null;
+  playbackRevision: number;
+}) {
+  const ids = s.queue.map((t) => t.id).join('\u001f');
+  return [
+    s.currentTrack?.id ?? '',
+    s.queueIndex,
+    ids,
+    s.currentSource ?? '',
+    s.playbackRevision,
+  ].join('\u001e');
+}
+
+let persistPlaybackTimer: ReturnType<typeof setTimeout> | null = null;
+function schedulePersistPlaybackSnapshot() {
+  if (persistPlaybackTimer) clearTimeout(persistPlaybackTimer);
+  persistPlaybackTimer = setTimeout(() => {
+    persistPlaybackTimer = null;
+    persistPlaybackSnapshot();
+  }, 60);
+}
+
+function hydratePlaybackFromStorage() {
+  try {
+    const raw = playbackSnapshotStorage.getString(PLAYBACK_SNAPSHOT_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as {
+      currentTrack?: Track;
+      queue?: Track[];
+      queueIndex?: number;
+      currentSource?: TrackSource | null;
+      playbackRevision?: number;
+    };
+    if (!parsed.currentTrack || !isValidTrack(parsed.currentTrack)) {
+      playbackSnapshotStorage.delete(PLAYBACK_SNAPSHOT_KEY);
+      return;
+    }
+    const queue =
+      Array.isArray(parsed.queue) && parsed.queue.length > 0
+        ? parsed.queue
+        : [parsed.currentTrack];
+    let qi = typeof parsed.queueIndex === 'number' ? parsed.queueIndex : 0;
+    qi = Math.min(Math.max(0, qi), Math.max(0, queue.length - 1));
+    usePlaybackController.setState({
+      currentTrack: parsed.currentTrack,
+      queue,
+      queueIndex: qi,
+      currentSource: parsed.currentSource ?? parsed.currentTrack.source ?? null,
+      playbackState: 'paused',
+      progress: 0,
+      duration: parsed.currentTrack.duration || 0,
+      error: null,
+      playbackRevision: (parsed.playbackRevision ?? 0) + 1,
+    });
+  } catch {
+    try {
+      playbackSnapshotStorage.delete(PLAYBACK_SNAPSHOT_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+hydratePlaybackFromStorage();
+
+/** Re-read MMKV when the in-memory store lost `currentTrack` (e.g. rare init races). Safe to call from UI mount. */
+export function ensurePlaybackHydratedFromStorage(): void {
+  if (usePlaybackController.getState().currentTrack != null) return;
+  hydratePlaybackFromStorage();
+}
+
+let lastPlaybackPersistSig = playbackPersistSignature(usePlaybackController.getState());
+usePlaybackController.subscribe((state) => {
+  const sig = playbackPersistSignature(state);
+  if (sig === lastPlaybackPersistSig) return;
+  lastPlaybackPersistSig = sig;
+  schedulePersistPlaybackSnapshot();
+});
 
 // Export helper for checking if playing
 export const isPlaying = () => usePlaybackController.getState().playbackState === 'playing';

@@ -43,6 +43,7 @@ import {
   purchasePackage,
   VybePackages,
 } from '@/lib/purchases';
+import { VybePlusWordmark } from '@/components/VybePlusWordmark';
 
 const BENEFITS = [
   { icon: Shield, text: 'No ads, ever' },
@@ -97,9 +98,13 @@ function SuccessOverlay({ onContinue }: { onContinue: () => void }) {
           </LinearGradient>
         </Animated.View>
 
-        <Animated.Text entering={FadeIn.delay(200).duration(300)} style={styles.successTitle}>
-          You're Vybe+
-        </Animated.Text>
+        <Animated.View
+          entering={FadeIn.delay(200).duration(300)}
+          style={styles.successTitleRow}
+        >
+          <Text style={styles.successTitle}>You're </Text>
+          <VybePlusWordmark variant="success" />
+        </Animated.View>
         <Animated.Text entering={FadeIn.delay(300).duration(300)} style={styles.successSubtitle}>
           Welcome to the good stuff.
         </Animated.Text>
@@ -292,8 +297,11 @@ export default function UpgradeScreen() {
           <View style={styles.crownContainer}>
             <Crown size={36} color="#8B5CF6" />
           </View>
-          <Text style={styles.title}>Try VYBE Plus</Text>
-          <Text style={styles.subtitle}>break the loop</Text>
+          <View style={styles.titleRow}>
+            <Text style={styles.titleTry}>Try </Text>
+            <VybePlusWordmark variant="hero" />
+          </View>
+          <Text style={styles.subtitle}>break the loop · unlock the Vault</Text>
         </View>
 
         {/* Benefits — clean 2-col grid */}
@@ -391,7 +399,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 12,
   },
-  title: { color: '#FFFFFF', fontSize: 26, fontWeight: '700', letterSpacing: -0.5, marginBottom: 4 },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  titleTry: {
+    color: '#FFFFFF',
+    fontSize: 30,
+    fontWeight: '700',
+    letterSpacing: -0.5,
+  },
   subtitle: { color: '#8B5CF6', fontSize: 15, fontWeight: '500' },
   benefitsGrid: {
     flexDirection: 'row',
@@ -483,12 +502,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  successTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    marginBottom: 8,
+    paddingHorizontal: 8,
+  },
   successTitle: {
     color: '#FFFFFF',
-    fontSize: 36,
+    fontSize: 34,
     fontWeight: '800',
     letterSpacing: -0.5,
-    marginBottom: 8,
   },
   successSubtitle: {
     color: 'rgba(255,255,255,0.55)',

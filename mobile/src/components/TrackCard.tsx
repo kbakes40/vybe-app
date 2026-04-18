@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, Pressable, Animated as RNAnimated } from 'react-native';
-import { Image } from 'expo-image';
+import { ShadowArtworkImage } from '@/components/ShadowArtworkImage';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -125,7 +125,7 @@ export function TrackCard({ track, queue, showArtwork = true, index }: TrackCard
       ) : null}
 
       {showArtwork ? (
-        <Image
+        <ShadowArtworkImage
           source={{ uri: track.artwork }}
           style={{ width: 48, height: 48, borderRadius: 4 }}
           contentFit="cover"

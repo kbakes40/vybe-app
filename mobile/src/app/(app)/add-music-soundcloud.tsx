@@ -20,6 +20,7 @@ import { useUserPlaylistStore } from '@/stores/userPlaylistStore';
 import { LoadingRing } from '@/components/LoadingRing';
 import { Track } from '@/types/music';
 import { usePlaybackController } from '@/stores/playbackController';
+import { SHADOW_TEXT_INPUT_DEFAULTS } from '@/lib/shadowInput';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
 const WAVES_ACTION = 48;
@@ -268,11 +269,12 @@ function PasteSection() {
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12, height: 44 }}>
           <Link2 size={14} color="rgba(255,255,255,0.3)" />
           <TextInput
+            {...SHADOW_TEXT_INPUT_DEFAULTS}
             value={url}
             onChangeText={(t) => { setUrl(t); clear(); }}
             placeholder="Paste URL here..."
-            placeholderTextColor="rgba(255,255,255,0.3)"
-            autoCapitalize="none" autoCorrect={false}
+            autoCapitalize="none"
+            autoCorrect={false}
             style={{ flex: 1, color: '#fff', fontSize: 13, marginLeft: 8 }}
           />
           {url.length > 0 && (
@@ -501,7 +503,7 @@ function PasteSection() {
               <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.5)' }]} />
             </Pressable>
             <View style={{ borderTopLeftRadius: 20, borderTopRightRadius: 20, overflow: 'hidden', paddingBottom: 32, backgroundColor: '#121212' }}>
-              <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFillObject} />
+              <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFillObject} pointerEvents="none" />
               <View style={{ backgroundColor: 'rgba(18,18,18,0.92)' }}>
                 <View style={{ width: 40, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, alignSelf: 'center', marginTop: 10, marginBottom: 10 }} />
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 }}>
@@ -610,13 +612,15 @@ function SearchSection() {
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12, height: 40 }}>
           <Search size={14} color="rgba(255,255,255,0.3)" />
           <TextInput
+            {...SHADOW_TEXT_INPUT_DEFAULTS}
             value={query}
             onChangeText={setQuery}
             onSubmitEditing={handleSearch}
             returnKeyType="search"
             placeholder="Search Vybe Waves..."
-            placeholderTextColor="rgba(255,255,255,0.3)"
-            autoCapitalize="none" autoCorrect={false}
+            blurOnSubmit={false}
+            autoCapitalize="none"
+            autoCorrect={false}
             style={{ flex: 1, color: '#fff', fontSize: 13, marginLeft: 8 }}
           />
         </View>

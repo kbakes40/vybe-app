@@ -70,7 +70,6 @@ interface DiscoveryState {
 
 // Diversity rules
 const MAX_TRACKS_PER_ARTIST = 2;
-const MAX_DISCOVERED_TRACKS = 100;
 const REFRESH_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 
 export const useDiscoveryStore = create<DiscoveryState>()(
@@ -102,7 +101,7 @@ export const useDiscoveryStore = create<DiscoveryState>()(
           };
 
           return {
-            seedTracks: [...state.seedTracks, seedTrack].slice(-50), // Keep last 50 seeds
+            seedTracks: [...state.seedTracks, seedTrack],
           };
         });
       },
@@ -152,9 +151,7 @@ export const useDiscoveryStore = create<DiscoveryState>()(
             return true;
           });
 
-          // Merge and limit total
-          const merged = [...diverseTracks, ...state.discoveredTracks]
-            .slice(0, MAX_DISCOVERED_TRACKS);
+          const merged = [...diverseTracks, ...state.discoveredTracks];
 
           return { discoveredTracks: merged };
         });
@@ -197,13 +194,11 @@ export const useDiscoveryStore = create<DiscoveryState>()(
 
         try {
           // Get top seed tracks by play count and recency
-          const topSeeds = [...state.seedTracks]
-            .sort((a, b) => {
-              const scoreA = a.playCount + (a.isLiked ? 5 : 0);
-              const scoreB = b.playCount + (b.isLiked ? 5 : 0);
-              return scoreB - scoreA;
-            })
-            .slice(0, 5);
+          const topSeeds = [...state.seedTracks].sort((a, b) => {
+            const scoreA = a.playCount + (a.isLiked ? 5 : 0);
+            const scoreB = b.playCount + (b.isLiked ? 5 : 0);
+            return scoreB - scoreA;
+          });
 
           // Collect all tags from top seeds
           const allTags = Array.from(new Set(topSeeds.flatMap(s => s.tags)));
@@ -219,7 +214,7 @@ export const useDiscoveryStore = create<DiscoveryState>()(
             seedTrackIds: topSeeds.map(s => s.id),
             tags: allTags,
             excludeIds,
-            limit: 10,
+            limit: 20,
           });
 
           if (response?.tracks && response.tracks.length > 0) {
@@ -255,16 +250,12 @@ export const useDiscoveryStore = create<DiscoveryState>()(
 
       getFreshFinds: () => {
         const state = get();
-        return state.discoveredTracks
-          .filter(t => t.isNew)
-          .slice(0, 10);
+        return state.discoveredTracks.filter(t => t.isNew);
       },
 
       getMoreLikeThis: (trackId) => {
         const state = get();
-        return state.discoveredTracks
-          .filter(t => t.sourceTrackId === trackId)
-          .slice(0, 6);
+        return state.discoveredTracks.filter(t => t.sourceTrackId === trackId);
       },
 
       getNewTracksCount: () => {

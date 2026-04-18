@@ -9,10 +9,12 @@ import { StatusBar } from 'expo-status-bar';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
-import { Appearance } from 'react-native';
+import { Appearance, Keyboard, Platform } from 'react-native';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { VybePopupProvider } from '@/components/VybePopup';
+import { ShadowInputAccessory } from '@/components/ShadowInputAccessory';
 import { authClient } from '@/lib/auth/auth-client';
+import { useKeyboardChromeStore } from '@/stores/keyboardChromeStore';
 
 // Force dark mode globally
 Appearance.setColorScheme('dark');
@@ -26,6 +28,31 @@ export const unstable_settings = {
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
+
+function GlobalKeyboardChrome() {
+  useEffect(() => {
+    if (Platform.OS === 'ios') {
+      try {
+        const K = Keyboard as unknown as { setKeyboardAppearance?: (a: 'light' | 'dark') => void };
+        K.setKeyboardAppearance?.('dark');
+      } catch {
+        /* optional API — per-field keyboardAppearance still applies */
+      }
+    }
+    const show = Keyboard.addListener('keyboardDidShow', () => {
+      useKeyboardChromeStore.getState().setKeyboardVisible(true);
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => {
+      useKeyboardChromeStore.getState().setKeyboardVisible(false);
+    });
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
+  return <ShadowInputAccessory />;
+}
 
 function RootLayoutNav() {
   const { data: session, isPending } = authClient.useSession();
@@ -90,7 +117,11 @@ function RootLayoutNav() {
       />
       <Stack.Screen
         name="verify-otp"
-        options={{ gestureEnabled: false }}
+        options={{
+          gestureEnabled: false,
+          animation: 'fade',
+          animationDuration: 280,
+        }}
       />
 
       {/* Onboarding - part of auth flow */}
@@ -113,6 +144,7 @@ export default function RootLayout() {
         <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
           <KeyboardProvider>
             <VybePopupProvider>
+              <GlobalKeyboardChrome />
               <StatusBar style="light" backgroundColor="transparent" translucent />
               <RootLayoutNav />
             </VybePopupProvider>

@@ -5,8 +5,7 @@ import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Crown, Settings, Smartphone, HelpCircle, ChevronRight } from 'lucide-react-native';
 import { authClient } from '@/lib/auth/auth-client';
-import { usePlaybackController } from '@/stores/playbackController';
-import { tabScreenScrollBottomPad } from '@/constants/miniPlayer';
+import { TAB_MAIN_SCROLL_PADDING_BOTTOM } from '@/constants/Layout';
 
 function MenuItem({ icon, label, onPress }: { icon: React.ReactNode; label: string; onPress: () => void }) {
   return (
@@ -24,11 +23,14 @@ function MenuItem({ icon, label, onPress }: { icon: React.ReactNode; label: stri
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const currentTrack = usePlaybackController((s) => s.currentTrack);
 
   return (
     <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
-      <ScrollView contentContainerStyle={{ paddingBottom: tabScreenScrollBottomPad(insets.bottom, !!currentTrack) }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: TAB_MAIN_SCROLL_PADDING_BOTTOM }}
+        showsVerticalScrollIndicator={false}
+        automaticallyAdjustContentInsets={false}
+      >
         <View style={{ alignItems: 'center', paddingTop: insets.top + 24, paddingBottom: 32 }}>
           <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 24 }}>Account Settings</Text>
           <View style={{ width: 88, height: 88, borderRadius: 44, backgroundColor: '#282828', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
@@ -37,7 +39,7 @@ export default function ProfileScreen() {
         </View>
 
         <View style={{ borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' }}>
-          <MenuItem icon={<Crown size={20} color="#8B5CF6" />} label="Premium Subscription" onPress={() => router.push('/(app)/upgrade' as never)} />
+          <MenuItem icon={<Crown size={20} color="#8B5CF6" />} label="Your Plan" onPress={() => router.push('/(app)/your-plan' as never)} />
           <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.06)', marginLeft: 60 }} />
           <MenuItem icon={<Settings size={20} color="rgba(255,255,255,0.6)" />} label="App Preferences" onPress={() => router.push('/(app)/settings' as never)} />
           <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.06)', marginLeft: 60 }} />

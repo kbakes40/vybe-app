@@ -1,12 +1,24 @@
 import React, { useState } from 'react';
 import { View, StyleSheet, Pressable, Modal, Text } from 'react-native';
 import { Tabs, useRouter } from 'expo-router';
-import { Home, Search, Library, Compass, Download, Play, Music, Radio, Headphones, Disc, User, Sparkles } from 'lucide-react-native';
+import { Download, Play, Music, Radio, Headphones, Disc } from 'lucide-react-native';
+import {
+  ShadowDiscoverIcon,
+  ShadowHomeIcon,
+  ShadowLibraryIcon,
+  ShadowProfileIcon,
+  ShadowSearchIcon,
+  ShadowSparkleIcon,
+  ShadowTabIconShell,
+  SHADOW_TAB_ACTIVE,
+  SHADOW_TAB_INACTIVE,
+} from '@/components/navigation/ShadowTabBarIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path, Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 import type { BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
-import { TAB_BAR_BASE_HEIGHT } from '@/constants/miniPlayer';
+import { TAB_BAR_HEIGHT } from '@/constants/Layout';
+import { useKeyboardChromeStore } from '@/stores/keyboardChromeStore';
 
 // ── Source icons (streaming brand colors, neutral shapes — no brand logos) ──
 function YouTubeIcon() {
@@ -49,39 +61,23 @@ function AppleMusicIcon() {
   );
 }
 
-// Standard tab bar height (content area, excluding safe area)
-const TAB_BAR_CONTENT_HEIGHT = TAB_BAR_BASE_HEIGHT;
-
 // Fixed icon size - THE ONLY PLACE ICON SIZE IS DEFINED
 const ICON_SIZE = 28;
 
 /**
- * Custom tab bar button with premium haptic feedback
- * - Medium impact on new tab selection
- * - Light impact when reselecting current tab
- *
- * CRITICAL: This ONLY handles haptics and forwards children as-is.
- * It does NOT modify icon styles, size, or add any wrappers around the icon.
+ * Tab bar button — Shadow theme uses light haptic on every press.
+ * Forwards children unchanged (icons + labels come from `screenOptions`).
  */
 function HapticTabButton(props: BottomTabBarButtonProps) {
-  const { children, onPress, accessibilityState, ...rest } = props;
-  const isSelected = accessibilityState?.selected ?? false;
-
-  const handlePress = (e: Parameters<NonNullable<typeof onPress>>[0]) => {
-    // Trigger haptic FIRST
-    if (isSelected) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } else {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
-    // Immediately forward the original onPress
-    onPress?.(e);
-  };
+  const { children, onPress, ...rest } = props;
 
   return (
     <Pressable
       {...rest}
-      onPress={handlePress}
+      onPressIn={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }}
+      onPress={onPress}
       style={styles.tabButton}
     >
       {/* Render children as-is, untouched - NO modifications */}
@@ -93,19 +89,30 @@ function HapticTabButton(props: BottomTabBarButtonProps) {
 function SearchTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: () => void }) {
   const { children, onPress, accessibilityState, onAlreadySelected, ...rest } = props;
   const isSelected = accessibilityState?.selected ?? false;
+  const lastTapRef = React.useRef(0);
 
+  /** Same double-tap affordance as Library: first tap when already on Search does nothing; double tap opens quick actions. */
   const handlePress = (e: Parameters<NonNullable<typeof onPress>>[0]) => {
-    if (isSelected) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const now = Date.now();
+    const isDoubleTap = isSelected && now - lastTapRef.current < 400;
+    lastTapRef.current = now;
+
+    if (isDoubleTap) {
       onAlreadySelected?.();
-    } else {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } else if (!isSelected) {
       onPress?.(e);
     }
   };
 
   return (
-    <Pressable {...rest} onPress={handlePress} style={styles.tabButton}>
+    <Pressable
+      {...rest}
+      onPressIn={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }}
+      onPress={handlePress}
+      style={styles.tabButton}
+    >
       {children}
     </Pressable>
   );
@@ -122,16 +129,21 @@ function LibraryTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?:
     lastTapRef.current = now;
 
     if (isDoubleTap) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       onAlreadySelected?.();
     } else {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       if (!isSelected) onPress?.(e);
     }
   };
 
   return (
-    <Pressable {...rest} onPress={handlePress} style={styles.tabButton}>
+    <Pressable
+      {...rest}
+      onPressIn={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }}
+      onPress={handlePress}
+      style={styles.tabButton}
+    >
       {children}
     </Pressable>
   );
@@ -140,8 +152,24 @@ function LibraryTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?:
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const keyboardVisible = useKeyboardChromeStore((s) => s.keyboardVisible);
   const [showViewMenu, setShowViewMenu] = useState(false);
   const [showSearchMenu, setShowSearchMenu] = useState(false);
+
+  const tabBarChrome = keyboardVisible
+    ? {
+        display: 'none' as const,
+        height: 0,
+        opacity: 0,
+        paddingTop: 0,
+        paddingBottom: 0,
+        borderTopWidth: 0,
+      }
+    : {
+        height: TAB_BAR_HEIGHT + insets.bottom,
+        paddingTop: 8,
+        paddingBottom: Math.max(6, insets.bottom > 0 ? insets.bottom - 2 : 6),
+      };
 
   return (
     <View style={styles.container}>
@@ -194,7 +222,7 @@ export default function TabLayout() {
         </View>
       </Modal>
 
-      {/* Search Menu Modal */}
+      {/* Search quick actions — Shadow OLED sheet (matches Search screen chrome) */}
       <Modal
         visible={showSearchMenu}
         transparent
@@ -204,29 +232,30 @@ export default function TabLayout() {
       >
         <View style={{ flex: 1, justifyContent: 'flex-end' }}>
           <Pressable
-            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.72)' }}
             onPress={() => setShowSearchMenu(false)}
           />
-          <View style={{ backgroundColor: '#282828', borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingBottom: insets.bottom + 12 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 20, paddingBottom: 8 }}>
-              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>Search</Text>
+          <View style={[styles.searchSheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={styles.searchSheetHeader}>
+              <Text style={styles.searchSheetTitle}>Add music</Text>
               <Pressable
                 onPress={() => setShowSearchMenu(false)}
-                style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' }}
+                style={({ pressed }) => [styles.searchSheetClose, pressed && { opacity: 0.85 }]}
               >
-                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>✕</Text>
+                <Text style={styles.searchSheetCloseGlyph}>✕</Text>
               </Pressable>
             </View>
+            <Text style={styles.searchSheetHint}>Sources</Text>
             <Pressable
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 setShowSearchMenu(false);
                 router.push('/(app)/add-music-youtube' as never);
               }}
-              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16 }}
+              style={({ pressed }) => [styles.searchSheetRow, pressed && styles.searchSheetRowPressed]}
             >
               <YouTubeIcon />
-              <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>Vybe Video</Text>
+              <Text style={styles.searchSheetRowLabel}>Vybe Video</Text>
             </Pressable>
             <Pressable
               onPress={() => {
@@ -234,10 +263,10 @@ export default function TabLayout() {
                 setShowSearchMenu(false);
                 router.push('/(app)/add-music-youtube-music' as never);
               }}
-              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16 }}
+              style={({ pressed }) => [styles.searchSheetRow, pressed && styles.searchSheetRowPressed]}
             >
               <YouTubeMusicIcon />
-              <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>Vybe Music</Text>
+              <Text style={styles.searchSheetRowLabel}>Vybe Music</Text>
             </Pressable>
             <Pressable
               onPress={() => {
@@ -245,10 +274,10 @@ export default function TabLayout() {
                 setShowSearchMenu(false);
                 router.push('/(app)/add-music-soundcloud' as never);
               }}
-              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16 }}
+              style={({ pressed }) => [styles.searchSheetRow, pressed && styles.searchSheetRowPressed]}
             >
               <SoundCloudIcon />
-              <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>Vybe Waves</Text>
+              <Text style={styles.searchSheetRowLabel}>Vybe Waves</Text>
             </Pressable>
             <Pressable
               onPress={() => {
@@ -256,10 +285,10 @@ export default function TabLayout() {
                 setShowSearchMenu(false);
                 router.push('/(app)/add-music-spotify' as never);
               }}
-              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16 }}
+              style={({ pressed }) => [styles.searchSheetRow, pressed && styles.searchSheetRowPressed]}
             >
               <SpotifyIcon />
-              <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>Stream Library</Text>
+              <Text style={styles.searchSheetRowLabel}>Stream Library</Text>
             </Pressable>
             <Pressable
               onPress={() => {
@@ -267,10 +296,10 @@ export default function TabLayout() {
                 setShowSearchMenu(false);
                 router.push('/(app)/add-music-apple-music' as never);
               }}
-              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16 }}
+              style={({ pressed }) => [styles.searchSheetRow, styles.searchSheetRowLast, pressed && styles.searchSheetRowPressed]}
             >
               <AppleMusicIcon />
-              <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>Music Library</Text>
+              <Text style={styles.searchSheetRowLabel}>Music Library</Text>
             </Pressable>
           </View>
         </View>
@@ -279,24 +308,30 @@ export default function TabLayout() {
       <Tabs
         screenOptions={{
           headerShown: false,
-          tabBarShowLabel: false,
-          // Tab bar style - height explicitly locked
+          tabBarShowLabel: true,
+          tabBarLabelStyle: {
+            fontSize: 10,
+            letterSpacing: 1.2,
+            textTransform: 'uppercase',
+            fontWeight: '600',
+            marginTop: 2,
+          },
           tabBarStyle: {
-            backgroundColor: '#121212',
-            borderTopWidth: 0,
-            elevation: 0,
-            height: TAB_BAR_CONTENT_HEIGHT + insets.bottom,
-            paddingTop: 10,
-            paddingBottom: insets.bottom,
+            backgroundColor: '#000000',
+            borderTopWidth: 0.5,
+            borderTopColor: '#ffffff15',
+            zIndex: 20,
+            elevation: 20,
             alignItems: 'center',
             justifyContent: 'center',
+            ...tabBarChrome,
           },
-          tabBarActiveTintColor: '#FFFFFF',
-          tabBarInactiveTintColor: '#B3B3B3',
-          // Icon container size - explicitly locked
+          tabBarActiveTintColor: SHADOW_TAB_ACTIVE,
+          tabBarInactiveTintColor: SHADOW_TAB_INACTIVE,
           tabBarIconStyle: {
             width: ICON_SIZE,
             height: ICON_SIZE,
+            marginTop: 0,
           },
         }}
       >
@@ -305,13 +340,15 @@ export default function TabLayout() {
           options={{
             title: 'Home',
             tabBarButton: (props) => <HapticTabButton {...props} />,
-            tabBarIcon: ({ color, size }) => (
-              <Home
-                color={color}
-                size={size}
-                strokeWidth={2}
-              />
-            ),
+            tabBarIcon: ({ focused, size }) => {
+              const dim = size ?? ICON_SIZE;
+              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              return (
+                <ShadowTabIconShell focused={focused}>
+                  <ShadowHomeIcon size={dim} color={c} />
+                </ShadowTabIconShell>
+              );
+            },
           }}
         />
         <Tabs.Screen
@@ -321,13 +358,15 @@ export default function TabLayout() {
             tabBarButton: (props) => (
               <SearchTabButton {...props} onAlreadySelected={() => setShowSearchMenu(true)} />
             ),
-            tabBarIcon: ({ color, size }) => (
-              <Search
-                color={color}
-                size={size}
-                strokeWidth={2}
-              />
-            ),
+            tabBarIcon: ({ focused, size }) => {
+              const dim = size ?? ICON_SIZE;
+              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              return (
+                <ShadowTabIconShell focused={focused}>
+                  <ShadowSearchIcon size={dim} color={c} />
+                </ShadowTabIconShell>
+              );
+            },
           }}
         />
         <Tabs.Screen
@@ -335,13 +374,15 @@ export default function TabLayout() {
           options={{
             title: 'Discover',
             tabBarButton: (props) => <HapticTabButton {...props} />,
-            tabBarIcon: ({ color, size }) => (
-              <Compass
-                color={color}
-                size={size}
-                strokeWidth={2}
-              />
-            ),
+            tabBarIcon: ({ focused, size }) => {
+              const dim = size ?? ICON_SIZE;
+              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              return (
+                <ShadowTabIconShell focused={focused}>
+                  <ShadowDiscoverIcon size={dim} color={c} />
+                </ShadowTabIconShell>
+              );
+            },
           }}
         />
         <Tabs.Screen
@@ -354,13 +395,15 @@ export default function TabLayout() {
                 onAlreadySelected={() => setShowViewMenu(true)}
               />
             ),
-            tabBarIcon: ({ color, size }) => (
-              <Library
-                color={color}
-                size={size}
-                strokeWidth={2}
-              />
-            ),
+            tabBarIcon: ({ focused, size }) => {
+              const dim = size ?? ICON_SIZE;
+              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              return (
+                <ShadowTabIconShell focused={focused}>
+                  <ShadowLibraryIcon size={dim} color={c} />
+                </ShadowTabIconShell>
+              );
+            },
           }}
         />
         <Tabs.Screen
@@ -368,9 +411,15 @@ export default function TabLayout() {
           options={{
             title: 'Profile',
             tabBarButton: (props) => <HapticTabButton {...props} />,
-            tabBarIcon: ({ color, size }) => (
-              <User color={color} size={size} strokeWidth={2} />
-            ),
+            tabBarIcon: ({ focused, size }) => {
+              const dim = size ?? ICON_SIZE;
+              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              return (
+                <ShadowTabIconShell focused={focused}>
+                  <ShadowProfileIcon size={dim} color={c} />
+                </ShadowTabIconShell>
+              );
+            },
           }}
         />
         <Tabs.Screen
@@ -378,14 +427,17 @@ export default function TabLayout() {
           options={{
             title: 'Social',
             tabBarButton: (props) => <HapticTabButton {...props} />,
-            tabBarIcon: ({ color, size }) => (
-              <Sparkles color={color} size={size} strokeWidth={2} />
-            ),
+            tabBarIcon: ({ focused, size }) => {
+              const dim = size ?? ICON_SIZE;
+              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              return (
+                <ShadowTabIconShell focused={focused}>
+                  <ShadowSparkleIcon size={dim} color={c} />
+                </ShadowTabIconShell>
+              );
+            },
           }}
         />
-        <Tabs.Screen name="two" options={{ href: null }} />
-        <Tabs.Screen name="library 2" options={{ href: null }} />
-        <Tabs.Screen name="library 3" options={{ href: null }} />
       </Tabs>
     </View>
   );
@@ -401,5 +453,76 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  searchSheet: {
+    backgroundColor: '#121214',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: 0,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  searchSheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  searchSheetTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+    letterSpacing: -0.35,
+  },
+  searchSheetClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchSheetCloseGlyph: {
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  searchSheetHint: {
+    color: 'rgba(255,255,255,0.42)',
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 6,
+  },
+  searchSheetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
+  searchSheetRowLast: {
+    borderBottomWidth: 0,
+  },
+  searchSheetRowPressed: {
+    backgroundColor: 'rgba(139,92,246,0.08)',
+  },
+  searchSheetRowLabel: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    flex: 1,
+    marginLeft: 16,
+    letterSpacing: -0.2,
   },
 });

@@ -21,6 +21,7 @@ import { useQuery } from '@tanstack/react-query';
 import { DownloadButton } from '@/components/DownloadButton';
 import { Track } from '@/types/music';
 import { normalizeYoutubePlaylistTracksPayload } from '@/lib/youtubePlaylistTracksNormalize';
+import { SHADOW_TEXT_INPUT_DEFAULTS } from '@/lib/shadowInput';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
 
@@ -363,11 +364,11 @@ function PasteSection({ initialUrl }: { initialUrl?: string }) {
            platform === 'apple_music' ? <AppleMusicIcon size={16} /> :
            <Link2 size={14} color="rgba(255,255,255,0.3)" />}
           <TextInput
+            {...SHADOW_TEXT_INPUT_DEFAULTS}
             ref={inputRef}
             value={url}
             onChangeText={(t) => { setUrl(t); clearResults(); }}
             placeholder="Paste URL here..."
-            placeholderTextColor="rgba(255,255,255,0.3)"
             autoCapitalize="none"
             autoCorrect={false}
             style={{ flex: 1, color: '#fff', fontSize: 13, marginLeft: 8 }}
@@ -650,12 +651,13 @@ function SearchSection({ platform, label, placeholder, accentColor, Icon, subtit
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12, height: 40 }}>
           <Search size={14} color="rgba(255,255,255,0.3)" />
           <TextInput
+            {...SHADOW_TEXT_INPUT_DEFAULTS}
             value={query}
             onChangeText={(t) => { setQuery(t); clearUrlResults(); }}
             onSubmitEditing={handleSearch}
             returnKeyType="search"
             placeholder={placeholder}
-            placeholderTextColor="rgba(255,255,255,0.3)"
+            blurOnSubmit={false}
             autoCapitalize="none"
             autoCorrect={false}
             style={{ flex: 1, color: '#fff', fontSize: 13, marginLeft: 8 }}
@@ -790,12 +792,13 @@ function SoundCloudSection() {
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12, height: 40 }}>
           <Search size={14} color="rgba(255,255,255,0.3)" />
           <TextInput
+            {...SHADOW_TEXT_INPUT_DEFAULTS}
             value={query}
             onChangeText={setQuery}
             onSubmitEditing={handleSearch}
             returnKeyType="search"
             placeholder="Search SoundCloud..."
-            placeholderTextColor="rgba(255,255,255,0.3)"
+            blurOnSubmit={false}
             autoCapitalize="none"
             autoCorrect={false}
             style={{ flex: 1, color: '#fff', fontSize: 13, marginLeft: 8 }}

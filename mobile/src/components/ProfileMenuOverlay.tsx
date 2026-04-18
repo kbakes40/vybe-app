@@ -30,6 +30,7 @@ import {
 } from 'lucide-react-native';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import { ProfileAvatar } from '@/components/ProfileAvatar';
+import { VybePlusWordmark } from '@/components/VybePlusWordmark';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -46,11 +47,13 @@ interface MenuItemProps {
   label: string;
   badge?: string;
   badgeColor?: string;
+  /** Custom badge node (e.g. Vybe+ capsule) — takes precedence over `badge` text. */
+  badgeSlot?: React.ReactNode;
   showDot?: boolean;
   onPress: () => void;
 }
 
-function MenuItem({ icon, label, badge, badgeColor = '#666', showDot, onPress }: MenuItemProps) {
+function MenuItem({ icon, label, badge, badgeColor = '#666', badgeSlot, showDot, onPress }: MenuItemProps) {
   return (
     <Pressable
       onPress={() => {
@@ -64,7 +67,9 @@ function MenuItem({ icon, label, badge, badgeColor = '#666', showDot, onPress }:
     >
       <View className="w-8">{icon}</View>
       <Text className="text-white text-base font-medium flex-1 ml-3">{label}</Text>
-      {badge ? (
+      {badgeSlot ? (
+        badgeSlot
+      ) : badge ? (
         <View
           className="px-2.5 py-1 rounded-full"
           style={{ backgroundColor: badgeColor }}
@@ -217,8 +222,9 @@ export function ProfileMenuOverlay({
             <MenuItem
               icon={<Crown size={22} color={tier === 'plus' ? '#8B5CF6' : '#fff'} />}
               label="Your plan"
-              badge={tier === 'plus' ? 'VYBE Plus' : 'Free'}
-              badgeColor={tier === 'plus' ? '#8B5CF6' : '#666'}
+              badgeSlot={tier === 'plus' ? <VybePlusWordmark variant="badgeCapsule" /> : undefined}
+              badge={tier === 'plus' ? undefined : 'Free'}
+              badgeColor="#666"
               onPress={() => handleNavigate('/(app)/your-plan')}
             />
             <MenuItem

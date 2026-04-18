@@ -22,6 +22,7 @@ import {
   X,
 } from 'lucide-react-native';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
+import { VybePlusWordmark } from '@/components/VybePlusWordmark';
 
 // Fixed CTA button height for consistent spacing
 const CTA_BUTTON_HEIGHT = 56;
@@ -153,9 +154,14 @@ export default function YourPlanScreen() {
           >
             <Crown size={40} color="#fff" />
           </View>
-          <Text className="text-white text-lg font-semibold">
-            {isPlus ? "You're subscribed to VYBE Plus" : "You're on the Free plan"}
-          </Text>
+          {isPlus ? (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'baseline', paddingHorizontal: 16 }}>
+              <Text className="text-white text-lg font-semibold">You're subscribed to </Text>
+              <VybePlusWordmark variant="inline" withPlusGlow={false} />
+            </View>
+          ) : (
+            <Text className="text-white text-lg font-semibold">You're on the Free plan</Text>
+          )}
           <Text className="text-white/50 text-sm mt-1">
             {isPlus ? 'Renews on March 8, 2026' : 'Listen with ads and limited skips.'}
           </Text>
@@ -203,10 +209,12 @@ export default function YourPlanScreen() {
         ) : (
           /* Upsell View */
           <View className="px-4 pt-6">
-            {/* VYBE Plus Section */}
+            {/* Vybe+ upsell */}
             <View className="items-center mb-8">
-              <Text className="text-[#8B5CF6] text-3xl font-bold">VYBE Plus</Text>
-              <Text className="text-white/60 text-base mt-1">break the loop</Text>
+              <VybePlusWordmark variant="hero" />
+              <Text className="text-white/60 text-base mt-1 text-center px-4">
+                break the loop · Vybe+ unlocks the Vault
+              </Text>
             </View>
 
             {/* Benefits */}
@@ -267,9 +275,10 @@ export default function YourPlanScreen() {
               end={{ x: 1, y: 0 }}
               style={styles.ctaGradientButton}
             >
-              <Text className="text-white font-bold text-lg">
-                Start VYBE Plus
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'baseline' }}>
+                <Text className="text-white font-bold text-lg">Start </Text>
+                <VybePlusWordmark variant="inline" vybeColor="#fff" plusColor="#fff" />
+              </View>
             </LinearGradient>
           </Pressable>
         </View>

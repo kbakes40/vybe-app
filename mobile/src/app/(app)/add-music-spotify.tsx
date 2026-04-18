@@ -15,6 +15,7 @@ import { DownloadButton } from '@/components/DownloadButton';
 import { Track } from '@/types/music';
 import { usePlaybackController } from '@/stores/playbackController';
 import { enqueueDownload, downloadYouTubeTrack } from '@/stores/downloadsStore';
+import { SHADOW_TEXT_INPUT_DEFAULTS } from '@/lib/shadowInput';
 
 interface SpotifySearchResult {
   id: string;
@@ -240,10 +241,10 @@ export default function AddMusicSpotifyScreen() {
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12, borderWidth: 1, borderColor: isValidUrl ? '#1DB954' : 'rgba(255,255,255,0.1)', paddingHorizontal: 12, height: 44 }}>
                 <Link2 size={14} color={isValidUrl ? '#1DB954' : 'rgba(255,255,255,0.3)'} />
                 <TextInput
+                  {...SHADOW_TEXT_INPUT_DEFAULTS}
                   value={url}
                   onChangeText={t => { setUrl(t); clearResults(); }}
                   placeholder="open.spotify.com/track or /playlist/..."
-                  placeholderTextColor="rgba(255,255,255,0.3)"
                   autoCapitalize="none"
                   autoCorrect={false}
                   style={{ flex: 1, color: '#fff', fontSize: 13, marginLeft: 8 }}
@@ -281,12 +282,13 @@ export default function AddMusicSpotifyScreen() {
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12, height: 44 }}>
                 <Search size={14} color="rgba(255,255,255,0.3)" />
                 <TextInput
+                  {...SHADOW_TEXT_INPUT_DEFAULTS}
                   value={searchQuery}
                   onChangeText={setSearchQuery}
                   onSubmitEditing={handleSearch}
                   returnKeyType="search"
                   placeholder="Search songs, artists..."
-                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  blurOnSubmit={false}
                   autoCapitalize="none"
                   autoCorrect={false}
                   style={{ flex: 1, color: '#fff', fontSize: 13, marginLeft: 8 }}

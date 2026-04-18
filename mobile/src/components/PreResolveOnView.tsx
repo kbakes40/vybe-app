@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useCallback } from 'react';
 import { View, Dimensions, type LayoutChangeEvent, type View as RNView } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { preResolveYoutubeVideoId } from '@/lib/youtubeResolvePreloadCache';
+import { preResolveSoundcloudStreamUrl } from '@/lib/soundcloudStreamPreloadCache';
 
 const POLL_MS = 380;
 /** Lower than 0.75 so horizontal peeking cards still warm the resolve cache. */
@@ -74,6 +75,70 @@ export function PreResolveOnView({
   );
 
   if (!youtubeVideoId) {
+    return <>{children}</>;
+  }
+
+  return (
+    <View ref={ref} collapsable={false} style={style} onLayout={onLayout}>
+      {children}
+    </View>
+  );
+}
+
+/**
+ * When sufficiently visible, pre-resolve SoundCloud stream URL (same visibility heuristic as YouTube).
+ */
+export function PreResolveSoundcloudOnView({
+  soundcloudUrl,
+  children,
+  style,
+}: {
+  soundcloudUrl: string | null | undefined;
+  children: React.ReactNode;
+  style?: React.ComponentProps<typeof View>['style'];
+}) {
+  const ref = useRef<RNView>(null);
+  const fired = useRef(false);
+  const layout = useRef({ w: 0, h: 0 });
+
+  const maybeFire = useCallback(() => {
+    if (fired.current || !soundcloudUrl) return;
+    const { w, h } = layout.current;
+    if (w < 8 || h < 8) return;
+    ref.current?.measureInWindow((x, y, mw, mh) => {
+      const ratio = windowOverlapRatio(x, y, mw, mh);
+      if (ratio >= VISIBLE_RATIO) {
+        fired.current = true;
+        preResolveSoundcloudStreamUrl(soundcloudUrl);
+      }
+    });
+  }, [soundcloudUrl]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!soundcloudUrl) return () => {};
+      fired.current = false;
+      const id = setInterval(maybeFire, POLL_MS);
+      return () => clearInterval(id);
+    }, [soundcloudUrl, maybeFire]),
+  );
+
+  useEffect(() => {
+    if (!soundcloudUrl) return;
+    const sub = Dimensions.addEventListener('change', maybeFire);
+    return () => sub.remove();
+  }, [soundcloudUrl, maybeFire]);
+
+  const onLayout = useCallback(
+    (e: LayoutChangeEvent) => {
+      const { width, height } = e.nativeEvent.layout;
+      layout.current = { w: width, h: height };
+      maybeFire();
+    },
+    [maybeFire],
+  );
+
+  if (!soundcloudUrl) {
     return <>{children}</>;
   }
 

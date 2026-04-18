@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, LayoutChangeEvent, Platform } from 'react-native';
+import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { View, Text, StyleSheet, LayoutChangeEvent, Platform, Pressable } from 'react-native';
+import { useShallow } from 'zustand/react/shallow';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -10,22 +11,30 @@ import Animated, {
   runOnJS,
   Easing,
 } from 'react-native-reanimated';
-import { Image } from 'expo-image';
+import { ShadowArtworkImage } from '@/components/ShadowArtworkImage';
 import { Svg, Rect } from 'react-native-svg';
 import { Play, Pause, SkipForward, Disc3, CloudDownload } from 'lucide-react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { usePlaybackController } from '@/stores/playbackController';
+import { ensurePlaybackHydratedFromStorage } from '@/lib/storage';
+import { useKeyboardChromeStore } from '@/stores/keyboardChromeStore';
 import { openNowPlayingSheet } from '@/lib/openNowPlayingSheet';
 import { Track } from '@/types/music';
 import { downloadYouTubeTrack, downloadSoundCloudTrack, useDownloadsStore } from '@/stores/downloadsStore';
 import { usePlaybackDebugStore } from '@/stores/playbackDebugStore';
+import { useNowPlayingSheetStore } from '@/stores/nowPlayingSheetStore';
 import { PlaybackDebugIndicator } from '@/components/PlaybackDebugOverlay';
 import { LoadingRing } from '@/components/LoadingRing';
 import * as Haptics from 'expo-haptics';
+import { MINI_PLAYER_HEIGHT } from '@/constants/Layout';
+import { VybeVideoNeonIcon, VybeMusicNeonIcon, VybeWavesNeonIcon } from '@/assets/icons';
 
 const AnimatedRect = Animated.createAnimatedComponent(Rect);
 
 const ICON_STROKE = 1.35;
+
+const PLACEHOLDER_ARTWORK =
+  'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=128&h=128&fit=crop&q=60';
 
 function MiniPlayerSlimProgress() {
   const layoutW = useSharedValue(0);
@@ -68,14 +77,74 @@ function MiniPlayerSlimProgress() {
   );
 }
 
-export function MiniPlayer() {
-  const currentTrack = usePlaybackController(s => s.currentTrack);
-  const playbackState = usePlaybackController(s => s.playbackState);
-  const play = usePlaybackController(s => s.play);
-  const pause = usePlaybackController(s => s.pause);
-  const next = usePlaybackController(s => s.next);
-  const previous = usePlaybackController(s => s.previous);
-  const currentSource = usePlaybackController(s => s.currentSource);
+type MiniPlayerProps = {
+  /**
+   * Offset from the bottom of the sheet to the mini strip. On tab routes this should be
+   * `TAB_BAR_HEIGHT + insets.bottom` from `@/constants/Layout` / safe area; on stack routes, `insets.bottom` only.
+   */
+  bottomLift: number;
+};
+
+export function MiniPlayer({ bottomLift }: MiniPlayerProps) {
+  const sheetExpanded = useNowPlayingSheetStore((s) => s.isExpanded);
+  const keyboardVisible = useKeyboardChromeStore((s) => s.keyboardVisible);
+  const kbHiddenStyle = keyboardVisible
+    ? { opacity: 0, height: 0, overflow: 'hidden' as const }
+    : {};
+
+  const [, forceMetaRender] = useReducer((n: number) => n + 1, 0);
+
+  const {
+    currentTrack,
+    playbackState,
+    playbackRevision,
+    currentSource,
+    play,
+    pause,
+    next,
+    previous,
+  } = usePlaybackController(
+    useShallow((s) => ({
+      currentTrack: s.currentTrack,
+      playbackState: s.playbackState,
+      playbackRevision: s.playbackRevision,
+      currentSource: s.currentSource,
+      play: s.play,
+      pause: s.pause,
+      next: s.next,
+      previous: s.previous,
+    })),
+  );
+
+  useEffect(() => {
+    ensurePlaybackHydratedFromStorage();
+  }, []);
+
+  useEffect(
+    () =>
+      usePlaybackController.subscribe((state, prev) => {
+        if (
+          state.currentTrack?.id !== prev.currentTrack?.id ||
+          state.playbackRevision !== prev.playbackRevision ||
+          state.currentTrack?.title !== prev.currentTrack?.title ||
+          state.currentTrack?.artist !== prev.currentTrack?.artist ||
+          state.currentTrack?.artwork !== prev.currentTrack?.artwork
+        ) {
+          forceMetaRender();
+        }
+      }),
+    [],
+  );
+
+  const meta = useMemo(() => {
+    const t = currentTrack;
+    const id = t?.id ?? '';
+    const title = (t?.title?.trim() || 'Not Playing').trim();
+    const artist = (t?.artist?.trim() || 'Vybe System').trim();
+    const rawArt = t?.artwork?.trim();
+    const artworkUri = rawArt && rawArt.length > 0 ? rawArt : PLACEHOLDER_ARTWORK;
+    return { id, title, artist, artworkUri, hasRealTrack: !!t };
+  }, [currentTrack, playbackRevision]);
 
   const isTrackDownloaded = useDownloadsStore(s => s.isTrackDownloaded);
   const isImporting = useDownloadsStore(s => s.isImporting);
@@ -117,7 +186,7 @@ export function MiniPlayer() {
     dragX.value = 0;
     translateY.value = 0;
     buttonScale.value = 1;
-  }, [currentTrack?.id]);
+  }, [currentTrack?.id, playbackRevision]);
 
   const navigateToNowPlaying = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -161,7 +230,7 @@ export function MiniPlayer() {
   };
 
   const handleDownload = async () => {
-    if (!currentTrack || isImporting) return;
+    if (!meta.hasRealTrack || !currentTrack || isImporting) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
     const sc = (currentTrack as Track & { soundcloudUrl?: string }).soundcloudUrl;
@@ -226,6 +295,7 @@ export function MiniPlayer() {
   );
 
   const showDownload =
+    meta.hasRealTrack &&
     currentTrack &&
     (isYouTube || isYouTubeMusic) &&
     !isTrackDownloaded(currentTrack.id);
@@ -261,19 +331,22 @@ export function MiniPlayer() {
     transform: [{ rotate: `${loadingRotation.value}deg` }],
   }));
 
-  if (!currentTrack) return null;
-
-  const playingFromLocalFile = !!currentTrack.audioUrl?.startsWith('file://');
+  const playingFromLocalFile =
+    meta.hasRealTrack && !!currentTrack?.audioUrl?.startsWith('file://');
 
   const cardBody = (
     <>
       <View style={styles.content}>
         <View style={styles.artworkContainer}>
-          <Image
-            source={{ uri: currentTrack.artwork }}
-            style={styles.artwork}
-            contentFit="cover"
-          />
+          <View style={styles.artworkShadowHost}>
+            <ShadowArtworkImage
+              key={`${meta.id}-${playbackRevision}-${meta.artworkUri}`}
+              recyclingKey={meta.id || 'vybe-mini-placeholder'}
+              source={{ uri: meta.artworkUri }}
+              style={styles.artwork}
+              contentFit="cover"
+            />
+          </View>
           {isLoading && (
             <View style={styles.loadingOverlay}>
               <Animated.View style={loadingAnimatedStyle}>
@@ -288,56 +361,69 @@ export function MiniPlayer() {
               accessibilityHint="Playing from device cache"
             />
           ) : null}
+          {!playingFromLocalFile && (isYouTube || isYouTubeMusic || isSoundCloud) ? (
+            <View style={styles.sourceNeonBadge} pointerEvents="none">
+              {isYouTube ? (
+                <VybeVideoNeonIcon size={12} />
+              ) : isYouTubeMusic ? (
+                <VybeMusicNeonIcon size={12} />
+              ) : (
+                <VybeWavesNeonIcon size={12} />
+              )}
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.trackInfo}>
-          <Text style={styles.trackTitle} numberOfLines={1}>
-            {currentTrack.title}
+          <Text style={styles.trackTitle} numberOfLines={1} ellipsizeMode="tail">
+            {meta.title}
           </Text>
-          <Text style={styles.artistName} numberOfLines={1}>
-            {currentTrack.artist}
+          <Text style={styles.artistName} numberOfLines={1} ellipsizeMode="tail">
+            {meta.artist}
           </Text>
         </View>
 
-        {showDownload && (
-          <GestureDetector gesture={downloadTapGesture}>
-            <Animated.View
-              style={[styles.controlButton, { opacity: isImporting ? 0.4 : 1 }]}
-              accessibilityRole="button"
-              accessibilityLabel="Keep offline"
-            >
-              <CloudDownload size={19} color="rgba(255,255,255,0.92)" strokeWidth={ICON_STROKE} />
+        <View style={styles.controlsRail}>
+          {showDownload && (
+            <GestureDetector gesture={downloadTapGesture}>
+              <Animated.View
+                style={[styles.controlButton, { opacity: isImporting ? 0.4 : 1 }]}
+                accessibilityRole="button"
+                accessibilityLabel="Import to Vault"
+              >
+                <CloudDownload size={19} color="rgba(255,255,255,0.92)" strokeWidth={ICON_STROKE} />
+              </Animated.View>
+            </GestureDetector>
+          )}
+
+          <GestureDetector gesture={playPauseTapGesture}>
+            <Animated.View style={[styles.controlButton, buttonAnimatedStyle]}>
+              {isLoading ? (
+                <LoadingRing
+                  size={21}
+                  color={isYouTube || isYouTubeMusic ? '#FF0000' : isSoundCloud ? '#FF7700' : '#fff'}
+                />
+              ) : isPlaying ? (
+                <Pause size={21} color="#FFFFFF" strokeWidth={ICON_STROKE} fill="rgba(255,255,255,0.95)" />
+              ) : (
+                <Play
+                  size={21}
+                  color="#FFFFFF"
+                  strokeWidth={ICON_STROKE}
+                  fill="transparent"
+                  style={{ marginLeft: 2 }}
+                />
+              )}
+              <PlaybackDebugIndicator />
             </Animated.View>
           </GestureDetector>
-        )}
 
-        <GestureDetector gesture={playPauseTapGesture}>
-          <Animated.View style={[styles.controlButton, buttonAnimatedStyle]}>
-            {isLoading ? (
-              <LoadingRing
-                size={21}
-                color={isYouTube || isYouTubeMusic ? '#FF0000' : isSoundCloud ? '#FF7700' : '#fff'}
-              />
-            ) : isPlaying ? (
-              <Pause size={21} color="#FFFFFF" strokeWidth={ICON_STROKE} fill="rgba(255,255,255,0.95)" />
-            ) : (
-              <Play
-                size={21}
-                color="#FFFFFF"
-                strokeWidth={ICON_STROKE}
-                fill="transparent"
-                style={{ marginLeft: 2 }}
-              />
-            )}
-            <PlaybackDebugIndicator />
-          </Animated.View>
-        </GestureDetector>
-
-        <GestureDetector gesture={nextTapGesture}>
-          <View style={styles.controlButton}>
-            <SkipForward size={21} color="#FFFFFF" strokeWidth={ICON_STROKE} fill="transparent" />
-          </View>
-        </GestureDetector>
+          <GestureDetector gesture={nextTapGesture}>
+            <View style={styles.controlButton}>
+              <SkipForward size={21} color="#FFFFFF" strokeWidth={ICON_STROKE} fill="transparent" />
+            </View>
+          </GestureDetector>
+        </View>
       </View>
 
       <MiniPlayerSlimProgress />
@@ -351,8 +437,16 @@ export function MiniPlayer() {
     </View>
   );
 
+  const outerVisibility = meta.hasRealTrack
+    ? { display: 'flex' as const, opacity: sheetExpanded ? (0 as const) : (1 as const) }
+    : { display: 'flex' as const, opacity: sheetExpanded ? (0 as const) : undefined };
+
+  /** `bottomLift` from AppLayout: tab screens ≈ TAB_BAR_HEIGHT + insets.bottom (− overlap); stack ≈ insets.bottom. */
   return (
-    <View style={styles.outer} pointerEvents="box-none">
+    <View
+      pointerEvents={keyboardVisible || sheetExpanded ? 'none' : 'auto'}
+      style={[styles.container, { bottom: bottomLift }, outerVisibility, kbHiddenStyle]}
+    >
       <GestureDetector gesture={miniCardGesture}>
         <View style={styles.shadowHost}>
           <Animated.View style={containerAnimatedStyle}>{cardSurface}</Animated.View>
@@ -363,20 +457,29 @@ export function MiniPlayer() {
 }
 
 const styles = StyleSheet.create({
-  outer: {
-    position: 'relative',
-    marginHorizontal: 0,
+  /** Root chrome only — never put `pointerEvents` here; it is not a valid style key. */
+  container: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: MINI_PLAYER_HEIGHT,
     zIndex: 9999,
+    ...Platform.select({
+      android: { elevation: 9999 },
+      default: {},
+    }),
   },
   cardSurface: {
-    borderRadius: 0,
+    height: MINI_PLAYER_HEIGHT,
+    borderRadius: 12,
     overflow: 'hidden',
-    position: 'relative',
-    backgroundColor: '#121212',
+    backgroundColor: '#000000',
+    borderWidth: 1,
+    borderColor: '#FFFFFF15',
   },
   shadowHost: {
-    borderRadius: 0,
-    backgroundColor: '#121212',
+    borderRadius: 12,
+    backgroundColor: '#000000',
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -394,11 +497,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 8,
+    paddingTop: 9,
+    paddingBottom: 9,
   },
   artworkContainer: {
     position: 'relative',
+  },
+  artworkShadowHost: {
+    borderRadius: 4,
+    backgroundColor: '#0A0A0A',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.65,
+        shadowRadius: 14,
+      },
+      android: {
+        elevation: 12,
+      },
+      default: {},
+    }),
   },
   artwork: {
     width: 44,
@@ -416,6 +535,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  sourceNeonBadge: {
+    position: 'absolute',
+    bottom: 2,
+    left: 2,
+    padding: 2,
+    borderRadius: 6,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
   localSyncedDot: {
     position: 'absolute',
     top: 3,
@@ -430,20 +559,29 @@ const styles = StyleSheet.create({
   },
   trackInfo: {
     flex: 1,
+    flexShrink: 1,
     marginLeft: 10,
     marginRight: 4,
     minWidth: 0,
     justifyContent: 'center',
   },
+  controlsRail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 0,
+  },
   trackTitle: {
     color: '#FFFFFF',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '900',
+    letterSpacing: -0.5,
   },
   artistName: {
-    color: 'rgba(255,255,255,0.55)',
-    fontSize: 12,
-    marginTop: 3,
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 14,
+    marginTop: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 1.5,
   },
   controlButton: {
     width: 36,

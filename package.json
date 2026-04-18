@@ -1,11 +1,22 @@
 {
   "name": "vybe-app",
   "private": true,
+  "main": "mobile/App.js",
   "scripts": {
     "build": "bun run --cwd backend build",
     "build:backend": "bun run --cwd backend build",
     "dev:backend": "bun run --cwd backend dev",
     "start:content": "bun run --cwd backend start:content",
     "dev:mobile": "bun run --cwd mobile start"
-  }
+  },
+  "dependencies": {
+    "expo": "^55.0.15",
+    "react": "19.2.0",
+    "react-native": "0.83.4"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.10",
+    "typescript": "~5.9.2"
+  },
+  "version": "1.0.0"
 }

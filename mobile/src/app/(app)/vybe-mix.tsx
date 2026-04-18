@@ -628,7 +628,7 @@ export default function VybeMixScreen() {
               backgroundColor: '#121212',
             }}
           >
-            <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFillObject} />
+            <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFillObject} pointerEvents="none" />
             <View style={{ backgroundColor: 'rgba(18,18,18,0.92)' }}>
               <View style={{ width: 40, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, alignSelf: 'center', marginTop: 10, marginBottom: 10 }} />
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 }}>

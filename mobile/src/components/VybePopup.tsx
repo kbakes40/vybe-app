@@ -109,6 +109,9 @@ function PopupButton({
 
   return (
     <Pressable
+      onPressIn={() => {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }}
       onPress={onPress}
       disabled={isLoading}
       className={`flex-1 py-3.5 rounded-xl items-center justify-center ${

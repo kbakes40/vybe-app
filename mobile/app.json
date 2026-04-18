@@ -14,7 +14,8 @@
     },
     "android": {
       "edgeToEdgeEnabled": true,
-      "package": "com.vibecode.vybe"
+      "package": "com.vibecode.vybe",
+      "softwareKeyboardLayoutMode": "pan"
     },
     "plugins": [
       "expo-router"

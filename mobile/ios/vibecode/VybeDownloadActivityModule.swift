@@ -1,7 +1,6 @@
 import Foundation
 import ActivityKit
 import React
-import UserNotifications
 
 /// Download progress Live Activity — renders in the Dynamic Island + Lock
 /// Screen via the `VybeDownloadWidget` extension target.
@@ -29,9 +28,6 @@ class VybeDownloadActivityModule: NSObject {
   // batch mode without going through the full start/update handshake.
   static var _lastTrackTitle: String = ""
   static var _lastArtistName: String = ""
-  static var _lastQueuePosition: Int = 1
-  static var _lastQueueTotal: Int = 1
-  static var _lastDownloadTrackId: String = ""
 
   // Monotonic token bumped by every startActivity/endActivity call. The
   // delayed end task re-checks this before actually tearing down — if the
@@ -49,12 +45,18 @@ class VybeDownloadActivityModule: NSObject {
     // would overwrite a freshly-written progress value with progress=0.
     Self._lastTrackTitle = trackTitle
     Self._lastArtistName = artistName
-    Self._lastQueuePosition = 1
-    Self._lastQueueTotal = 1
-    Self._lastDownloadTrackId = ""
     Self._endToken &+= 1
 
     Task { @MainActor in
+      // Batch case: pill is already live. Do NOT push a state update here —
+      // the next updateProgress call will carry the new title/artist along
+      // with the real progress value, so there's only one write path and
+      // no chance of resetting progress back to 0.
+      if #available(iOS 16.2, *),
+         Self._currentActivity as? Activity<VybeDownloadAttributes> != nil {
+        return
+      }
+
       guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
 
       let attributes = VybeDownloadAttributes(trackTitle: trackTitle, artistName: artistName)
@@ -63,9 +65,7 @@ class VybeDownloadActivityModule: NSObject {
         statusText: "Starting…",
         isComplete: false,
         trackTitle: trackTitle,
-        artistName: artistName,
-        queuePosition: 1,
-        queueTotal: 1
+        artistName: artistName
       )
       do {
         let activity = try Activity<VybeDownloadAttributes>.request(
@@ -90,9 +90,7 @@ class VybeDownloadActivityModule: NSObject {
         statusText: statusText,
         isComplete: clamped >= 0.999,
         trackTitle: Self._lastTrackTitle,
-        artistName: Self._lastArtistName,
-        queuePosition: Self._lastQueuePosition,
-        queueTotal: Self._lastQueueTotal
+        artistName: Self._lastArtistName
       )
       await activity.update(using: state)
     }
@@ -100,64 +98,57 @@ class VybeDownloadActivityModule: NSObject {
 
   @objc func endActivity(_ success: Bool) {
     guard #available(iOS 16.1, *) else { return }
-    Self.swiftEnd(success: success, trackId: Self._lastDownloadTrackId, completion: nil)
+    Task { @MainActor in
+      guard let activity = Self._currentActivity as? Activity<VybeDownloadAttributes> else { return }
+
+      // First: short grace window (400ms). If a new startActivity fires
+      // during this window (Download All batch), the token bumps and we
+      // bail WITHOUT pushing the "Downloaded" state — the pill flows
+      // directly from the previous track's progress into the next track's
+      // starting state with no flicker.
+      let tokenAtEnd = Self._endToken
+      try? await Task.sleep(nanoseconds: 400_000_000)
+      if Self._endToken != tokenAtEnd { return }
+
+      // No follow-up download — this was a real end. Push "Downloaded"
+      // state, let it linger so the user sees completion, then dismiss.
+      let finalState = VybeDownloadAttributes.DownloadState(
+        progress: success ? 1.0 : 0.0,
+        statusText: success ? "Downloaded" : "Failed",
+        isComplete: success,
+        trackTitle: Self._lastTrackTitle,
+        artistName: Self._lastArtistName
+      )
+      await activity.update(using: finalState)
+      try? await Task.sleep(nanoseconds: 1_600_000_000)
+      if Self._endToken != tokenAtEnd { return }
+      await activity.end(using: finalState, dismissalPolicy: .immediate)
+      if let current = Self._currentActivity as? Activity<VybeDownloadAttributes>, current === activity {
+        Self._currentActivity = nil
+      }
+    }
   }
 
   @objc static func requiresMainQueueSetup() -> Bool { return false }
 
-  // MARK: – Notifications (lock screen cleanup)
-
-  static func removeDeliveredNotifications(forTrackId trackId: String) {
-    guard !trackId.isEmpty else { return }
-    UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [trackId])
-  }
-
   // MARK: – Static helpers for Swift-to-Swift calls (VybeDownloader)
+  // Same logic as the @objc instance methods but callable from other Swift
+  // classes without going through the RN bridge.
 
   @available(iOS 16.1, *)
   static func swiftStart(trackTitle: String, artistName: String) {
-    swiftStart(
-      trackTitle: trackTitle, artistName: artistName,
-      trackId: "", queuePosition: 1, queueTotal: 1
-    )
-  }
-
-  @available(iOS 16.1, *)
-  static func swiftStart(
-    trackTitle: String,
-    artistName: String,
-    trackId: String,
-    queuePosition: Int,
-    queueTotal: Int
-  ) {
     _lastTrackTitle = trackTitle
     _lastArtistName = artistName
-    _lastDownloadTrackId = trackId
-    _lastQueuePosition = max(1, queuePosition)
-    _lastQueueTotal = max(1, queueTotal)
     _endToken &+= 1
-
     Task { @MainActor in
-      // Previous activity should already be ended by `swiftEnd` before the
-      // serial queue starts the next job. If one is still referenced (e.g.
-      // process restart), tear it down so we never stack two pills.
-      if let stale = _currentActivity as? Activity<VybeDownloadAttributes> {
-        await stale.end(using: stale.contentState, dismissalPolicy: .immediate)
-        _currentActivity = nil
+      if #available(iOS 16.2, *), _currentActivity as? Activity<VybeDownloadAttributes> != nil {
+        return
       }
-
       guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-
       let attributes = VybeDownloadAttributes(trackTitle: trackTitle, artistName: artistName)
-      let qLine = queueTotal > 1 ? " · \(_lastQueuePosition) of \(_lastQueueTotal)" : ""
       let initialState = VybeDownloadAttributes.DownloadState(
-        progress: 0.0,
-        statusText: "Starting…\(qLine)",
-        isComplete: false,
-        trackTitle: trackTitle,
-        artistName: artistName,
-        queuePosition: _lastQueuePosition,
-        queueTotal: _lastQueueTotal
+        progress: 0.0, statusText: "Starting…", isComplete: false,
+        trackTitle: trackTitle, artistName: artistName
       )
       do {
         let activity = try Activity<VybeDownloadAttributes>.request(
@@ -176,46 +167,34 @@ class VybeDownloadActivityModule: NSObject {
       guard let activity = _currentActivity as? Activity<VybeDownloadAttributes> else { return }
       let clamped = max(0.0, min(1.0, progress))
       let state = VybeDownloadAttributes.DownloadState(
-        progress: clamped,
-        statusText: statusText,
+        progress: clamped, statusText: statusText,
         isComplete: clamped >= 0.999,
-        trackTitle: _lastTrackTitle,
-        artistName: _lastArtistName,
-        queuePosition: _lastQueuePosition,
-        queueTotal: _lastQueueTotal
+        trackTitle: _lastTrackTitle, artistName: _lastArtistName
       )
       await activity.update(using: state)
     }
   }
 
-  /// Ends the Live Activity immediately so the Dynamic Island slot frees
-  /// before the next serial download starts. `completion` always runs on the main actor.
   @available(iOS 16.1, *)
-  static func swiftEnd(success: Bool, trackId: String, completion: (() -> Void)?) {
+  static func swiftEnd(success: Bool) {
     Task { @MainActor in
-      defer { completion?() }
-
       guard let activity = _currentActivity as? Activity<VybeDownloadAttributes> else { return }
-
+      let tokenAtEnd = _endToken
+      try? await Task.sleep(nanoseconds: 400_000_000)
+      if _endToken != tokenAtEnd { return }
       let finalState = VybeDownloadAttributes.DownloadState(
         progress: success ? 1.0 : 0.0,
         statusText: success ? "Downloaded" : "Failed",
         isComplete: success,
-        trackTitle: _lastTrackTitle,
-        artistName: _lastArtistName,
-        queuePosition: _lastQueuePosition,
-        queueTotal: _lastQueueTotal
+        trackTitle: _lastTrackTitle, artistName: _lastArtistName
       )
+      await activity.update(using: finalState)
+      try? await Task.sleep(nanoseconds: 1_600_000_000)
+      if _endToken != tokenAtEnd { return }
       await activity.end(using: finalState, dismissalPolicy: .immediate)
-      removeDeliveredNotifications(forTrackId: trackId)
       if let current = _currentActivity as? Activity<VybeDownloadAttributes>, current === activity {
         _currentActivity = nil
       }
     }
-  }
-
-  @available(iOS 16.1, *)
-  static func swiftEnd(success: Bool) {
-    swiftEnd(success: success, trackId: _lastDownloadTrackId, completion: nil)
   }
 }
