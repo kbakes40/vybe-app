@@ -10,11 +10,12 @@ import {
   StyleSheet,
   ScrollView,
   Platform,
+  Linking,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
-import { Svg, Circle } from 'react-native-svg';
+import { Svg, Circle, Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
 import { FlashList, type ListRenderItemInfo } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -35,6 +36,7 @@ import {
   User,
   FileText,
   CloudDownload,
+  Shirt,
 } from 'lucide-react-native';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, { SharedValue, useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
@@ -68,7 +70,8 @@ import { usePlaylistHeroColors } from '@/lib/usePlaylistHeroColors';
 import { api } from '@/lib/api/api';
 import { createMMKVCache, TTL } from '@/lib/mmkv-cache';
 import { Track } from '@/types/music';
-import { MINI_PLAYER_HEIGHT } from './_layout';
+import { PLAYLIST_DOCKED_PADDING_BOTTOM } from '@/constants/Layout';
+import { radialBackdropForPlaylistName } from '@/lib/vybePlaylistBackdrop';
 import { DownloadButton, GhostSweepRing } from '@/components/DownloadButton';
 import { useUserPlaylistStore } from '@/stores/userPlaylistStore';
 import { PlaylistDetailTrackRow } from '@/components/PlaylistDetailTrackRow';
@@ -81,7 +84,10 @@ const homeMMKV = createMMKVCache('vybe-home');
 const discoverMMKV = createMMKVCache('vybe-discover');
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const HALF = (SCREEN_WIDTH) / 2;
+const HALF = SCREEN_WIDTH / 2;
+
+/** Partner branding — opens in browser */
+const MAINSTREET_TEES_URL = 'https://mainstreettees.com/';
 
 const ACTION_SIZE = 48;
 
@@ -285,39 +291,83 @@ function PlaylistDetailListHeader({
         </Pressable>
       </View>
 
-      <View style={{ paddingHorizontal: 20, marginTop: 12 }}>
-        {/* Title + credits — 16px+ breathing room before the glass / sync controls */}
-        <View style={{ marginBottom: 16, paddingBottom: 4 }}>
-          <Text
-            style={{
-              color: '#fff',
-              fontSize: 26,
-              fontWeight: '800',
-              letterSpacing: -0.5,
-              marginBottom: 10,
-            }}
-            numberOfLines={1}
-            ellipsizeMode="tail"
-          >
-            {playlist.name}
-          </Text>
-
-          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
-            <VybeMusicBadge />
+      <View style={{ marginTop: 12, paddingHorizontal: 16 }}>
+        <View
+          style={{
+            borderRadius: 14,
+            overflow: 'hidden',
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: 'rgba(217, 70, 239, 0.22)',
+          }}
+        >
+          <BlurView intensity={52} tint="dark" style={StyleSheet.absoluteFillObject} />
+          <View style={{ paddingHorizontal: 18, paddingVertical: 14 }}>
             <Text
               style={{
-                color: 'rgba(255,255,255,0.45)',
-                fontSize: 13,
-                marginLeft: 10,
-                flexShrink: 1,
+                color: '#fff',
+                fontSize: 26,
+                fontWeight: '800',
+                letterSpacing: -0.5,
+                marginBottom: 12,
               }}
-              numberOfLines={1}
+              numberOfLines={2}
               ellipsizeMode="tail"
             >
-              {`${tracks.length} songs · ${durationStr}`}
+              {playlist.name}
             </Text>
+
+            <Pressable
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                Linking.openURL(MAINSTREET_TEES_URL).catch(() => {});
+              }}
+              style={({ pressed }) => [
+                {
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 10,
+                  paddingVertical: 10,
+                  paddingHorizontal: 12,
+                  marginBottom: 12,
+                  borderRadius: 10,
+                  backgroundColor: 'rgba(0, 0, 0, 0.35)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(245, 158, 11, 0.35)',
+                },
+                pressed && { opacity: 0.88 },
+              ]}
+            >
+              <Shirt size={20} color="#D946EF" strokeWidth={2.2} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: 'rgba(252, 231, 243, 0.95)', fontSize: 10, fontWeight: '800', letterSpacing: 2 }}>
+                  MAINSTREET TEES
+                </Text>
+                <Text style={{ color: 'rgba(244, 244, 245, 0.72)', fontSize: 12, fontWeight: '600', marginTop: 2 }}>
+                  Premium apparel · Vybe collab
+                </Text>
+              </View>
+              <Text style={{ color: '#FBBF24', fontSize: 11, fontWeight: '800' }}>Shop</Text>
+            </Pressable>
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
+              <VybeMusicBadge />
+              <Text
+                style={{
+                  color: 'rgba(255,255,255,0.45)',
+                  fontSize: 13,
+                  marginLeft: 10,
+                  flexShrink: 1,
+                }}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {`${tracks.length} songs · ${durationStr}`}
+              </Text>
+            </View>
           </View>
         </View>
+
+        <View style={{ height: 16 }} />
 
         {/* Action bar — fixed row height; Play expands, circular actions stay full size */}
         <View
@@ -778,8 +828,12 @@ export default function PlaylistDetailScreen() {
     router.push(`/(app)/artist/${encodeURIComponent(first.artistId)}` as never);
   }, [tracks, router]);
 
-  const showMiniPlayer = !!currentTrack;
-  const bottomPadding = insets.bottom + (showMiniPlayer ? MINI_PLAYER_HEIGHT : 0) + 32;
+  const bottomPadding = PLAYLIST_DOCKED_PADDING_BOTTOM + insets.bottom;
+
+  const vibeRadial = useMemo(
+    () => radialBackdropForPlaylistName(playlist?.name ?? ''),
+    [playlist?.name],
+  );
 
   // Build 2x2 collage artwork from first 4 tracks
   const artworks = playlist?.tracks.slice(0, 4).map(t => t.thumbnailUrl) ?? [];
@@ -1044,11 +1098,25 @@ export default function PlaylistDetailScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
+      <Svg
+        width={SCREEN_WIDTH}
+        height={440}
+        style={{ position: 'absolute', top: 0, left: 0 }}
+        pointerEvents="none"
+      >
+        <Defs>
+          <RadialGradient id="plVibeRadial" cx="50%" cy="18%" r="75%">
+            <Stop offset="0%" stopColor={vibeRadial.center} stopOpacity={0.55} />
+            <Stop offset="100%" stopColor={vibeRadial.fade} stopOpacity={0} />
+          </RadialGradient>
+        </Defs>
+        <Rect x={0} y={0} width={SCREEN_WIDTH} height={440} fill="url(#plVibeRadial)" />
+      </Svg>
       <FlashList
         data={tracks}
         keyExtractor={(item) => item.id}
         renderItem={renderPlaylistTrack}
-        estimatedItemSize={84}
+        estimatedItemSize={130}
         ListHeaderComponent={listHeader}
         ListFooterComponent={listFooter}
         extraData={`${currentTrack?.id ?? ''}-${batchActiveId ?? ''}-${batchProgress.toFixed(3)}`}

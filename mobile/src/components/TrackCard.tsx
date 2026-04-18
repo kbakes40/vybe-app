@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, Pressable, Animated as RNAnimated } from 'react-native';
+import { View, Text, Pressable, Animated as RNAnimated, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import Animated, {
   useSharedValue,
@@ -46,9 +46,9 @@ function EqBars() {
   return (
     <View style={{ width: 16, height: 16, alignItems: 'center', justifyContent: 'center' }}>
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: 16 }}>
-        <RNAnimated.View style={{ width: 2, height: b0, backgroundColor: '#8B5CF6', borderRadius: 1 }} />
-        <RNAnimated.View style={{ width: 2, height: b1, backgroundColor: '#8B5CF6', borderRadius: 1 }} />
-        <RNAnimated.View style={{ width: 2, height: b2, backgroundColor: '#8B5CF6', borderRadius: 1 }} />
+        <RNAnimated.View style={{ width: 2, height: b0, backgroundColor: '#00FFFF', borderRadius: 1 }} />
+        <RNAnimated.View style={{ width: 2, height: b1, backgroundColor: '#00FFFF', borderRadius: 1 }} />
+        <RNAnimated.View style={{ width: 2, height: b2, backgroundColor: '#00FFFF', borderRadius: 1 }} />
       </View>
     </View>
   );
@@ -109,12 +109,12 @@ export function TrackCard({ track, queue, showArtwork = true, index }: TrackCard
       onPressOut={() => {
         scale.value = withSpring(1);
       }}
-      style={animatedStyle}
+      style={[animatedStyle, styles.row, isCurrentTrack && styles.rowActive]}
       className="flex-row items-center py-3 px-4"
     >
       {index !== undefined ? (
         <Text
-          className={`w-8 text-center ${isCurrentTrack ? 'text-[#8B5CF6]' : 'text-white/40'}`}
+          className={`w-8 text-center ${isCurrentTrack ? 'text-[#00FFFF]' : 'text-white/40'}`}
         >
           {isCurrentTrack && isPlaying ? (
             <EqBars />
@@ -134,12 +134,15 @@ export function TrackCard({ track, queue, showArtwork = true, index }: TrackCard
 
       <View className={`flex-1 ${showArtwork ? 'ml-3' : 'ml-2'}`}>
         <Text
-          className={`font-medium ${isCurrentTrack ? 'text-[#8B5CF6]' : 'text-white'}`}
+          className={`font-medium ${isCurrentTrack ? 'text-[#00FFFF]' : 'text-white'}`}
           numberOfLines={1}
         >
           {track.title}
         </Text>
-        <Text className="text-white/60 text-sm" numberOfLines={1}>
+        <Text
+          className={`text-sm ${isCurrentTrack ? 'text-cyan-200/90' : 'text-white/60'}`}
+          numberOfLines={1}
+        >
           {track.artist}
         </Text>
       </View>
@@ -156,3 +159,15 @@ export function TrackCard({ track, queue, showArtwork = true, index }: TrackCard
     </AnimatedPressable>
   );
 }
+
+const NAVY_RULE = '#0A192F';
+
+const styles = StyleSheet.create({
+  row: {
+    borderBottomWidth: 1,
+    borderBottomColor: NAVY_RULE,
+  },
+  rowActive: {
+    backgroundColor: 'rgba(0, 255, 255, 0.05)',
+  },
+});

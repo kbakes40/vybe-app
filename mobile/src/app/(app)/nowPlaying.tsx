@@ -60,6 +60,7 @@ import { usePlaylistHeroColors } from '@/lib/usePlaylistHeroColors';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import { usePiPStore } from '@/components/PiPVideoOverlay';
 import { useNowPlayingSheetStore } from '@/stores/nowPlayingSheetStore';
+import { SeekScrubBar } from '@/components/SeekScrubBar';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const ARTWORK_SIZE = SCREEN_WIDTH - 80;
@@ -74,12 +75,6 @@ const INFO_STATIC_STYLE = { opacity: 1, transform: [{ translateY: 0 }] as const 
 function isYouTubeThumbnail(url: string): boolean {
   return !!(url && (url.includes('i.ytimg.com') || url.includes('img.youtube.com')));
 }
-
-const normalizePlaybackSeconds = (value: number): number => {
-  if (!Number.isFinite(value) || value <= 0) return 0;
-  // Some sources report ms-like values; convert to seconds for UI/store consistency.
-  return value > 100000 ? value / 1000 : value;
-};
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -322,117 +317,6 @@ function YouTubeMusicIcon({ size = 16 }: { size?: number }) {
       }}
     >
       <Music size={size * 0.6} color="#fff" strokeWidth={2.5} />
-    </View>
-  );
-}
-
-/** Scrubber + time labels only — subscribes to progress so the rest of Now Playing does not re-render every tick. */
-function NowPlayingScrubberRow() {
-  const progress = usePlaybackController(s => s.progress);
-  const duration = usePlaybackController(s => s.duration);
-  const seekTo = usePlaybackController(s => s.seekTo);
-
-  const scrubberWidth = SCREEN_WIDTH - 64;
-  const isScrubbing = useSharedValue(false);
-  const scrubPercent = useSharedValue(0);
-  const thumbScale = useSharedValue(1);
-  const seekLockUntil = useRef(0);
-
-  const displayDuration = Math.max(0, normalizePlaybackSeconds(duration));
-  const rawProgress = Math.max(0, normalizePlaybackSeconds(progress));
-  const displayProgress = displayDuration > 0 ? Math.min(rawProgress, displayDuration) : rawProgress;
-  const trackPercent = displayDuration > 0 ? Math.min(displayProgress / displayDuration, 1) : 0;
-
-  const trackPercentSV = useSharedValue(trackPercent);
-  const durationSV = useSharedValue(displayDuration);
-
-  useEffect(() => {
-    if (Date.now() >= seekLockUntil.current) {
-      trackPercentSV.value = trackPercent;
-    }
-  }, [trackPercent, trackPercentSV]);
-
-  useEffect(() => {
-    durationSV.value = Math.max(0, displayDuration);
-  }, [displayDuration, durationSV]);
-
-  const scrubFillStyle = useAnimatedStyle(() => ({
-    width: (isScrubbing.value ? scrubPercent.value : trackPercentSV.value) * scrubberWidth,
-  }));
-  const scrubThumbStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: (isScrubbing.value ? scrubPercent.value : trackPercentSV.value) * scrubberWidth - 6 },
-      { scale: thumbScale.value },
-    ],
-  }));
-
-  const handleSeekPct = useCallback((pct: number, seekSeconds: number) => {
-    seekLockUntil.current = Date.now() + 1000;
-    seekTo(seekSeconds);
-    trackPercentSV.value = pct;
-    isScrubbing.value = false;
-  }, [seekTo]);
-
-  // Built each render so `runOnJS(handleSeekPct)` stays fresh; avoids useMemo + Fast Refresh hook-order bugs.
-  const scrubGesture = Gesture.Pan()
-    .minDistance(0)
-    .onBegin((e) => {
-      'worklet';
-      isScrubbing.value = true;
-      thumbScale.value = withSpring(1.5, { damping: 12, stiffness: 200 });
-      scrubPercent.value = Math.min(Math.max(e.x / scrubberWidth, 0), 1);
-    })
-    .onUpdate((e) => {
-      'worklet';
-      scrubPercent.value = Math.min(Math.max(e.x / scrubberWidth, 0), 1);
-    })
-    .onEnd(() => {
-      'worklet';
-      thumbScale.value = withSpring(1, { damping: 12, stiffness: 200 });
-      const seekSeconds = scrubPercent.value * durationSV.value;
-      runOnJS(handleSeekPct)(scrubPercent.value, seekSeconds);
-    });
-
-  const scrubTapGesture = Gesture.Tap()
-    .onEnd((e) => {
-      'worklet';
-      const pct = Math.min(Math.max(e.x / scrubberWidth, 0), 1);
-      const seekSeconds = pct * durationSV.value;
-      runOnJS(handleSeekPct)(pct, seekSeconds);
-    });
-
-  const scrubCombined = Gesture.Simultaneous(scrubGesture, scrubTapGesture);
-
-  return (
-    <View style={{ marginTop: 24 }}>
-      <GestureDetector gesture={scrubCombined}>
-        <View style={{ paddingVertical: 10 }}>
-          <View style={{ height: 3, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, overflow: 'hidden' }}>
-            <Animated.View style={[{ height: 3, backgroundColor: '#fff', borderRadius: 2 }, scrubFillStyle]} />
-          </View>
-          <Animated.View style={[{
-            position: 'absolute',
-            top: 4,
-            left: 0,
-            width: 12,
-            height: 12,
-            borderRadius: 6,
-            backgroundColor: '#fff',
-            shadowColor: '#000',
-            shadowOpacity: 0.35,
-            shadowRadius: 4,
-            shadowOffset: { width: 0, height: 2 },
-          }, scrubThumbStyle]} />
-        </View>
-      </GestureDetector>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 }}>
-        <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>
-          {formatDuration(Math.floor(displayProgress))}
-        </Text>
-        <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>
-          {displayDuration > 0 ? `-${formatDuration(Math.max(0, Math.floor(displayDuration - displayProgress)))}` : '--:--'}
-        </Text>
-      </View>
     </View>
   );
 }
@@ -906,7 +790,7 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                 </View>
               </View>
 
-              <NowPlayingScrubberRow />
+              <SeekScrubBar width={SCREEN_WIDTH - 64} />
 
               {/* Controls */}
               <View className="flex-row items-center justify-between mt-4">

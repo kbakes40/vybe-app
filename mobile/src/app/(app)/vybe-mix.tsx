@@ -18,8 +18,10 @@ import { DownloadButton, GhostSweepRing } from '@/components/DownloadButton';
 import { Track } from '@/types/music';
 import { usePlaylistHeroColors } from '@/lib/usePlaylistHeroColors';
 import { useUserPlaylistStore } from '@/stores/userPlaylistStore';
+import { PLAYLIST_DOCKED_PADDING_BOTTOM } from '@/constants/Layout';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const HERO_ART_SIDE_INSET = 60;
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
@@ -348,14 +350,17 @@ export default function VybeMixScreen() {
     [tracks]
   );
 
-  const ARTWORK_SIZE = SCREEN_WIDTH - 120;
+  const ARTWORK_SIZE = SCREEN_WIDTH - HERO_ART_SIDE_INSET * 2;
   const heroColors = usePlaylistHeroColors(heroArtwork);
 
   return (
     <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
       <ScrollView
         style={{ flex: 1, backgroundColor: '#0A0A0A' }}
-        contentContainerStyle={{ flexGrow: 1 }}
+        contentContainerStyle={{
+          flexGrow: 1,
+          paddingBottom: PLAYLIST_DOCKED_PADDING_BOTTOM + insets.bottom,
+        }}
         showsVerticalScrollIndicator={false}
       >
         {/* Colored backdrop — only visible on top overscroll pull-down */}
@@ -466,7 +471,7 @@ export default function VybeMixScreen() {
 
         {/* Everything below the gradient sits on a dark background so
             the ScrollView's gradient-colored bg only shows on overscroll. */}
-        <View style={{ backgroundColor: '#0A0A0A', flex: 1, paddingBottom: insets.bottom + 120 }}>
+        <View style={{ backgroundColor: '#0A0A0A', flex: 1 }}>
 
         {/* Shadow action bar — machinery / playlist parity */}
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16, gap: 10 }}>

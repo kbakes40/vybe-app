@@ -1,6 +1,7 @@
 import { View, Text, Pressable, ScrollView } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PLAYLIST_DOCKED_PADDING_BOTTOM } from '@/constants/Layout';
 import { Image } from 'expo-image';
 import { ChevronLeft } from 'lucide-react-native';
 
@@ -18,7 +19,7 @@ export default function EraPlaylistScreen() {
       <Stack.Screen options={{ headerShown: false }} />
       <ScrollView
         className="flex-1"
-        contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
+        contentContainerStyle={{ paddingBottom: PLAYLIST_DOCKED_PADDING_BOTTOM + insets.bottom }}
         showsVerticalScrollIndicator={false}
       >
         <View style={{ paddingTop: insets.top }} className="px-5 pb-6">
