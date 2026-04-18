@@ -45,17 +45,30 @@ export default function VerifyOtpScreen() {
       });
       if (result.error) throw new Error(result.error.message ?? 'Invalid code');
 
-      // Check if onboarding is done
-      const preferences = await api.get<UserPreferences>('/api/user/preferences');
-      if (preferences?.onboardingDone) {
-        // Show upgrade screen if user hasn't seen it
+      showVybePopup({
+        title: 'Enjoy the Vibes 😎',
+        message: "You're in. Your session is live.",
+        type: 'success',
+      });
+
+      let onboardingDone = false;
+      try {
+        const preferences = await api.get<UserPreferences>('/api/user/preferences');
+        onboardingDone = !!preferences?.onboardingDone;
+      } catch {
+        onboardingDone = false;
+      }
+      if (router.canDismiss()) {
+        router.dismissAll();
+      }
+      if (onboardingDone) {
         if (!hasSeenPrompt) {
           router.replace('/(app)/upgrade');
         } else {
           router.replace('/(app)/(tabs)');
         }
       } else {
-        router.replace('/(app)/(tabs)');
+        router.replace('/onboarding');
       }
     } catch (error: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
