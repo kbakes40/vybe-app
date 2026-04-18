@@ -73,36 +73,57 @@ function setCachedUrl(videoId: string, url: string): void {
   urlCache.set(videoId, { url, expires: Date.now() + URL_TTL_MS });
 }
 
+/** Match download route — YouTube blocks datacenter IPs on some clients only. */
+const YTDLP_RESOLVE_CLIENTS = ["tv_embedded", "ios", "web", "android", "mweb"] as const;
+
 /**
  * Resolve a YouTube videoId to a direct CDN audio URL using yt-dlp.
- * Prefers smallest/fastest audio-only formats: AAC/m4a first (native iOS),
- * then Opus in webm, then any bestaudio — no video mux.
+ * Prefers AAC/m4a (native iOS), same format chain as /download.
  */
 async function resolveAudioUrl(videoId: string): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30_000);
-  try {
-    const output = await ytDlp.execPromise([
-      `https://www.youtube.com/watch?v=${videoId}`,
-      "-f",
-      "bestaudio/best",
-      "--get-url",
-      "--no-playlist",
-      "--no-warnings",
-      "--quiet",
-      "--extractor-args",
-      "youtube:player_client=web,mweb",
-      ...cookieArgs(),
-    ], {}, controller.signal);
-    clearTimeout(timer);
-    const url = output.trim().split("\n")[0];
-    if (!url.startsWith("http")) throw new Error(`yt-dlp returned invalid URL`);
-    return url;
-  } catch (e: any) {
-    clearTimeout(timer);
-    console.error("[yt-dlp] resolveAudioUrl error:", e.message);
-    throw new Error(`yt-dlp failed: ${e.message}`);
+  let lastMsg = "";
+  for (const client of YTDLP_RESOLVE_CLIENTS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 45_000);
+    try {
+      const output = await ytDlp.execPromise(
+        [
+          `https://www.youtube.com/watch?v=${videoId}`,
+          "-f",
+          "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio/best",
+          "--get-url",
+          "--no-playlist",
+          "--no-warnings",
+          "--quiet",
+          "--extractor-args",
+          `youtube:player_client=${client}`,
+          "--js-runtimes",
+          "node",
+          ...cookieArgs(),
+        ],
+        {},
+        controller.signal,
+      );
+      clearTimeout(timer);
+      const url = output.trim().split("\n")[0]?.trim() ?? "";
+      if (url.startsWith("http")) {
+        if (client !== YTDLP_RESOLVE_CLIENTS[0]) {
+          console.log(`[yt-dlp] resolve ${videoId}: ok with player_client=${client}`);
+        }
+        return url;
+      }
+      lastMsg = "yt-dlp returned non-URL output";
+    } catch (e: any) {
+      clearTimeout(timer);
+      lastMsg = e.message ?? String(e);
+      console.warn(
+        `[yt-dlp] resolve ${videoId} client=${client}:`,
+        lastMsg.split("\n")[0]?.slice(0, 160),
+      );
+    }
   }
+  console.error("[yt-dlp] resolveAudioUrl exhausted clients:", lastMsg.split("\n")[0]);
+  throw new Error(`yt-dlp failed: ${lastMsg}`);
 }
 
 // Track in-flight resolutions so concurrent requests for the same video
@@ -395,40 +416,102 @@ youtubeRouter.get("/search", async (c) => {
   }
 });
 
+/** ytsearch on Railway needs cookies + rotating clients; otherwise we fall through to Data API and burn invalid keys. */
+const YTDLP_SEARCH_CLIENTS = ["web", "tv_embedded", "ios", "android", "mweb"] as const;
+
+function parseYtsearchJsonLines(
+  output: string,
+  maxResults: number,
+  searchQuery: string,
+): Array<{
+  videoId: string;
+  title: string;
+  channelName: string;
+  thumbnailUrl: string;
+  publishedAt: string;
+  searchQuery: string;
+}> {
+  return output
+    .trim()
+    .split("\n")
+    .filter((l) => l.trim())
+    .flatMap((line) => {
+      try {
+        const j = JSON.parse(line) as Record<string, unknown>;
+        let videoId = typeof j.id === "string" ? j.id : "";
+        if (!videoId && typeof j.url === "string") {
+          const m = j.url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+          if (m) videoId = m[1];
+        }
+        if (!videoId || !/^[a-zA-Z0-9_-]{6,32}$/.test(videoId)) return [];
+        const duration = typeof j.duration === "number" ? j.duration : 0;
+        if (duration > 480) return [];
+        return [
+          {
+            videoId,
+            title: String(j.title ?? ""),
+            channelName: String(j.uploader ?? j.channel ?? j.uploader_id ?? ""),
+            thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+            publishedAt: "",
+            searchQuery,
+          },
+        ];
+      } catch {
+        return [];
+      }
+    })
+    .slice(0, maxResults);
+}
+
 async function searchYouTubeYtDlp(query: string, maxResults: number): Promise<Array<{
   videoId: string; title: string; channelName: string; thumbnailUrl: string; publishedAt: string; searchQuery: string;
 }>> {
-  const fetchCount = Math.min(maxResults * 3, 50);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20_000);
-  let output: string;
-  try {
-    output = await ytDlp.execPromise([
-      `ytsearch${fetchCount}:${query}`,
-      "--dump-json", "--flat-playlist", "--quiet", "--no-warnings",
-    ], {}, controller.signal);
-    clearTimeout(timer);
-  } catch (e: any) {
-    clearTimeout(timer);
-    throw new Error(`yt-dlp search failed: ${e.message}`);
-  }
-  return output.trim().split("\n").filter(l => l.trim()).flatMap(line => {
+  const safeQuery = query.replace(/[\r\n\0]/g, " ").trim().slice(0, 200);
+  if (!safeQuery) return [];
+
+  const fetchCount = Math.min(Math.max(maxResults * 3, 15), 50);
+  let lastErr = "";
+
+  for (const client of YTDLP_SEARCH_CLIENTS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 45_000);
     try {
-      const j = JSON.parse(line);
-      const videoId: string = j.id ?? "";
-      if (!videoId) return [];
-      const duration: number = j.duration ?? 0;
-      if (duration > 480) return [];
-      return [{
-        videoId,
-        title: j.title ?? "",
-        channelName: j.uploader ?? j.channel ?? "",
-        thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-        publishedAt: "",
-        searchQuery: query,
-      }];
-    } catch { return []; }
-  }).slice(0, maxResults);
+      const output = await ytDlp.execPromise(
+        [
+          `ytsearch${fetchCount}:${safeQuery}`,
+          "--dump-json",
+          "--flat-playlist",
+          "--quiet",
+          "--no-warnings",
+          "--extractor-args",
+          `youtube:player_client=${client}`,
+          "--js-runtimes",
+          "node",
+          ...cookieArgs(),
+        ],
+        {},
+        controller.signal,
+      );
+      clearTimeout(timer);
+      const rows = parseYtsearchJsonLines(output, maxResults, safeQuery);
+      if (rows.length > 0) {
+        if (client !== YTDLP_SEARCH_CLIENTS[0]) {
+          console.log(`[yt-dlp] search "${safeQuery.slice(0, 40)}…" ok with player_client=${client} (${rows.length} results)`);
+        }
+        return rows;
+      }
+    } catch (e: any) {
+      clearTimeout(timer);
+      lastErr = e.message ?? String(e);
+      console.warn(
+        `[yt-dlp] search client=${client}:`,
+        lastErr.split("\n")[0]?.slice(0, 160),
+      );
+    }
+  }
+
+  if (lastErr) console.error("[yt-dlp] search exhausted all clients:", lastErr.split("\n")[0]?.slice(0, 200));
+  return [];
 }
 
 /**
