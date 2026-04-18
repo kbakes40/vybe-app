@@ -57,6 +57,8 @@ import { normalizeYoutubePlaylistTracksPayload } from '@/lib/youtubePlaylistTrac
 import { useCuratedPlaylistCardWarmup } from '@/hooks/useCuratedPlaylistCardWarmup';
 import { AlbumCard } from '@/components/AlbumCard';
 import { VybeHeaderMark } from '@/components/Header';
+import { useVybePopup } from '@/components/VybePopup';
+import { usePostLoginWelcomeStore } from '@/stores/postLoginWelcomeStore';
 import { FreePDSection } from '@/components/FreePDSection';
 import {
   playlists,
@@ -967,13 +969,26 @@ export default function HomeScreen() {
     if (u.email?.trim()) return u.email.split('@')[0] ?? 'there';
     return 'there';
   }, [session?.user]);
-  const headline = `Your Vybe, ${firstName}`;
+  const headlineRest = `, ${firstName}`;
 
   const fireMixTracks = useFireMixStore((s) => s.tracks);
   const fireMixStatus = useFireMixStore((s) => s.status);
 
   // Scroll animation for greeting fade
   const scrollY = useSharedValue(0);
+
+  const { showVybePopup } = useVybePopup();
+  useFocusEffect(
+    useCallback(() => {
+      if (usePostLoginWelcomeStore.getState().consumeEnjoyVibes()) {
+        showVybePopup({
+          title: 'Enjoy the Vibes 😎',
+          message: "You're in. Your session is live.",
+          type: 'success',
+        });
+      }
+    }, [showVybePopup]),
+  );
 
   const cyanPulse = useSharedValue(0);
   useEffect(() => {
@@ -1476,17 +1491,42 @@ export default function HomeScreen() {
         }
       >
         <Animated.View style={listMotionStyle}>
-        <View style={{ paddingTop: insets.top + 24, backgroundColor: '#000000', paddingHorizontal: 20 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <VybeHeaderMark size={40} />
-            <Animated.View style={[{ flex: 1, marginLeft: 14, paddingBottom: 4 }, greetingAnimatedStyle]}>
-              <AnimatedText style={[{ fontSize: 30, fontWeight: '800', letterSpacing: -0.5 }, headlineCyanPulseStyle]}>
-                {headline}
+        <View
+          style={{
+            paddingTop: insets.top + 24,
+            backgroundColor: '#000000',
+            paddingHorizontal: 20,
+            alignItems: 'flex-start',
+            width: '100%',
+          }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', paddingTop: 4 }}>
+            <VybeHeaderMark size={36} />
+            <Animated.View
+              style={[
+                {
+                  flex: 1,
+                  marginLeft: 12,
+                  paddingBottom: 4,
+                  flexDirection: 'row',
+                  flexWrap: 'wrap',
+                  alignItems: 'baseline',
+                },
+                greetingAnimatedStyle,
+              ]}
+            >
+              <AnimatedText
+                style={[{ fontSize: 30, fontWeight: '800', letterSpacing: -0.5, textAlign: 'left' }, headlineCyanPulseStyle]}
+              >
+                Your Vybe
               </AnimatedText>
+              <Text style={{ fontSize: 30, fontWeight: '800', letterSpacing: -0.5, color: '#FAFAFA', textAlign: 'left' }}>
+                {headlineRest}
+              </Text>
             </Animated.View>
           </View>
-          <Animated.View style={[{ paddingBottom: 12, paddingTop: 10, alignSelf: 'stretch' }, greetingAnimatedStyle]}>
-            <Text style={{ color: 'rgba(253,230,138,0.45)', fontSize: 13, fontWeight: '600', letterSpacing: 0.4 }}>
+          <Animated.View style={[{ paddingBottom: 12, paddingTop: 6, alignSelf: 'stretch' }, greetingAnimatedStyle]}>
+            <Text style={{ color: 'rgba(253,230,138,0.45)', fontSize: 13, fontWeight: '600', letterSpacing: 0.4, textAlign: 'left' }}>
               Heat-picked rotation · sharp contrast · zero noise
             </Text>
           </Animated.View>

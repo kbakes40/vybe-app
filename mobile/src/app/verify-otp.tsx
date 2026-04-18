@@ -15,6 +15,7 @@ import { authClient } from '@/lib/auth/auth-client';
 import { api } from '@/lib/api/api';
 import { useUpgradePromptStore } from '@/stores/upgradePromptStore';
 import { useVybePopup } from '@/components/VybePopup';
+import { usePostLoginWelcomeStore } from '@/stores/postLoginWelcomeStore';
 
 interface UserPreferences {
   onboardingDone: boolean;
@@ -45,11 +46,8 @@ export default function VerifyOtpScreen() {
       });
       if (result.error) throw new Error(result.error.message ?? 'Invalid code');
 
-      showVybePopup({
-        title: 'Enjoy the Vibes 😎',
-        message: "You're in. Your session is live.",
-        type: 'success',
-      });
+      /** Shown on Home after navigation so the toast is not wiped by the stack transition. */
+      usePostLoginWelcomeStore.getState().queueEnjoyVibes();
 
       let onboardingDone = false;
       try {

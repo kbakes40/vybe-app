@@ -181,7 +181,7 @@ export default function OnboardingScreen() {
     }
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setLoading(false);
-    router.replace('/(app)/(tabs)');
+    router.replace('/(app)/(tabs)/index');
   };
 
   return (
