@@ -64,29 +64,8 @@ export default function AppLayout() {
   const pathname = usePathname();
   const router = useRouter();
 
-  /** Auth → Onboarding → Home: block main shell until prefs confirm onboarding is complete */
-  const [onboardingGateReady, setOnboardingGateReady] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const prefs = await api.get<{ onboardingDone: boolean }>('/api/user/preferences');
-        if (!alive) return;
-        if (!prefs.onboardingDone) {
-          router.replace('/onboarding');
-          return;
-        }
-      } catch {
-        if (!alive) return;
-        router.replace('/onboarding');
-        return;
-      }
-      if (alive) setOnboardingGateReady(true);
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [router]);
+  /** Onboarding gate disabled — straight to Home. */
+  const [onboardingGateReady] = useState(true);
 
   // Clipboard banner state
   const [clipboardUrl, setClipboardUrl] = useState<string | null>(null);

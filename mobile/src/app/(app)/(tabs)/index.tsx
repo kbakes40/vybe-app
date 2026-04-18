@@ -1119,16 +1119,23 @@ export default function HomeScreen() {
       }
 
       // Fetch curated YouTube Music playlists
-      const playlistsResponse = await api.get<CuratedPlaylist[]>('/api/youtube/playlists');
-      if (playlistsResponse) {
-        const filtered = playlistsResponse
-          .filter(p => p.tracks.length > 0)
-          .map(shadowCleanCuratedFromApi);
-        // Never replace a full home feed with an empty payload (transient API/yt-dlp failures).
-        if (filtered.length > 0) {
-          setCuratedPlaylists(filtered);
-          homeMMKV.set(HOME_KEYS.curatedPlaylists, filtered);
+      console.log('[Home] fetching /api/youtube/playlists…');
+      try {
+        const playlistsResponse = await api.get<CuratedPlaylist[]>('/api/youtube/playlists');
+        console.log('[Home] /api/youtube/playlists returned', Array.isArray(playlistsResponse) ? playlistsResponse.length : typeof playlistsResponse, 'playlists');
+        if (playlistsResponse) {
+          const filtered = playlistsResponse
+            .filter(p => p.tracks.length > 0)
+            .map(shadowCleanCuratedFromApi);
+          console.log('[Home] curated after filter+clean:', filtered.length);
+          // Never replace a full home feed with an empty payload (transient API/yt-dlp failures).
+          if (filtered.length > 0) {
+            setCuratedPlaylists(filtered);
+            homeMMKV.set(HOME_KEYS.curatedPlaylists, filtered);
+          }
         }
+      } catch (e) {
+        console.warn('[Home] /api/youtube/playlists FAILED:', (e as Error)?.message ?? e);
       }
 
       // Fetch Spotify playlists (bridged to YouTube for playback)
