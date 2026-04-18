@@ -1,0 +1,25 @@
+# Vybe — Executive Protocol (cross-agent)
+
+## Source of truth
+- **Home**: `mobile/src/app/(app)/(tabs)/index.tsx` — primary feed, sections, and navigation contracts for “what the app is.” Other surfaces align here unless explicitly scoped otherwise.
+- **Design tokens**: `mobile/src/theme/vybeTokens.ts` — extend with Shadow Sexy accents (navy / amber / magenta) where tokens are missing; prefer shared constants over one-off hex in new UI.
+
+## Shadow Sexy UI (non-negotiable)
+- **Borders**: Deep navy frames (e.g. `#0B1726`, `rgba(11,23,38,…)`) — crisp, not default gray.
+- **Glow**: Neon **amber** for warmth / focus (`#F59E0B`, `#FBBF24`); **magenta** (`#D946EF`) for primary CTAs and pulse accents.
+- **Base**: Near-black surfaces (`#050505`–`#0A0A0A`); avoid flat white cards on white.
+
+## Now Playing transition
+- **Hero Zoom = Option C** — implemented in `mobile/src/components/NowPlayingSheet.tsx`.
+- Keep **`SHEET_TOP_GAP = 80`** (px) between the open sheet and the status-bar region unless a ticket explicitly changes it.
+- `ANIMATION_MODE` must remain `'zoom'` for Option C.
+
+## Git / safety
+- **Do not** `rm -rf` directories or delete large trees without a **prior** commit saving current state.
+- After each **successful UI pass**: `git add .` (or scoped adds), then  
+  `git commit -m "AGENT: [short task name] State Saved"`.
+- Do not commit `mobile/.env*local`, secrets, or generated `Pods/` / backup dumps unless the task explicitly requires it.
+
+## Coordination
+- Read `Project_Manifest.md` at the start of substantive work.
+- Backend + mobile contract changes: types first (`backend` + mobile API client), then routes, then UI.
