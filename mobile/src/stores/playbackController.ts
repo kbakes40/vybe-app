@@ -766,13 +766,13 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
       const q0 = get().queue;
       const qi0 = get().queueIndex;
-      for (let i = 1; i <= 2 && qi0 + i < q0.length; i++) {
+      for (let i = 1; i <= 3 && qi0 + i < q0.length; i++) {
         const n = q0[qi0 + i];
         const nid = n.youtubeId || n.youtubeMusicId;
         if (nid) preResolveYoutubeVideoId(nid);
       }
 
-      const directUrl = await resolveYoutubeUrlForPlaybackWithBudget(ytVideoId, 2_800);
+      const directUrl = await resolveYoutubeUrlForPlaybackWithBudget(ytVideoId, 1_800);
       const playUri = directUrl ?? proxyUrl;
       if (__DEV__) {
         console.log(

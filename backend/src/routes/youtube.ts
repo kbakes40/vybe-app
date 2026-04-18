@@ -73,56 +73,121 @@ function setCachedUrl(videoId: string, url: string): void {
   urlCache.set(videoId, { url, expires: Date.now() + URL_TTL_MS });
 }
 
-/** Match download route — YouTube blocks datacenter IPs on some clients only. */
-const YTDLP_RESOLVE_CLIENTS = ["tv_embedded", "ios", "web", "android", "mweb"] as const;
+/** Match download route — YouTube blocks datacenter IPs on some clients only.
+ *  Fast tier races in parallel (fastest wins, losers aborted).
+ *  Slow tier is a sequential fallback if every fast client fails. */
+const YTDLP_RESOLVE_FAST_CLIENTS = ["tv_embedded", "ios", "android"] as const;
+const YTDLP_RESOLVE_SLOW_CLIENTS = ["web", "mweb"] as const;
+const YTDLP_RESOLVE_FAST_TIMEOUT_MS = 10_000;
+const YTDLP_RESOLVE_SLOW_TIMEOUT_MS = 15_000;
+
+/** Run yt-dlp --get-url for a single player_client and return the CDN URL. */
+function tryResolveWithClient(
+  videoId: string,
+  client: string,
+  timeoutMs: number,
+  externalSignal?: AbortSignal,
+): { promise: Promise<string>; abort: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+
+  const promise = ytDlp
+    .execPromise(
+      [
+        `https://www.youtube.com/watch?v=${videoId}`,
+        "-f",
+        "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio/best",
+        "--get-url",
+        "--no-playlist",
+        "--no-warnings",
+        "--quiet",
+        "--no-check-certificate",
+        "--socket-timeout",
+        "8",
+        "--extractor-args",
+        `youtube:player_client=${client}`,
+        "--js-runtimes",
+        "node",
+        ...cookieArgs(),
+      ],
+      {},
+      controller.signal,
+    )
+    .then((output) => {
+      clearTimeout(timer);
+      const url = output.trim().split("\n")[0]?.trim() ?? "";
+      if (!url.startsWith("http")) throw new Error("yt-dlp returned non-URL output");
+      return url;
+    })
+    .catch((e: any) => {
+      clearTimeout(timer);
+      throw new Error(e?.message ?? String(e));
+    });
+
+  return { promise, abort: () => controller.abort() };
+}
 
 /**
  * Resolve a YouTube videoId to a direct CDN audio URL using yt-dlp.
- * Prefers AAC/m4a (native iOS), same format chain as /download.
+ * Phase 1: race the 3 most reliable clients in parallel (first URL wins,
+ *          the other child processes are aborted immediately).
+ * Phase 2: if every fast client fails, fall back to web/mweb sequentially.
  */
 async function resolveAudioUrl(videoId: string): Promise<string> {
+  const attempts = YTDLP_RESOLVE_FAST_CLIENTS.map((client) => {
+    const { promise, abort } = tryResolveWithClient(
+      videoId,
+      client,
+      YTDLP_RESOLVE_FAST_TIMEOUT_MS,
+    );
+    return {
+      client,
+      abort,
+      promise: promise.then((url) => ({ client, url })),
+    };
+  });
+
+  try {
+    const winner = await Promise.any(attempts.map((a) => a.promise));
+    for (const a of attempts) {
+      if (a.client !== winner.client) a.abort();
+    }
+    if (winner.client !== YTDLP_RESOLVE_FAST_CLIENTS[0]) {
+      console.log(`[yt-dlp] resolve ${videoId}: fast-race won by player_client=${winner.client}`);
+    }
+    return winner.url;
+  } catch (e) {
+    const fastErr = e instanceof AggregateError
+      ? e.errors.map((er: any) => (er?.message ?? String(er)).split("\n")[0]).join(" | ")
+      : String(e);
+    console.warn(`[yt-dlp] resolve ${videoId}: fast tier exhausted — ${fastErr.slice(0, 240)}`);
+  }
+
   let lastMsg = "";
-  for (const client of YTDLP_RESOLVE_CLIENTS) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 45_000);
+  for (const client of YTDLP_RESOLVE_SLOW_CLIENTS) {
     try {
-      const output = await ytDlp.execPromise(
-        [
-          `https://www.youtube.com/watch?v=${videoId}`,
-          "-f",
-          "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio/best",
-          "--get-url",
-          "--no-playlist",
-          "--no-warnings",
-          "--quiet",
-          "--extractor-args",
-          `youtube:player_client=${client}`,
-          "--js-runtimes",
-          "node",
-          ...cookieArgs(),
-        ],
-        {},
-        controller.signal,
+      const { promise } = tryResolveWithClient(
+        videoId,
+        client,
+        YTDLP_RESOLVE_SLOW_TIMEOUT_MS,
       );
-      clearTimeout(timer);
-      const url = output.trim().split("\n")[0]?.trim() ?? "";
-      if (url.startsWith("http")) {
-        if (client !== YTDLP_RESOLVE_CLIENTS[0]) {
-          console.log(`[yt-dlp] resolve ${videoId}: ok with player_client=${client}`);
-        }
-        return url;
-      }
-      lastMsg = "yt-dlp returned non-URL output";
+      const url = await promise;
+      console.log(`[yt-dlp] resolve ${videoId}: slow fallback ok with player_client=${client}`);
+      return url;
     } catch (e: any) {
-      clearTimeout(timer);
       lastMsg = e.message ?? String(e);
       console.warn(
-        `[yt-dlp] resolve ${videoId} client=${client}:`,
+        `[yt-dlp] resolve ${videoId} slow client=${client}:`,
         lastMsg.split("\n")[0]?.slice(0, 160),
       );
     }
   }
-  console.error("[yt-dlp] resolveAudioUrl exhausted clients:", lastMsg.split("\n")[0]);
+
+  console.error("[yt-dlp] resolveAudioUrl exhausted all clients:", lastMsg.split("\n")[0]);
   throw new Error(`yt-dlp failed: ${lastMsg}`);
 }
 
