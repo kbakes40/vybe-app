@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, Dimensions } from 'react-native';
+import { View, Text, ScrollView, Pressable, Dimensions, Linking, Platform, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -23,9 +23,36 @@ import { getPlaylistById, getTracksFromPlaylist, playlists } from '@/data/mockDa
 import { usePlaybackController } from '@/stores/playbackController';
 import { TrackCard } from '@/components/TrackCard';
 import { TAB_BAR_HEIGHT, MINI_PLAYER_HEIGHT } from '@/constants/Layout';
+import { PARTNER_PROMO_URLS } from '@/components/PartnerPromoBanners';
 
-/** Clearance below last row: tab bar + mini player + breathing room. */
+/** Clearance below last row: tab bar + mini player + breathing room (includes any header rails; banner lives in scroll content above tracks). */
 const PLAYLIST_LIST_BOTTOM_PADDING = TAB_BAR_HEIGHT + MINI_PLAYER_HEIGHT + 20;
+
+const MAINSTREET_BRAND_IMAGE =
+  'https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=900&q=80';
+
+function MainstreetTeesChillVibesBanner() {
+  const open = () => {
+    Linking.openURL(PARTNER_PROMO_URLS.mainstreetTees).catch(() => {});
+  };
+
+  return (
+    <Pressable
+      onPress={open}
+      style={({ pressed }) => [styles.mainstreetBannerOuter, pressed && { opacity: 0.92 }]}
+    >
+      <View style={styles.mainstreetBannerInner}>
+        <Image
+          source={{ uri: MAINSTREET_BRAND_IMAGE }}
+          style={styles.mainstreetBrandImage}
+          contentFit="contain"
+        />
+        <Text style={styles.mainstreetBannerKicker}>MAINSTREET TEES</Text>
+        <Text style={styles.mainstreetBannerCta}>Premium apparel · Shop Now</Text>
+      </View>
+    </Pressable>
+  );
+}
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -55,6 +82,7 @@ export default function PlaylistScreen() {
   }
 
   const totalDuration = playlistTracks.reduce((acc, t) => acc + t.duration, 0);
+  const isChillVibesPlaylist = playlist.title.trim().toLowerCase() === 'chill vibes';
 
   const handlePlayAll = () => {
     if (playlistTracks.length > 0) {
@@ -134,6 +162,12 @@ export default function PlaylistScreen() {
                 {Math.floor(playlist.duration / 3600)}h {Math.floor((playlist.duration % 3600) / 60)}m
               </Text>
             </View>
+
+            {isChillVibesPlaylist ? (
+              <View style={{ marginTop: 16 }}>
+                <MainstreetTeesChillVibesBanner />
+              </View>
+            ) : null}
           </View>
         </LinearGradient>
 
@@ -242,3 +276,47 @@ export default function PlaylistScreen() {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  mainstreetBannerOuter: {
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(217,70,239,0.45)',
+    overflow: 'visible',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#D946EF',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.55,
+        shadowRadius: 16,
+      },
+      android: {
+        elevation: 10,
+      },
+    }),
+  },
+  mainstreetBannerInner: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  mainstreetBrandImage: {
+    width: '100%',
+    maxWidth: 320,
+    height: 88,
+  },
+  mainstreetBannerKicker: {
+    marginTop: 10,
+    color: 'rgba(252,231,243,0.95)',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 2,
+  },
+  mainstreetBannerCta: {
+    marginTop: 4,
+    color: 'rgba(244,244,245,0.75)',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+});
