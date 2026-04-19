@@ -41,6 +41,32 @@ let activeKeyIndex = 0;
 let allKeysExhaustedAt = 0; // timestamp when we last ran out of keys
 
 /**
+ * Quarantined key indices — keys that have returned `400 API_KEY_INVALID`,
+ * `keyInvalid`, `accessNotConfigured`, or similar permanent-failure responses
+ * during this process lifetime. Skipped by `getActiveKey()` and `rotateKey()`
+ * so we don't waste a Google round-trip on every cache miss iterating through
+ * known-dead keys (which is the source of the per-request 1–2.5s backend lag
+ * when several keys are bad). Cleared at the next day-rollover reset.
+ */
+const deadKeys = new Set<number>();
+
+function markCurrentKeyDead(reason: string): void {
+  if (activeKeyIndex < UNIQUE_API_KEYS.length) {
+    if (!deadKeys.has(activeKeyIndex)) {
+      console.warn(`[YouTube] Quarantining key ${activeKeyIndex + 1}/${UNIQUE_API_KEYS.length} for process lifetime — ${reason}`);
+      deadKeys.add(activeKeyIndex);
+    }
+  }
+}
+
+/** Find the next non-dead index at or after `from`. Returns `UNIQUE_API_KEYS.length` if none. */
+function nextLiveIndex(from: number): number {
+  let i = from;
+  while (i < UNIQUE_API_KEYS.length && deadKeys.has(i)) i++;
+  return i;
+}
+
+/**
  * Diagnostic snapshot of which YOUTUBE_API_KEY_* env vars are populated
  * and what they look like. Never returns the raw key — only length and a
  * masked preview ("AIza…XYZ4") so you can verify which slot has bad data.
@@ -57,6 +83,7 @@ export function getYoutubeApiKeysDiagnostic() {
   return {
     activeKeyIndex,
     uniqueLoaded: UNIQUE_API_KEYS.length,
+    quarantinedThisProcess: Array.from(deadKeys).map(i => i + 1).sort((a, b) => a - b),
     slots: slots.map(({ env, value }) => {
       const trimmed = value?.trim() ?? '';
       const set = trimmed.length > 0;
@@ -121,18 +148,17 @@ export async function probeYoutubeApiKeys(): Promise<Array<{ slot: number; previ
 function getActiveKey(): string | null {
   // Auto-reset: if all keys were exhausted and a new day has started
   // (YouTube quota resets at midnight PT), start back at key 1 so the
-  // fresh daily quota is used without needing a manual restart.
+  // fresh daily quota is used without needing a manual restart. The dead-key
+  // quarantine set is also cleared on rollover — a key that was rejected for
+  // quota-or-billing reasons may have been re-enabled overnight.
   if (activeKeyIndex >= UNIQUE_API_KEYS.length && allKeysExhaustedAt > 0) {
-    const now = Date.now();
     const nextReset = getNextMidnightPT();
-    // getNextMidnightPT() returns the *upcoming* midnight. If allKeysExhaustedAt
-    // was before the most recent midnight, the quota has rolled over.
     const lastMidnight = nextReset - 24 * 60 * 60 * 1000;
     if (allKeysExhaustedAt < lastMidnight) {
-      console.log('[YouTube] New day — resetting all API keys to fresh quota');
+      console.log('[YouTube] New day — resetting all API keys to fresh quota (clearing dead-key quarantine)');
       activeKeyIndex = 0;
       allKeysExhaustedAt = 0;
-      // Also reset per-key stats so proactive rotation thresholds are clean
+      deadKeys.clear();
       for (const ks of keyStats) {
         ks.totalUnits = 0;
         ks.callCount = 0;
@@ -140,16 +166,28 @@ function getActiveKey(): string | null {
       }
     }
   }
+  // Skip past any keys that have been quarantined this process lifetime.
+  // Without this, a process that's already advanced past the dead keys is
+  // fine, but a fresh process or any code that resets activeKeyIndex would
+  // re-burn the dead round-trips.
+  if (deadKeys.has(activeKeyIndex)) {
+    activeKeyIndex = nextLiveIndex(activeKeyIndex);
+  }
   return UNIQUE_API_KEYS[activeKeyIndex] ?? null;
 }
 
 function rotateKey(reason: string): boolean {
-  if (activeKeyIndex + 1 >= UNIQUE_API_KEYS.length) {
-    console.warn(`[YouTube] All ${UNIQUE_API_KEYS.length} key(s) exhausted. ${reason}`);
+  // Advance past the next non-dead key. If the caller is rotating because the
+  // current key 400'd, the call site should also have called
+  // markCurrentKeyDead() so we don't come back to it later.
+  const next = nextLiveIndex(activeKeyIndex + 1);
+  if (next >= UNIQUE_API_KEYS.length) {
+    console.warn(`[YouTube] All ${UNIQUE_API_KEYS.length} key(s) exhausted (${deadKeys.size} dead, ${UNIQUE_API_KEYS.length - deadKeys.size} live). ${reason}`);
     allKeysExhaustedAt = Date.now();
+    activeKeyIndex = UNIQUE_API_KEYS.length;
     return false;
   }
-  activeKeyIndex++;
+  activeKeyIndex = next;
   console.log(`[YouTube] Using key ${activeKeyIndex + 1}/${UNIQUE_API_KEYS.length} — ${reason}`);
   return true;
 }
@@ -176,6 +214,21 @@ function getNextMidnightPT(): number {
   const pt = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
   pt.setHours(24, 0, 0, 0);
   return pt.getTime();
+}
+
+/**
+ * When every configured key has been exhausted (quota / rotation), skip YouTube
+ * Data API v3 entirely until the next Pacific midnight — avoids multi-second
+ * key-rotation retries before yt-dlp / SoundCloud fallbacks.
+ */
+export function shouldSkipYoutubeDataApiDueToQuotaExhaustion(): boolean {
+  if (UNIQUE_API_KEYS.length === 0) return false;
+  if (!(activeKeyIndex >= UNIQUE_API_KEYS.length && allKeysExhaustedAt > 0)) {
+    return false;
+  }
+  const nextReset = getNextMidnightPT();
+  const lastMidnight = nextReset - 24 * 60 * 60 * 1000;
+  return allKeysExhaustedAt >= lastMidnight;
 }
 
 const keyStats: KeyStats[] = UNIQUE_API_KEYS.map(() => ({
@@ -331,6 +384,11 @@ export async function searchYouTube(
     return [];
   }
 
+  if (shouldSkipYoutubeDataApiDueToQuotaExhaustion()) {
+    console.warn('[YouTube] All API keys exhausted — skipping Data API search (use yt-dlp / cache)');
+    return getCachedSearch(query, maxResults) ?? [];
+  }
+
   // Check cache first
   const cached = getCachedSearch(query, maxResults);
   if (cached) {
@@ -370,15 +428,17 @@ export async function searchYouTube(
 
       if (!response.ok) {
         const body = await response.text().catch(() => '<unreadable body>');
-        // 400 API_KEY_INVALID / badRequest → key is broken, rotate to next key
-        // (same pattern as 403 quotaExceeded above)
+        // 400 API_KEY_INVALID / badRequest → key is permanently broken for the
+        // process lifetime (until day-rollover). Quarantine the index and
+        // advance — markCurrentKeyDead() ensures we never iterate back through
+        // this slot and burn another Google round-trip on it.
         if (
           response.status === 400 &&
           (body.includes('API_KEY_INVALID') ||
            body.includes('API key not valid') ||
            body.includes('keyInvalid'))
         ) {
-          console.warn(`[YouTube] 400 API_KEY_INVALID on key ${activeKeyIndex + 1} — rotating`);
+          markCurrentKeyDead(`400 API_KEY_INVALID (search)`);
           const rotated = rotateKey(`400 API_KEY_INVALID on key ${activeKeyIndex + 1}`);
           if (!rotated) return getCachedSearch(query, maxResults) ?? [];
           continue; // retry with new key
@@ -753,21 +813,35 @@ export async function fetchPlaylistTracks(playlistId: string): Promise<PlaylistT
 
 /**
  * Playlist cover via Data API when a key is configured (thumbnail only).
+ * Rotates past dead keys on 400 API_KEY_INVALID so a single bad slot doesn't
+ * silently zero out every playlist cover.
  */
 async function fetchPlaylistThumbnailFromAPI(playlistId: string): Promise<string> {
-  const apiKey = getActiveKey();
-  if (!apiKey) return '';
-  try {
-    const params = new URLSearchParams({ part: 'snippet', id: playlistId, key: apiKey });
-    const res = await fetch(`${YOUTUBE_API_BASE}/playlists?${params}`);
-    if (!res.ok) return '';
-    const json = await res.json() as { items?: { snippet: { thumbnails: { maxres?: { url: string }; high?: { url: string }; medium?: { url: string }; default?: { url: string } } } }[] };
-    const thumbnails = json.items?.[0]?.snippet?.thumbnails;
-    if (!thumbnails) return '';
-    return thumbnails.maxres?.url ?? thumbnails.high?.url ?? thumbnails.medium?.url ?? thumbnails.default?.url ?? '';
-  } catch {
-    return '';
+  while (activeKeyIndex < UNIQUE_API_KEYS.length) {
+    const apiKey = getActiveKey();
+    if (!apiKey) return '';
+    try {
+      const params = new URLSearchParams({ part: 'snippet', id: playlistId, key: apiKey });
+      const res = await fetch(`${YOUTUBE_API_BASE}/playlists?${params}`);
+      if (!res.ok) {
+        if (res.status === 400 || res.status === 403) {
+          const body = await res.text().catch(() => '');
+          if (body.includes('API_KEY_INVALID') || body.includes('API key not valid') || body.includes('keyInvalid')) {
+            markCurrentKeyDead('400 API_KEY_INVALID (playlist thumb)');
+            if (rotateKey('playlist thumb dead key')) continue;
+          }
+        }
+        return '';
+      }
+      const json = await res.json() as { items?: { snippet: { thumbnails: { maxres?: { url: string }; high?: { url: string }; medium?: { url: string }; default?: { url: string } } } }[] };
+      const thumbnails = json.items?.[0]?.snippet?.thumbnails;
+      if (!thumbnails) return '';
+      return thumbnails.maxres?.url ?? thumbnails.high?.url ?? thumbnails.medium?.url ?? thumbnails.default?.url ?? '';
+    } catch {
+      return '';
+    }
   }
+  return '';
 }
 
 export async function fetchCuratedPlaylists(): Promise<CuratedPlaylistResult[]> {
@@ -838,48 +912,62 @@ let newReleasesCache: { results: NewReleaseResult[]; expiresAt: number } | null 
 
 /**
  * Fetch trending music via videos.list?chart=mostPopular — costs 0 quota units.
+ * Rotates past dead keys on 400 API_KEY_INVALID so a single bad slot doesn't
+ * silently zero out the trending rail forever.
  */
 export async function fetchNewReleases(maxResults = 20): Promise<NewReleaseResult[]> {
-  const apiKey = getActiveKey();
-  if (!apiKey) return [];
-
   if (newReleasesCache && Date.now() < newReleasesCache.expiresAt) {
     globalCacheHits++;
     return newReleasesCache.results;
   }
 
-  const params = new URLSearchParams({
-    part: "snippet,statistics",
-    chart: "mostPopular",
-    videoCategoryId: "10",
-    maxResults: String(maxResults),
-    regionCode: "US",
-    key: apiKey,
-  });
+  while (activeKeyIndex < UNIQUE_API_KEYS.length) {
+    const apiKey = getActiveKey();
+    if (!apiKey) return [];
 
-  try {
-    const response = await fetch(`${YOUTUBE_API_BASE}/videos?${params}`);
-    if (!response.ok) return [];
+    const params = new URLSearchParams({
+      part: "snippet,statistics",
+      chart: "mostPopular",
+      videoCategoryId: "10",
+      maxResults: String(maxResults),
+      regionCode: "US",
+      key: apiKey,
+    });
 
-    const data = await response.json() as YouTubeVideosResponse;
-    const results: NewReleaseResult[] = data.items.map(item => ({
-      videoId: item.id,
-      title: decodeHtmlEntities(item.snippet.title),
-      channelName: decodeHtmlEntities(item.snippet.channelTitle),
-      thumbnailUrl:
-        item.snippet.thumbnails.maxres?.url ??
-        item.snippet.thumbnails.high?.url ??
-        item.snippet.thumbnails.medium?.url ??
-        item.snippet.thumbnails.default.url,
-      publishedAt: item.snippet.publishedAt,
-      viewCount: item.statistics?.viewCount ?? "0",
-    }));
+    try {
+      const response = await fetch(`${YOUTUBE_API_BASE}/videos?${params}`);
+      if (!response.ok) {
+        if (response.status === 400 || response.status === 403) {
+          const body = await response.text().catch(() => '');
+          if (body.includes('API_KEY_INVALID') || body.includes('API key not valid') || body.includes('keyInvalid')) {
+            markCurrentKeyDead('400 API_KEY_INVALID (new releases)');
+            if (rotateKey('new releases dead key')) continue;
+          }
+        }
+        return [];
+      }
 
-    newReleasesCache = { results, expiresAt: Date.now() + SEARCH_CACHE_TTL_MS };
-    return results;
-  } catch {
-    return [];
+      const data = await response.json() as YouTubeVideosResponse;
+      const results: NewReleaseResult[] = data.items.map(item => ({
+        videoId: item.id,
+        title: decodeHtmlEntities(item.snippet.title),
+        channelName: decodeHtmlEntities(item.snippet.channelTitle),
+        thumbnailUrl:
+          item.snippet.thumbnails.maxres?.url ??
+          item.snippet.thumbnails.high?.url ??
+          item.snippet.thumbnails.medium?.url ??
+          item.snippet.thumbnails.default.url,
+        publishedAt: item.snippet.publishedAt,
+        viewCount: item.statistics?.viewCount ?? "0",
+      }));
+
+      newReleasesCache = { results, expiresAt: Date.now() + SEARCH_CACHE_TTL_MS };
+      return results;
+    } catch {
+      return [];
+    }
   }
+  return [];
 }
 
 /**
@@ -965,38 +1053,52 @@ export interface VideoInfo {
  * can't be found (caller should fall back to yt-dlp).
  */
 export async function getVideoInfoViaApi(videoId: string): Promise<VideoInfo | null> {
-  const key = getActiveKey();
-  if (!key) return null;
+  // Iterate past dead keys instead of giving up on the first 400. Without
+  // this, /info on the very first request after restart would burn one
+  // round-trip per dead key before hitting yt-dlp fallback (the source of
+  // the per-request lag).
+  while (activeKeyIndex < UNIQUE_API_KEYS.length) {
+    const key = getActiveKey();
+    if (!key) return null;
 
-  const url = `${YOUTUBE_API_BASE}/videos?part=snippet,contentDetails&id=${encodeURIComponent(videoId)}&key=${key}`;
-  try {
-    const resp = await fetch(url);
-    if (!resp.ok) {
-      if (resp.status !== 400) {
-        console.warn('[YouTube API] videos.list HTTP', resp.status);
+    const url = `${YOUTUBE_API_BASE}/videos?part=snippet,contentDetails&id=${encodeURIComponent(videoId)}&key=${key}`;
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        if (resp.status === 400 || resp.status === 403) {
+          const body = await resp.text().catch(() => '');
+          if (body.includes('API_KEY_INVALID') || body.includes('API key not valid') || body.includes('keyInvalid')) {
+            markCurrentKeyDead('400 API_KEY_INVALID (videoInfo)');
+            if (rotateKey('videoInfo dead key')) continue;
+          }
+        }
+        if (resp.status !== 400) {
+          console.warn('[YouTube API] videos.list HTTP', resp.status);
+        }
+        return null;
       }
+      const json = (await resp.json()) as {
+        items?: Array<{
+          snippet?: { title?: string; channelTitle?: string; thumbnails?: { high?: { url: string }; medium?: { url: string } } };
+          contentDetails?: { duration?: string };
+        }>;
+      };
+      const item = json.items?.[0];
+      if (!item) return null;
+      const title = item.snippet?.title ?? 'Unknown Title';
+      const channel = item.snippet?.channelTitle ?? 'Unknown Artist';
+      const thumbnail =
+        item.snippet?.thumbnails?.high?.url ??
+        item.snippet?.thumbnails?.medium?.url ??
+        `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+      const duration = parseIsoDuration(item.contentDetails?.duration ?? 'PT0S');
+      return { title, channel, thumbnail, duration };
+    } catch (e) {
+      console.warn('[YouTube API] getVideoInfoViaApi failed:', e);
       return null;
     }
-    const json = (await resp.json()) as {
-      items?: Array<{
-        snippet?: { title?: string; channelTitle?: string; thumbnails?: { high?: { url: string }; medium?: { url: string } } };
-        contentDetails?: { duration?: string };
-      }>;
-    };
-    const item = json.items?.[0];
-    if (!item) return null;
-    const title = item.snippet?.title ?? 'Unknown Title';
-    const channel = item.snippet?.channelTitle ?? 'Unknown Artist';
-    const thumbnail =
-      item.snippet?.thumbnails?.high?.url ??
-      item.snippet?.thumbnails?.medium?.url ??
-      `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
-    const duration = parseIsoDuration(item.contentDetails?.duration ?? 'PT0S');
-    return { title, channel, thumbnail, duration };
-  } catch (e) {
-    console.warn('[YouTube API] getVideoInfoViaApi failed:', e);
-    return null;
   }
+  return null;
 }
 
 export interface PlaylistTrackInfo {
@@ -1016,6 +1118,9 @@ export async function getPlaylistTracksViaApi(
   listId: string,
   opts?: { maxTracks?: number }
 ): Promise<PlaylistTrackInfo[] | null> {
+  if (shouldSkipYoutubeDataApiDueToQuotaExhaustion()) {
+    return null;
+  }
   const key = getActiveKey();
   if (!key) return null;
 
