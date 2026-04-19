@@ -110,7 +110,9 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
 
   // Single snap point — sheet opens nearly full-height so everything fits
   // above the keyboard without internal scrolling.
-  const snapPoints = useMemo(() => ['92%'], []);
+  // Shorter sheet so the underlying Vybe Activity screen stays visible above
+  // the composer and the rounded top corners have room to show.
+  const snapPoints = useMemo(() => ['80%'], []);
   const animationConfigs = useBottomSheetSpringConfigs(SHEET_SPRING);
 
   const filteredVault = useMemo(() => {
@@ -544,6 +546,8 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
 const styles = StyleSheet.create({
   sheetBg: {
     backgroundColor: OLED_BLACK,
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
   },
   handlePill: {
     width: 40,
