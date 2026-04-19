@@ -128,24 +128,38 @@ function setCachedUrl(videoId: string, url: string): void {
 /**
  * Resolver attempt = (player_client, whether to attach cookies).
  *
- * Cookie-less attempts go first because cookies trigger account-tier bot
- * detection on Railway's IP (see noCookieYtdlpArgs() docs above). We keep
- * a cookie-bearing attempt at the very end as a last-resort fallback for
- * truly auth-gated content (age-restricted, region-locked, etc).
+ * EMPIRICAL RANKING (2026-04-19, /api/youtube/_test probes):
+ *
+ *   GOLD (returns 27+ formats with NO "MISSING POT" flag → CDN actually
+ *   serves the bytes when we proxy them):
+ *     - mediaconnect, android_vr, android_creator, ios_creator
+ *
+ *   SILVER (returns formats but most are "MISSING POT" → CDN often 403s):
+ *     - ios, tv, tv_embedded, mweb, web_safari
+ *
+ *   COOKIES = POISON: any request that attaches cookies on Railway's
+ *   IP gets storyboards-only. So all attempts must be cookie-less.
+ *
+ * The fast race uses GOLD clients only — these give us PO-token-free
+ * formats that actually stream. SILVER tier remains as a fallback in
+ * case all GOLD clients fail (e.g. video that requires the web client).
  */
 type ResolveAttempt = { client: string; useCookies: boolean };
 function getFastAttempts(): readonly ResolveAttempt[] {
   return [
-    { client: "ios", useCookies: false },
-    { client: "tv", useCookies: false },
-    { client: "tv_embedded", useCookies: false },
+    { client: "mediaconnect", useCookies: false },
+    { client: "android_vr", useCookies: false },
+    { client: "ios_creator", useCookies: false },
   ] as const;
 }
 function getSlowAttempts(): readonly ResolveAttempt[] {
   return [
+    { client: "android_creator", useCookies: false },
+    { client: "ios", useCookies: false },
+    { client: "tv", useCookies: false },
+    { client: "tv_embedded", useCookies: false },
     { client: "mweb", useCookies: false },
     { client: "web_safari", useCookies: false },
-    { client: "ios", useCookies: true },
   ] as const;
 }
 const YTDLP_RESOLVE_FAST_TIMEOUT_MS = 10_000;
@@ -412,12 +426,16 @@ youtubeRouter.get("/download/:videoId", async (c) => {
   const tmpBase = `/tmp/yt_${videoId}_${Date.now()}`;
   const tmpTemplate = `${tmpBase}.%(ext)s`;
 
-  // Try multiple player_clients in order — YouTube's bot detection blocks
-  // individual clients intermittently, so if ios fails we fall through to
-  // tv → web → android. This dramatically improves download reliability.
-  // 2026 PO-token era: tv/ios/tv_embedded don't require PO tokens.
-  // web/android serve formats yt-dlp can't decode → "Requested format unavailable".
-  const PLAYER_CLIENTS = ["tv", "ios", "tv_embedded", "mweb"] as const;
+  // Same GOLD ranking as the resolver: clients that return formats
+  // WITHOUT the "MISSING POT" flag, so the CDN actually serves us bytes.
+  const PLAYER_CLIENTS = [
+    "mediaconnect",
+    "android_vr",
+    "ios_creator",
+    "android_creator",
+    "ios",
+    "tv",
+  ] as const;
 
   const tryClient = async (client: string): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
     // Clean up any partial files from a previous attempt so the --print
@@ -584,7 +602,7 @@ youtubeRouter.get("/search", async (c) => {
 });
 
 /** ytsearch on Railway needs cookies + rotating clients; otherwise we fall through to Data API and burn invalid keys. */
-const YTDLP_SEARCH_CLIENTS = ["tv", "tv_embedded", "ios", "mweb"] as const;
+const YTDLP_SEARCH_CLIENTS = ["mediaconnect", "android_vr", "ios_creator", "ios", "tv"] as const;
 
 function parseYtsearchJsonLines(
   output: string,
@@ -711,11 +729,12 @@ youtubeRouter.get("/info/:videoId", async (c) => {
 });
 
 const YT_DLP_CLIENT_FALLBACKS = [
-  "tv",
+  "mediaconnect",
+  "android_vr",
+  "ios_creator",
   "ios",
+  "tv",
   "tv_embedded",
-  "web_safari",
-  "mweb",
 ];
 
 async function getVideoInfo(videoId: string): Promise<{ title: string; channel: string; thumbnail: string; duration: number }> {
