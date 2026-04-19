@@ -14,6 +14,16 @@ interface DynamicIslandSignalState {
   successLabel: string | null;
   /** Trigger a SUCCESS flash on the pill. */
   flashSuccess: (label?: string) => void;
+
+  /**
+   * Overrides the default "MACHINED_RECOVERY" label when the pill is in
+   * its recovery state. Set to "TOKEN_REFRESH" while the backend is
+   * minting a fresh PO token, so the user knows the app is "thinking"
+   * rather than just stuck on a network error.
+   */
+  recoveryLabel: string | null;
+  /** Set the recovery label override. Pass null to clear. */
+  setRecoveryLabel: (label: string | null) => void;
 }
 
 export const useDynamicIslandSignal = create<DynamicIslandSignalState>((set) => ({
@@ -21,4 +31,8 @@ export const useDynamicIslandSignal = create<DynamicIslandSignalState>((set) => 
   successLabel: null,
   flashSuccess: (label?: string) =>
     set({ successAt: Date.now(), successLabel: label?.slice(0, 42) ?? null }),
+
+  recoveryLabel: null,
+  setRecoveryLabel: (label: string | null) =>
+    set({ recoveryLabel: label?.slice(0, 28) ?? null }),
 }));

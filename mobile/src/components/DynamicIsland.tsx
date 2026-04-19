@@ -122,6 +122,7 @@ export function DynamicIsland() {
 
   const successAt = useDynamicIslandSignal((s) => s.successAt);
   const successLabel = useDynamicIslandSignal((s) => s.successLabel);
+  const recoveryLabelOverride = useDynamicIslandSignal((s) => s.recoveryLabel);
 
   // Derive geometry targets from logical state.
   const applyState = useCallback(
@@ -497,11 +498,15 @@ export function DynamicIsland() {
             >
               <Animated.View style={[styles.recoveryDot, recoveryDotStyle]} />
               <View style={styles.recoveryText}>
-                <Text style={styles.recoveryStatus}>MACHINED_RECOVERY</Text>
+                <Text style={styles.recoveryStatus}>
+                  {recoveryLabelOverride ?? 'MACHINED_RECOVERY'}
+                </Text>
                 <Text style={styles.recoverySub} numberOfLines={1}>
-                  {playbackError
-                    ? playbackError.replace(/^Failed to play:\s*/i, '').slice(0, 42)
-                    : 'Re-routing stream'}
+                  {recoveryLabelOverride === 'TOKEN_REFRESH'
+                    ? 'Minting fresh PO token…'
+                    : playbackError
+                      ? playbackError.replace(/^Failed to play:\s*/i, '').slice(0, 42)
+                      : 'Re-routing stream'}
                 </Text>
               </View>
             </Animated.View>

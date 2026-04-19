@@ -61,7 +61,15 @@ export function buildCookieHeaderForYoutubeUpstream(targetHostname: string): str
 /** Browser-like headers for fetching YouTube CDN / media URLs through our proxy. */
 export function buildYoutubeUpstreamFetchHeaders(
   directUrl: string,
-  opts?: { rangeHeader?: string | undefined },
+  opts?: {
+    rangeHeader?: string | undefined;
+    /**
+     * Visitor data from the PO token bundle. Forwarded as
+     * `X-Goog-Visitor-Id` so the googlevideo CDN ties the request back
+     * to the same identity that minted the PO token.
+     */
+    visitorData?: string | undefined;
+  },
 ): Record<string, string> {
   let hostname = "";
   try {
@@ -80,6 +88,7 @@ export function buildYoutubeUpstreamFetchHeaders(
   };
   if (opts?.rangeHeader) h.Range = opts.rangeHeader;
   if (cookie) h.Cookie = cookie;
+  if (opts?.visitorData) h["X-Goog-Visitor-Id"] = opts.visitorData;
   return h;
 }
 

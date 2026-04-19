@@ -8,6 +8,13 @@ import {
   ensureYoutubeCookiesFile,
 } from "../lib/youtubeCookies";
 import {
+  getPoTokenForVideo,
+  buildYoutubeExtractorArgs,
+  isPoTokenProviderConfigured,
+  getPoTokenProviderStatus,
+  type PoTokenBundle,
+} from "../lib/poTokenProvider";
+import {
   getQuotaStats,
   getSearchCacheSize,
   purgeExpiredSearchCache,
@@ -168,6 +175,7 @@ function tryResolveWithClient(
   videoId: string,
   attempt: ResolveAttempt,
   timeoutMs: number,
+  bundle: PoTokenBundle | null,
   externalSignal?: AbortSignal,
 ): { promise: Promise<string>; abort: () => void } {
   const controller = new AbortController();
@@ -178,6 +186,11 @@ function tryResolveWithClient(
   }
 
   const baseArgs = attempt.useCookies ? commonYtdlpArgs() : noCookieYtdlpArgs();
+  const extractorArgs = buildYoutubeExtractorArgs({
+    client: attempt.client,
+    bundle,
+    includeMissingPot: true,
+  });
 
   const promise = ytDlp
     .execPromise(
@@ -194,7 +207,7 @@ function tryResolveWithClient(
         "--socket-timeout",
         "8",
         "--extractor-args",
-        `youtube:player_client=${attempt.client};formats=missing_pot`,
+        extractorArgs,
         "--js-runtimes",
         "node",
         ...baseArgs,
@@ -222,16 +235,43 @@ function tryResolveWithClient(
  *          the other child processes are aborted immediately).
  * Phase 2: if every fast client fails, fall back to web/mweb sequentially.
  */
+/**
+ * Attempt list for the PO-token-enabled fast race.
+ * `web` becomes viable when we have a PO token — that's the official
+ * YouTube web player and gets the richest format set. We race it
+ * alongside `ios` and `tv` for resilience.
+ */
+const PO_FAST_ATTEMPTS: readonly ResolveAttempt[] = [
+  { client: "web", useCookies: false },
+  { client: "ios", useCookies: false },
+  { client: "tv", useCookies: false },
+] as const;
+
 async function resolveAudioUrl(videoId: string): Promise<string> {
-  const fastAttempts = getFastAttempts();
+  // Phase 0: try to mint a PO token. If the provider isn't configured
+  // or the fetch fails, we fall through to the cookie-less ios/tv path
+  // below — which still works for un-flagged tracks.
+  const bundle = await getPoTokenForVideo(videoId);
+  const fastAttempts = bundle ? PO_FAST_ATTEMPTS : getFastAttempts();
   const slowAttempts = getSlowAttempts();
-  const labelOf = (a: ResolveAttempt) => `${a.client}${a.useCookies ? "+cookies" : ""}`;
+  const labelOf = (a: ResolveAttempt) => {
+    const tag = a.useCookies ? "+cookies" : "";
+    const pot = bundle ? "+pot" : "";
+    return `${a.client}${tag}${pot}`;
+  };
+
+  if (bundle) {
+    console.log(`[yt-dlp] resolve ${videoId}: PO token acquired, racing web/ios/tv`);
+  } else if (isPoTokenProviderConfigured()) {
+    console.warn(`[yt-dlp] resolve ${videoId}: PO provider configured but token fetch failed → cookieless fallback`);
+  }
 
   const races = fastAttempts.map((attempt) => {
     const { promise, abort } = tryResolveWithClient(
       videoId,
       attempt,
       YTDLP_RESOLVE_FAST_TIMEOUT_MS,
+      bundle,
     );
     return {
       attempt,
@@ -263,6 +303,7 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
         videoId,
         attempt,
         YTDLP_RESOLVE_SLOW_TIMEOUT_MS,
+        bundle,
       );
       const url = await promise;
       console.log(`[yt-dlp] resolve ${videoId}: slow fallback ok with ${labelOf(attempt)}`);
@@ -340,7 +381,14 @@ youtubeRouter.get("/audio/:videoId", async (c) => {
       continue;
     }
 
-    const upstreamHeaders = buildYoutubeUpstreamFetchHeaders(directUrl, { rangeHeader });
+    // If we have a PO token bundle for this video, forward visitor data
+    // as X-Goog-Visitor-Id so the CDN ties the request to the same
+    // identity that minted the token.
+    const cachedBundle = await getPoTokenForVideo(videoId);
+    const upstreamHeaders = buildYoutubeUpstreamFetchHeaders(directUrl, {
+      rangeHeader,
+      visitorData: cachedBundle?.visitorData,
+    });
     const cdnAbort = new AbortController();
     const cdnTimeout = setTimeout(() => cdnAbort.abort(), 45_000);
     let res: Response;
@@ -425,9 +473,15 @@ youtubeRouter.get("/download/:videoId", async (c) => {
   const tmpTemplate = `${tmpBase}.%(ext)s`;
 
   // ios/tv/tv_embedded + NO cookies → returns formats; CDN serves bytes
-  // for un-flagged videos. mediaconnect/android_vr extract richer formats
-  // but require cookies that, on Railway IP, are flagged → storyboards-only.
-  const PLAYER_CLIENTS = ["ios", "tv", "tv_embedded", "mweb", "web_safari"] as const;
+  // for un-flagged videos. When a PO token is available we add `web` first
+  // since it gets the richest format set with token-bound CDN access.
+  const bundle = await getPoTokenForVideo(videoId);
+  const PLAYER_CLIENTS = bundle
+    ? (["web", "ios", "tv", "tv_embedded", "mweb"] as const)
+    : (["ios", "tv", "tv_embedded", "mweb", "web_safari"] as const);
+  if (bundle) {
+    console.log(`[YouTube] download ${videoId}: PO token acquired`);
+  }
 
   const tryClient = async (client: string): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
     // Clean up any partial files from a previous attempt so the --print
@@ -445,7 +499,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
         "--no-warnings",
         "--no-part",
         "--print", "after_move:filepath",
-        "--extractor-args", `youtube:player_client=${client};formats=missing_pot`,
+        "--extractor-args", buildYoutubeExtractorArgs({ client, bundle, includeMissingPot: true }),
         "--js-runtimes", "node",
         // Cookies are flagged as bot-suspicious on Railway IPs and cause
         // YouTube to return only storyboards. Download path skips them too.
@@ -740,12 +794,17 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
     "--no-warnings",
   ];
 
+  const bundle = await getPoTokenForVideo(videoId);
+  const clients = bundle
+    ? (["web", ...YT_DLP_CLIENT_FALLBACKS] as const)
+    : YT_DLP_CLIENT_FALLBACKS;
+
   let lastError: Error | null = null;
-  for (const client of YT_DLP_CLIENT_FALLBACKS) {
+  for (const client of clients) {
     try {
       const output = await ytDlp.execPromise([
         ...baseArgs,
-        "--extractor-args", `youtube:player_client=${client};formats=missing_pot`,
+        "--extractor-args", buildYoutubeExtractorArgs({ client, bundle, includeMissingPot: true }),
         ...noCookieYtdlpArgs(),
       ]);
       const lines = output.trim().split("\n");
@@ -1032,6 +1091,39 @@ youtubeRouter.get("/_diag", async (c) => {
       binaryPath: YTDLP_BINARY_PATH,
       binaryExists: ytDlpBinaryExists,
     },
+    poToken: getPoTokenProviderStatus(),
+  });
+});
+
+/**
+ * GET /api/youtube/_pot/:videoId
+ * Probe the configured PO token provider for a single videoId.
+ * Returns token+visitor metadata so we can verify the provider is reachable.
+ * Never logs the raw token.
+ */
+youtubeRouter.get("/_pot/:videoId", async (c) => {
+  const videoId = c.req.param("videoId");
+  if (!videoId || !VIDEO_ID_RE.test(videoId)) {
+    return c.json({ error: "Invalid videoId" }, 400);
+  }
+  const status = getPoTokenProviderStatus();
+  if (!status.configured) {
+    return c.json({ ok: false, reason: "POT_PROVIDER_URL not configured", status });
+  }
+  const start = Date.now();
+  const bundle = await getPoTokenForVideo(videoId);
+  const elapsedMs = Date.now() - start;
+  if (!bundle) {
+    return c.json({ ok: false, reason: "provider returned null", elapsedMs, status });
+  }
+  return c.json({
+    ok: true,
+    elapsedMs,
+    poTokenLength: bundle.poToken.length,
+    poTokenPreview: `${bundle.poToken.slice(0, 8)}…${bundle.poToken.slice(-4)}`,
+    visitorDataLength: bundle.visitorData?.length ?? 0,
+    expiresAt: new Date(bundle.expiresAt).toISOString(),
+    status,
   });
 });
 

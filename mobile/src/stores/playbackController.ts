@@ -14,6 +14,7 @@ import { useDownloadsStore, downloadSoundCloudTrack, enqueueDownload } from '@/s
 import { openNowPlayingSheet } from '@/lib/openNowPlayingSheet';
 import { VYBE_TRACK_PLAYER_BUFFER_CONFIG } from '@/constants/playbackBuffer';
 import { useShadowPlaybackToastStore } from '@/stores/shadowPlaybackToastStore';
+import { useDynamicIslandSignal } from '@/stores/dynamicIslandStore';
 import { getCachedYoutubeResolveUrl, preResolveYoutubeVideoId } from '@/lib/youtubeResolvePreloadCache';
 import {
   createYoutubeAvPlaybackSource,
@@ -1004,11 +1005,16 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
           set({ playbackState: 'playing' });
           youtubeLoadSucceeded = true;
           useShadowPlaybackToastStore.getState().hide();
+          useDynamicIslandSignal.getState().setRecoveryLabel(null);
         } catch (error) {
           const retriable =
             loadAttempt === 0 && isYoutubeVaultReconnectError(error) && isStillCurrent();
           if (retriable) {
             useShadowPlaybackToastStore.getState().showReconnectingVault();
+            // Surface "TOKEN_REFRESH" on the Dynamic Island while the backend
+            // re-resolves — this is when it mints a fresh PO token to defeat
+            // the YouTube CDN bot wall.
+            useDynamicIslandSignal.getState().setRecoveryLabel('TOKEN_REFRESH');
             const again = await resolveYoutubeStreamForVideoId(ytVideoId, backendBase, {
               forceRefresh: true,
             });
@@ -1028,6 +1034,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
           }
           clearGhostProgress();
           useShadowPlaybackToastStore.getState().hide();
+          useDynamicIslandSignal.getState().setRecoveryLabel(null);
           if (vybeSound) {
             try {
               await vybeSound.unloadAsync();
