@@ -28,7 +28,8 @@ import { VIBRANT_BLUE } from '@/constants/machinedTheme';
  * - Idle: slim centered pill under the Dynamic Island notch.
  * - Playing: morphs wider to show track metadata + magenta heartbeat.
  * - Tap: expands into a Shadow Sexy mini-controller (art + transport).
- * - Long press: flips to a DaVinci Dynamics system-status card for 2.4s.
+ * - Long press (pill): flips to a DaVinci Dynamics system-status card for 2.4s.
+ * - Long press (expanded “POWERED_BY_DAVINCI”): QA — runs simulateVaultFailure (shadow heal / SC match).
  * - Easter egg: when the current track artist is MainStreetTeesUS the border
  *   glows Neon Amber instead of Machined Blue.
  */
@@ -422,6 +423,12 @@ export function DynamicIsland() {
     void Linking.openURL('https://davincidynamics.ai');
   }, []);
 
+  /** Dev/QA: force vault-fail → SHADOW_HEALING + SoundCloud match path (see playbackController). */
+  const handlePoweredByDavinciLongPress = useCallback(() => {
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    void usePlaybackController.getState().simulateVaultFailure();
+  }, []);
+
   // ── Animated styles ───────────────────────────────────────────────────────
   const pillAnimatedStyle = useAnimatedStyle(() => {
     const g = glowIntensitySV.value;
@@ -606,9 +613,17 @@ export function DynamicIsland() {
                 <Text numberOfLines={1} style={styles.expandedArtist}>
                   {currentTrack?.artist ?? 'Tap the pill any time to peek'}
                 </Text>
-                <Text numberOfLines={1} style={styles.expandedPoweredBy}>
-                  POWERED_BY_DAVINCI
-                </Text>
+                <Pressable
+                  onLongPress={handlePoweredByDavinciLongPress}
+                  delayLongPress={520}
+                  hitSlop={{ top: 6, bottom: 6, left: 10, right: 10 }}
+                  accessibilityLabel="Powered by DaVinci"
+                  accessibilityHint="Long press to simulate vault failure and shadow healing"
+                >
+                  <Text numberOfLines={1} style={styles.expandedPoweredBy}>
+                    POWERED_BY_DAVINCI
+                  </Text>
+                </Pressable>
               </View>
               <View style={styles.expandedTransport}>
                 <Pressable

@@ -18,6 +18,16 @@ import { preResolveSoundcloudStreamUrl } from '@/lib/soundcloudStreamPreloadCach
 const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> =>
   Promise.race([promise, new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
 
+/** One retry after a short backoff — helps when Railway returns transient 502s. */
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch {
+    await new Promise((r) => setTimeout(r, 500));
+    return await fn();
+  }
+}
+
 /** YouTube search hit — prefer `artwork`; tolerate legacy `eraArtwork` / `thumbnailUrl`. */
 type PlaylistHit = {
   videoId: string;
@@ -83,9 +93,11 @@ export function useGenreSearch(genre: string | null) {
 
       setLoading({ music: true, video: true, waves: true });
 
-      withTimeout(
-        api.get<PlaylistHit[]>(`/api/youtube/search?q=${encodeURIComponent(queries.ytMusic)}&maxResults=15`),
-        25000,
+      withRetry(() =>
+        withTimeout(
+          api.get<PlaylistHit[]>(`/api/youtube/search?q=${encodeURIComponent(queries.ytMusic)}&maxResults=15`),
+          25000,
+        ),
       )
         .then((res) => {
           if (activeGenreRef.current !== g) return;
@@ -122,9 +134,11 @@ export function useGenreSearch(genre: string | null) {
           tryCommitGenreCache(g, partial);
         });
 
-      withTimeout(
-        api.get<PlaylistHit[]>(`/api/youtube/search?q=${encodeURIComponent(queries.youtube)}&maxResults=12`),
-        25000,
+      withRetry(() =>
+        withTimeout(
+          api.get<PlaylistHit[]>(`/api/youtube/search?q=${encodeURIComponent(queries.youtube)}&maxResults=12`),
+          25000,
+        ),
       )
         .then((res) => {
           if (activeGenreRef.current !== g) return;
@@ -160,9 +174,11 @@ export function useGenreSearch(genre: string | null) {
           tryCommitGenreCache(g, partial);
         });
 
-      withTimeout(
-        api.get<SCHit[]>(`/api/soundcloud/search?q=${encodeURIComponent(queries.soundcloud)}&maxResults=15`),
-        25000,
+      withRetry(() =>
+        withTimeout(
+          api.get<SCHit[]>(`/api/soundcloud/search?q=${encodeURIComponent(queries.soundcloud)}&maxResults=15`),
+          25000,
+        ),
       )
         .then((res) => {
           if (activeGenreRef.current !== g) return;

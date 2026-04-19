@@ -79,6 +79,9 @@ interface GlobalSearchApiRow {
   vaultDeferred?: boolean;
 }
 
+/** Unwrapped `data` from GET /api/search/global/vault (see `api.get`). */
+type VaultSearchPayload = { vaultTracks: GlobalSearchApiRow['vaultTracks'] };
+
 interface SpotifyPlaylistTrack {
   videoId: string;
   title: string;
@@ -268,20 +271,43 @@ export default function SearchScreen() {
         24000,
       ).catch(() => null);
       const vaultP = withTimeout(
-        api.get<{ data: { vaultTracks: GlobalSearchApiRow['vaultTracks'] } }>(
-          `/api/search/global/vault?q=${encodeURIComponent(q)}`,
-        ),
+        api.get<VaultSearchPayload>(`/api/search/global/vault?q=${encodeURIComponent(q)}`),
         24000,
       ).catch(() => null);
 
       void (async () => {
+        const mapVault = (rows: GlobalSearchApiRow['vaultTracks']) =>
+          filterDeadYoutubeQueueTracks(
+            (rows ?? []).map((t) => ({
+              id: `ytm-${t.videoId}`,
+              title: t.title,
+              artist: t.channelName,
+              artwork: t.thumbnailUrl,
+              source: 'youtube_music' as const,
+              youtubeMusicId: t.videoId,
+              audioUrl: '',
+              artistId: '',
+              album: '',
+              albumId: '',
+              isLiked: false,
+              duration: 0,
+            })),
+          );
+
         try {
           const payload = await globalP;
           if (cancelled) return;
           if (!payload) {
-            setLiveSoundCloudTracks([]);
-            setLiveYtMusicTracks([]);
+            // 502 / timeout — keep MMKV-hydrated rows; still try vault-only.
             setVaultDeferredLatch(false);
+            const vaultOnly = await vaultP;
+            if (!cancelled && vaultOnly?.vaultTracks?.length) {
+              const ytMapped = mapVault(vaultOnly.vaultTracks);
+              setLiveYtMusicTracks(ytMapped);
+              ytMapped.slice(0, 3).forEach((tr) => {
+                if (tr.youtubeMusicId) preResolveYoutubeVideoId(tr.youtubeMusicId);
+              });
+            }
             return;
           }
           if (payload.vaultDeferred) {
@@ -307,32 +333,14 @@ export default function SearchScreen() {
           }));
           setLiveSoundCloudTracks(scMapped);
 
-          const mapVault = (rows: GlobalSearchApiRow['vaultTracks']) =>
-            filterDeadYoutubeQueueTracks(
-              (rows ?? []).map((t) => ({
-                id: `ytm-${t.videoId}`,
-                title: t.title,
-                artist: t.channelName,
-                artwork: t.thumbnailUrl,
-                source: 'youtube_music' as const,
-                youtubeMusicId: t.videoId,
-                audioUrl: '',
-                artistId: '',
-                album: '',
-                albumId: '',
-                isLiked: false,
-                duration: 0,
-              })),
-            );
-
           let ytMapped: Track[] = mapVault(payload.vaultTracks);
           if (ytMapped.length > 0) {
             setLiveYtMusicTracks(ytMapped);
           }
 
           const vaultPayload = await vaultP;
-          if (!cancelled && vaultPayload?.data?.vaultTracks?.length) {
-            ytMapped = mapVault(vaultPayload.data.vaultTracks);
+          if (!cancelled && vaultPayload?.vaultTracks?.length) {
+            ytMapped = mapVault(vaultPayload.vaultTracks);
             setLiveYtMusicTracks(ytMapped);
           }
           if (!cancelled) setVaultDeferredLatch(false);
@@ -340,8 +348,7 @@ export default function SearchScreen() {
           searchMMKV.set(`typed:${q.toLowerCase()}`, { yt: ytMapped, sc: scMapped });
 
           ytMapped.slice(0, 3).forEach((tr) => {
-            const id = tr.youtubeMusicId ?? tr.youtubeId;
-            if (id) preResolveYoutubeVideoId(id);
+            if (tr.youtubeMusicId) preResolveYoutubeVideoId(tr.youtubeMusicId);
           });
           scMapped.slice(0, 10).forEach((tr) => {
             if (tr.soundcloudUrl) preResolveSoundcloudStreamUrl(tr.soundcloudUrl);

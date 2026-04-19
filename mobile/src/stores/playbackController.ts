@@ -1188,8 +1188,8 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
           if (isYoutubeHardStreamFailure(msg)) {
             void (async () => {
               useDynamicIslandSignal.getState().setHealingStreamActive(true);
-              useDynamicIslandSignal.getState().setRecoveryLabel('SHADOW_HEALING');
               try {
+                useDynamicIslandSignal.getState().setRecoveryLabel('SHADOW_HEALING');
                 const alt = await fetchSoundcloudMatchForYoutubeTrack(track);
                 if (!alt?.soundcloudUrl) return;
                 const stillSame = get().currentTrack?.id === track.id;
@@ -1810,6 +1810,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         }
       }
       // 2. Fall back to the SC bridge match.
+      useDynamicIslandSignal.getState().setRecoveryLabel('SHADOW_HEALING');
       const alt = await fetchSoundcloudMatchForYoutubeTrack(track);
       if (alt?.soundcloudUrl && get().currentTrack?.id === track.id) {
         const q = get().queue;
