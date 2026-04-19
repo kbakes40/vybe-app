@@ -5,9 +5,7 @@ import * as FileSystem from 'expo-file-system';
 import { NativeModules, Platform } from 'react-native';
 import { Track } from '@/types/music';
 import { getShadowSyncDir, shadowSyncFilename } from './storageSettingsStore';
-
-// ── Live Activity bridge (iOS 16.1+ only) ─────────────────────────────────────
-const LiveActivityBridge = Platform.OS === 'ios' ? NativeModules.VybeDownloadActivity : null;
+import { getVybeDownloadActivityModule, startVybeDownloadLiveActivity } from '@/lib/audio/PlaybackController';
 
 // ── Native background downloader (iOS only) ─────────────────────────────────
 // Uses URLSession.background so downloads keep running — and the Dynamic
@@ -64,7 +62,7 @@ async function laStartDownloadActivity(
   _laPending = null;
   _laLastSentAt = 0;
   try {
-    await LiveActivityBridge?.startActivity(trackTitle, artistName, artworkUrl);
+    await startVybeDownloadLiveActivity({ trackTitle, artistName, artworkUrl });
   } catch {
     /* ActivityKit optional */
   }
@@ -84,11 +82,13 @@ function _laFlush(): void {
   const { progress, statusText } = _laPending;
   _laPending = null;
   _laLastSentAt = Date.now();
-  try { LiveActivityBridge?.updateProgress(progress, statusText); } catch {}
+  try {
+    getVybeDownloadActivityModule()?.updateProgress(progress, statusText);
+  } catch {}
 }
 
 function laUpdateProgress(progress: number, statusText: string): void {
-  if (!LiveActivityBridge) return;
+  if (!getVybeDownloadActivityModule()) return;
   const now = Date.now();
   const sinceLast = now - _laLastSentAt;
 
@@ -118,7 +118,7 @@ function laEndActivity(success: boolean): void {
   _laPending = null;
   _laLastSentAt = 0;
   try {
-    LiveActivityBridge?.endActivity(success);
+    getVybeDownloadActivityModule()?.endActivity(success);
   } catch (e) {
     console.log('[LiveActivity] endActivity ERROR', e);
   }
