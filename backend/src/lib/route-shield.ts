@@ -98,10 +98,10 @@ export function routeShield(opts: RouteShieldOptions): MiddlewareHandler {
       if (timer) clearTimeout(timer);
     }
 
-    // Path A — handler finished within deadline. Snapshot if it's a healthy
-    // 2xx JSON response so future timeouts can serve last-known-good.
+    // Path A — handler finished within deadline.
     if (outcome === "ok" && !timedOut) {
       const res = c.res;
+      // Healthy 2xx → snapshot for future last-known-good fallbacks.
       if (res && res.status >= 200 && res.status < 300) {
         try {
           const cloned = res.clone();
@@ -122,8 +122,29 @@ export function routeShield(opts: RouteShieldOptions): MiddlewareHandler {
         } catch {
           // Snapshotting is best-effort; never block the response.
         }
+        return;
       }
-      return;
+      // 5xx returned BY the handler (e.g. `c.json({error}, 500)`) is treated
+      // the same way a thrown exception would be — these shielded routes are
+      // GET-only data feeds where a 5xx is always a backend problem the
+      // client can't fix. Serve last-known-good or stable empty instead so
+      // the rails don't go cyan-skeleton on transient yt-dlp/SoundCloud
+      // failures. This is intentionally a one-way street: 4xx is preserved
+      // (client made a bad request) but 5xx is rewritten.
+      if (res && res.status >= 500) {
+        outcome = "error";
+        try {
+          const cloned = res.clone();
+          const body = await cloned.text();
+          caughtError = `handler returned ${res.status}: ${body.slice(0, 240)}`;
+        } catch {
+          caughtError = `handler returned ${res.status} (body unreadable)`;
+        }
+        // fall through to Path B below
+      } else {
+        // 4xx or other non-2xx that isn't 5xx — pass through unchanged.
+        return;
+      }
     }
 
     // Path B — handler timed out OR threw. Serve last-known-good if we have

@@ -225,7 +225,7 @@ app.route("/api/vault", vaultRouter);
 
 // Build marker — bumped to force Railway to pick up new commits.
 // If you see this in Railway logs, the new code IS deployed.
-const BUILD_MARKER = "vybe-backend@2026-04-19T20:15:00Z [route-shield + compress middleware removed (CompressionStream undefined on runtime)]";
+const BUILD_MARKER = "vybe-backend@2026-04-19T20:45:00Z [route-shield now also rewrites handler-returned 5xx to cached/empty (sc/discovery)]";
 console.log("[boot]", BUILD_MARKER);
 app.get("/api/_build", (c) => c.json({ marker: BUILD_MARKER }));
 
