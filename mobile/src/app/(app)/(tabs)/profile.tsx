@@ -1,12 +1,28 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable } from 'react-native';
+import { View, Text, ScrollView, Pressable, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Crown, Settings, Smartphone, HelpCircle, ChevronRight } from 'lucide-react-native';
 import { authClient } from '@/lib/auth/auth-client';
-import { usePlaybackController } from '@/stores/playbackController';
-import { tabScreenScrollBottomPad } from '@/constants/miniPlayer';
+import { clearSessionBearerToken } from '@/lib/auth/sessionBearer';
+import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
+
+async function bulletproofSignOut(replace: (path: string) => void) {
+  console.log('[signOut:profile] starting…');
+  try { await authClient.signOut(); } catch (e) { console.warn('[signOut:profile] backend failed:', e); }
+  try { await clearSessionBearerToken(); } catch (e) { console.warn('[signOut:profile] bearer clear failed:', e); }
+  try {
+    const SecureStore = await import('expo-secure-store');
+    const KEYS = [
+      'vybe.session_data', 'vybe.session-token', 'vybe.cookie',
+      'vybe_api_session_bearer',
+      'better-auth.session_data', 'better-auth.session-token', 'better-auth.cookie',
+    ];
+    await Promise.all(KEYS.map((k) => SecureStore.deleteItemAsync(k).catch(() => undefined)));
+  } catch (e) { console.warn('[signOut:profile] secure-store purge failed:', e); }
+  try { replace('/sign-in'); } catch (e) { console.warn('[signOut:profile] nav failed:', e); }
+}
 
 function MenuItem({ icon, label, onPress }: { icon: React.ReactNode; label: string; onPress: () => void }) {
   return (
@@ -24,11 +40,14 @@ function MenuItem({ icon, label, onPress }: { icon: React.ReactNode; label: stri
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const currentTrack = usePlaybackController((s) => s.currentTrack);
 
   return (
     <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
-      <ScrollView contentContainerStyle={{ paddingBottom: tabScreenScrollBottomPad(insets.bottom, !!currentTrack) }} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: tabScreenContentContainerPaddingBottom(insets.bottom) }}
+        showsVerticalScrollIndicator={false}
+        automaticallyAdjustContentInsets={false}
+      >
         <View style={{ alignItems: 'center', paddingTop: insets.top + 24, paddingBottom: 32 }}>
           <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 24 }}>Account Settings</Text>
           <View style={{ width: 88, height: 88, borderRadius: 44, backgroundColor: '#282828', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
@@ -37,7 +56,7 @@ export default function ProfileScreen() {
         </View>
 
         <View style={{ borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.06)' }}>
-          <MenuItem icon={<Crown size={20} color="#8B5CF6" />} label="Premium Subscription" onPress={() => router.push('/(app)/upgrade' as never)} />
+          <MenuItem icon={<Crown size={20} color="#8B5CF6" />} label="Your Plan" onPress={() => router.push('/(app)/your-plan' as never)} />
           <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.06)', marginLeft: 60 }} />
           <MenuItem icon={<Settings size={20} color="rgba(255,255,255,0.6)" />} label="App Preferences" onPress={() => router.push('/(app)/settings' as never)} />
           <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.06)', marginLeft: 60 }} />
@@ -48,7 +67,24 @@ export default function ProfileScreen() {
 
         <View style={{ paddingHorizontal: 20, paddingTop: 40 }}>
           <Pressable
-            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); authClient.signOut(); }}
+            onPress={() => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              Alert.alert(
+                'Sign Out',
+                'Are you sure you want to sign out?',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Sign Out',
+                    style: 'destructive',
+                    onPress: () => {
+                      void bulletproofSignOut((p) => router.replace(p as never));
+                    },
+                  },
+                ],
+                { cancelable: true },
+              );
+            }}
             style={{ backgroundColor: '#1A1A1A', borderRadius: 12, paddingVertical: 16, alignItems: 'center' }}
           >
             <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 16, fontWeight: '600' }}>Sign Out</Text>

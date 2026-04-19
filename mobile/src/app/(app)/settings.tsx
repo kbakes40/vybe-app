@@ -1,15 +1,29 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
   ScrollView,
   Pressable,
-  Switch,
+  Platform,
+  StyleSheet,
+  Keyboard,
+  KeyboardAvoidingView,
+  Linking,
+  Alert,
 } from 'react-native';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+  withSequence,
+  Easing,
+  interpolateColor,
+  runOnJS,
+} from 'react-native-reanimated';
+import Slider from '@react-native-community/slider';
 import { VybeTextInput } from '@/components/VybeTextInput';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import {
   ChevronLeft,
@@ -48,26 +62,109 @@ import {
   Bug,
 } from 'lucide-react-native';
 import { authClient } from '@/lib/auth/auth-client';
+import { clearSessionBearerToken } from '@/lib/auth/sessionBearer';
 import { useDiscoveryStore } from '@/stores/discoveryStore';
 import { usePlaybackDebugStore } from '@/stores/playbackDebugStore';
 import { usePlaybackController } from '@/stores/playbackController';
+import { useUserSettingsStore } from '@/stores/userSettingsStore';
 import { MINI_PLAYER_HEIGHT } from './_layout';
 import { useVybePopup } from '@/components/VybePopup';
+import { ShadowNeonSwitch } from '@/components/ShadowNeonSwitch';
+import { VIBRANT_BLUE, OLED_BLACK, NAVY_TRACK } from '@/constants/machinedTheme';
 
-interface SettingsSectionProps {
-  title: string;
-  children: React.ReactNode;
+const STROKE = 1.5;
+
+const MACHINED_ICON = { color: VIBRANT_BLUE, glow: VIBRANT_BLUE } as const;
+
+type IconCategory =
+  | 'account'
+  | 'audio'
+  | 'data'
+  | 'notifications'
+  | 'privacy'
+  | 'content'
+  | 'storage'
+  | 'discovery'
+  | 'about'
+  | 'developer'
+  | 'destructive';
+
+const CATEGORY_TINT: Record<
+  IconCategory,
+  { color: string; glow: string }
+> = {
+  account: MACHINED_ICON,
+  audio: MACHINED_ICON,
+  data: MACHINED_ICON,
+  notifications: MACHINED_ICON,
+  privacy: MACHINED_ICON,
+  content: MACHINED_ICON,
+  storage: MACHINED_ICON,
+  discovery: MACHINED_ICON,
+  about: MACHINED_ICON,
+  developer: MACHINED_ICON,
+  destructive: { color: '#EF4444', glow: '#EF4444' },
+};
+
+function CategoryIcon({
+  category,
+  children,
+}: {
+  category: IconCategory;
+  children: React.ReactElement<{ color?: string; size?: number; strokeWidth?: number }>;
+}) {
+  const { color, glow } = CATEGORY_TINT[category];
+  return (
+    <View
+      style={[
+        styles.iconShell,
+        Platform.OS === 'ios'
+          ? {
+              shadowColor: glow,
+              shadowOffset: { width: 0, height: 0 },
+              shadowOpacity: 0.85,
+              shadowRadius: 4,
+            }
+          : { elevation: 3 },
+      ]}
+    >
+      {React.cloneElement(children, {
+        size: 20,
+        color,
+        strokeWidth: STROKE,
+      })}
+    </View>
+  );
 }
 
-function SettingsSection({ title, children }: SettingsSectionProps) {
+function rowMatchesSearch(title: string, subtitle: string | undefined, q: string) {
+  if (!q.trim()) return true;
+  const needle = q.trim().toLowerCase();
+  return `${title} ${subtitle ?? ''}`.toLowerCase().includes(needle);
+}
+
+function useThrottledSelection() {
+  const last = useRef(0);
+  return useCallback(() => {
+    const now = Date.now();
+    if (now - last.current > 100) {
+      last.current = now;
+      void Haptics.selectionAsync();
+    }
+  }, []);
+}
+
+function SettingsSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
-    <View className="mb-8">
-      <Text className="text-white/50 text-xs uppercase tracking-wider px-5 mb-3 font-medium">
-        {title}
-      </Text>
-      <View className="bg-[#1A1A1A] mx-4 rounded-xl overflow-hidden">
-        {children}
-      </View>
+    <View style={styles.sectionWrap}>
+      <Text style={styles.sectionTitle}>{title.toUpperCase()}</Text>
+      <View style={styles.shadowCard}>{children}</View>
     </View>
   );
 }
@@ -77,12 +174,14 @@ interface SettingsItemProps {
   title: string;
   subtitle?: string;
   value?: string;
+  valueAccessory?: React.ReactNode;
   showChevron?: boolean;
   showSwitch?: boolean;
   switchValue?: boolean;
   onSwitchChange?: (value: boolean) => void;
   onPress?: () => void;
   isDestructive?: boolean;
+  searchQuery: string;
 }
 
 function SettingsItem({
@@ -90,64 +189,116 @@ function SettingsItem({
   title,
   subtitle,
   value,
+  valueAccessory,
   showChevron = false,
   showSwitch = false,
   switchValue = false,
   onSwitchChange,
   onPress,
   isDestructive = false,
+  searchQuery,
 }: SettingsItemProps) {
+  if (!rowMatchesSearch(title, subtitle, searchQuery)) return null;
+
   return (
     <Pressable
       onPress={() => {
         if (onPress) {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
           onPress();
         }
       }}
       disabled={!onPress && !showSwitch}
-      className="flex-row items-center py-3.5 px-4"
-      style={({ pressed }) => ({
-        backgroundColor: pressed && onPress ? 'rgba(255,255,255,0.05)' : 'transparent',
-      })}
+      style={({ pressed }) => [
+        styles.row,
+        styles.rowBorder,
+        pressed && onPress ? { backgroundColor: 'rgba(255,255,255,0.04)' } : null,
+      ]}
     >
-      <View className="w-8 items-center">{icon}</View>
-      <View className="flex-1 ml-3">
-        <Text
-          className="text-base font-medium"
-          style={{ color: isDestructive ? '#EF4444' : '#fff' }}
-        >
-          {title}
-        </Text>
+      <View style={styles.rowIcon}>{icon}</View>
+      <View style={styles.rowBody}>
+        <View style={styles.titleRow}>
+          <Text
+            style={[styles.rowTitle, isDestructive && { color: '#EF4444' }]}
+            numberOfLines={2}
+          >
+            {title}
+          </Text>
+          {valueAccessory}
+        </View>
         {subtitle ? (
-          <Text className="text-white/50 text-[13px] mt-0.5" numberOfLines={2}>
+          <Text style={styles.rowSubtitle} numberOfLines={3}>
             {subtitle}
           </Text>
         ) : null}
       </View>
-      {value ? (
-        <Text className="text-white/50 text-sm mr-2">{value}</Text>
-      ) : null}
-      {showChevron ? (
-        <ChevronRight size={18} color="rgba(255,255,255,0.3)" />
-      ) : null}
+      {value ? <Text style={styles.rowValue}>{value}</Text> : null}
+      {showChevron ? <ChevronRight size={18} color="rgba(255,255,255,0.28)" strokeWidth={STROKE} /> : null}
       {showSwitch ? (
-        <Switch
+        <ShadowNeonSwitch
           value={switchValue}
           onValueChange={(val) => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            void Haptics.selectionAsync();
             onSwitchChange?.(val);
           }}
-          trackColor={{ false: '#3E3E3E', true: '#8B5CF6' }}
-          thumbColor="#fff"
         />
       ) : null}
     </Pressable>
   );
 }
 
-function SettingsDivider() {
-  return <View className="h-px bg-white/10 ml-16" />;
+function ShadowSliderRow({
+  icon,
+  title,
+  subtitle,
+  value,
+  onValueChange,
+  minimumValue,
+  maximumValue,
+  searchQuery,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  subtitle?: string;
+  value: number;
+  onValueChange: (v: number) => void;
+  minimumValue: number;
+  maximumValue: number;
+  searchQuery: string;
+}) {
+  if (!rowMatchesSearch(title, subtitle, searchQuery)) return null;
+  const bump = useThrottledSelection();
+
+  return (
+    <View style={[styles.row, styles.sliderRow, styles.rowBorder]}>
+      <View style={styles.rowIcon}>{icon}</View>
+      <View style={styles.sliderBody}>
+        <Text style={styles.rowTitle}>{title}</Text>
+        {subtitle ? <Text style={styles.rowSubtitle}>{subtitle}</Text> : null}
+        <Slider
+          style={styles.slider}
+          minimumValue={minimumValue}
+          maximumValue={maximumValue}
+          value={value}
+          onValueChange={(v) => {
+            bump();
+            onValueChange(v);
+          }}
+          minimumTrackTintColor={VIBRANT_BLUE}
+          maximumTrackTintColor={NAVY_TRACK}
+          thumbTintColor={VIBRANT_BLUE}
+        />
+      </View>
+    </View>
+  );
+}
+
+function HqBadge({ label }: { label: string }) {
+  return (
+    <View style={styles.hqBadge}>
+      <Text style={styles.hqBadgeText}>{label}</Text>
+    </View>
+  );
 }
 
 export default function SettingsScreen() {
@@ -155,196 +306,315 @@ export default function SettingsScreen() {
   const router = useRouter();
   const { showVybePopup } = useVybePopup();
   const [searchQuery, setSearchQuery] = useState('');
+  const [crossfade, setCrossfade] = useState(false);
+  const [crossfadeSec, setCrossfadeSec] = useState(4);
+  const [pushNotifications, setPushNotifications] = useState(true);
 
-  // Check if mini player is visible
-  const currentTrack = usePlaybackController(s => s.currentTrack);
+  const currentTrack = usePlaybackController((s) => s.currentTrack);
+  const playbackVolume = usePlaybackController((s) => s.volume);
+  const setPlaybackVolume = usePlaybackController((s) => s.setVolume);
   const showMiniPlayer = !!currentTrack;
 
-  // Discovery store
-  const autoRefreshEnabled = useDiscoveryStore(s => s.autoRefreshEnabled);
-  const setAutoRefreshEnabled = useDiscoveryStore(s => s.setAutoRefreshEnabled);
-  const clearDiscoveryCache = useDiscoveryStore(s => s.clearDiscoveryCache);
-  const seedTracksCount = useDiscoveryStore(s => s.seedTracks.length);
-  const discoveredTracksCount = useDiscoveryStore(s => s.discoveredTracks.length);
+  const gapless = useUserSettingsStore((s) => s.gapless);
+  const setGapless = useUserSettingsStore((s) => s.setGapless);
+  const normalizeVolume = useUserSettingsStore((s) => s.normalizeVolume);
+  const setNormalizeVolume = useUserSettingsStore((s) => s.setNormalizeVolume);
+  const autoplay = useUserSettingsStore((s) => s.autoplay);
+  const setAutoplay = useUserSettingsStore((s) => s.setAutoplay);
+  const audioQuality = useUserSettingsStore((s) => s.audioQuality);
+  const setAudioQuality = useUserSettingsStore((s) => s.setAudioQuality);
+  const dataSaver = useUserSettingsStore((s) => s.dataSaver);
+  const setDataSaver = useUserSettingsStore((s) => s.setDataSaver);
+  const cellularStreamingQuality = useUserSettingsStore((s) => s.cellularStreamingQuality);
+  const setCellularStreamingQuality = useUserSettingsStore((s) => s.setCellularStreamingQuality);
+  const downloadCellular = useUserSettingsStore((s) => s.downloadCellular);
+  const setDownloadCellular = useUserSettingsStore((s) => s.setDownloadCellular);
+  const downloadQuality = useUserSettingsStore((s) => s.downloadQuality);
+  const setDownloadQuality = useUserSettingsStore((s) => s.setDownloadQuality);
+  const newMusicNotifications = useUserSettingsStore((s) => s.newMusicNotifications);
+  const setNewMusicNotifications = useUserSettingsStore((s) => s.setNewMusicNotifications);
+  const productAnnouncements = useUserSettingsStore((s) => s.productAnnouncements);
+  const setProductAnnouncements = useUserSettingsStore((s) => s.setProductAnnouncements);
+  const privateSession = useUserSettingsStore((s) => s.privateSession);
+  const setPrivateSession = useUserSettingsStore((s) => s.setPrivateSession);
+  const listeningActivity = useUserSettingsStore((s) => s.listeningActivity);
+  const setListeningActivity = useUserSettingsStore((s) => s.setListeningActivity);
+  const explicitContent = useUserSettingsStore((s) => s.explicitContent);
+  const setExplicitContent = useUserSettingsStore((s) => s.setExplicitContent);
 
-  // Debug store
-  const debugModeEnabled = usePlaybackDebugStore(s => s.debugModeEnabled);
-  const setDebugModeEnabled = usePlaybackDebugStore(s => s.setDebugModeEnabled);
-  const handleUnlockTap = usePlaybackDebugStore(s => s.handleUnlockTap);
-  const debugOverlayVisible = usePlaybackDebugStore(s => s.debugOverlayVisible);
-  const toggleDebugOverlay = usePlaybackDebugStore(s => s.toggleDebugOverlay);
+  const autoRefreshEnabled = useDiscoveryStore((s) => s.autoRefreshEnabled);
+  const setAutoRefreshEnabled = useDiscoveryStore((s) => s.setAutoRefreshEnabled);
+  const clearDiscoveryCache = useDiscoveryStore((s) => s.clearDiscoveryCache);
+  const seedTracksCount = useDiscoveryStore((s) => s.seedTracks.length);
+  const discoveredTracksCount = useDiscoveryStore((s) => s.discoveredTracks.length);
 
-  // Calculate bottom padding: safe area + mini player height (if visible) + extra padding
-  const bottomPadding = insets.bottom + (showMiniPlayer ? MINI_PLAYER_HEIGHT : 0) + 40;
+  const debugModeEnabled = usePlaybackDebugStore((s) => s.debugModeEnabled);
+  const setDebugModeEnabled = usePlaybackDebugStore((s) => s.setDebugModeEnabled);
+  const handleUnlockTap = usePlaybackDebugStore((s) => s.handleUnlockTap);
+  const debugOverlayVisible = usePlaybackDebugStore((s) => s.debugOverlayVisible);
+  const toggleDebugOverlay = usePlaybackDebugStore((s) => s.toggleDebugOverlay);
 
-  // Local state (not persisted — keeping it simple)
-  const [crossfade, setCrossfade] = useState(false);
-  const [gapless, setGapless] = useState(true);
-  const [normalizeVolume, setNormalizeVolume] = useState(true);
-  const [autoplay, setAutoplay] = useState(true);
-  const [dataSaver, setDataSaver] = useState(false);
-  const [pushNotifications, setPushNotifications] = useState(true);
-  const [newMusicNotifications, setNewMusicNotifications] = useState(true);
-  const [productAnnouncements, setProductAnnouncements] = useState(false);
-  const [privateSession, setPrivateSession] = useState(false);
-  const [listeningActivity, setListeningActivity] = useState(true);
-  const [explicitContent, setExplicitContent] = useState(true);
-  const [downloadCellular, setDownloadCellular] = useState(false);
+  const bottomPadding = insets.bottom + (showMiniPlayer ? MINI_PLAYER_HEIGHT : 0) + 48;
+
+  const cycleAudioQuality = () => {
+    void Haptics.selectionAsync();
+    const order: Array<'Low' | 'Normal' | 'High'> = ['Low', 'Normal', 'High'];
+    const i = order.indexOf(audioQuality);
+    setAudioQuality(order[(i + 1) % order.length]);
+  };
+
+  const cycleCellularQuality = () => {
+    void Haptics.selectionAsync();
+    const order: Array<'Low' | 'Normal' | 'High'> = ['Low', 'Normal', 'High'];
+    const i = order.indexOf(cellularStreamingQuality);
+    setCellularStreamingQuality(order[(i + 1) % order.length]);
+  };
+
+  const cycleDownloadQuality = () => {
+    void Haptics.selectionAsync();
+    const order: Array<'Low' | 'Normal' | 'High'> = ['Low', 'Normal', 'High'];
+    const i = order.indexOf(downloadQuality);
+    setDownloadQuality(order[(i + 1) % order.length]);
+  };
 
   const handleSignOut = async () => {
+    console.log('[signOut] starting…');
+    // Step 1: best-effort backend sign-out (don't let a backend hiccup block local cleanup).
     try {
       await authClient.signOut();
-    } catch {
-      // ignore
+      console.log('[signOut] backend signOut ok');
+    } catch (e) {
+      console.warn('[signOut] backend signOut failed (continuing anyway):', e);
     }
-    router.replace('/sign-in');
+
+    // Step 2: nuke the bearer token from SecureStore.
+    try {
+      await clearSessionBearerToken();
+      console.log('[signOut] bearer cleared');
+    } catch (e) {
+      console.warn('[signOut] clearSessionBearerToken failed:', e);
+    }
+
+    // Step 3: nuke ALL Better Auth keys SecureStore may be caching.
+    try {
+      const SecureStore = await import('expo-secure-store');
+      const KEYS = [
+        'vybe.session_data',
+        'vybe.session-token',
+        'vybe.cookie',
+        'vybe_api_session_bearer',
+        'better-auth.session_data',
+        'better-auth.session-token',
+        'better-auth.cookie',
+      ];
+      await Promise.all(
+        KEYS.map((k) => SecureStore.deleteItemAsync(k).catch(() => undefined)),
+      );
+      console.log('[signOut] SecureStore session keys purged');
+    } catch (e) {
+      console.warn('[signOut] SecureStore purge failed:', e);
+    }
+
+    // Step 4: force-navigate to the sign-in screen so we don't sit on a
+    // stale Settings page if the root layout's session listener is slow to fire.
+    try {
+      router.replace('/sign-in');
+      console.log('[signOut] navigated to /sign-in');
+    } catch (e) {
+      console.warn('[signOut] router.replace failed:', e);
+    }
   };
 
   const confirmSignOut = () => {
-    showVybePopup({
-      title: 'Sign Out',
-      message: 'Are you sure you want to sign out?',
-      type: 'confirm',
-      actions: [
+    Alert.alert(
+      'Sign Out',
+      'Are you sure you want to sign out?',
+      [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Sign Out', style: 'destructive', onPress: handleSignOut },
-      ]
-    });
+        { text: 'Sign Out', style: 'destructive', onPress: () => { void handleSignOut(); } },
+      ],
+      { cancelable: true },
+    );
   };
 
+  const onGhostSignOut = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    confirmSignOut();
+  };
+
+  const q = searchQuery;
+
   return (
-    <View className="flex-1 bg-[#0A0A0A]">
-      {/* Header */}
-      <LinearGradient
-        colors={['#1a1a2e', '#0A0A0A']}
-        style={{ paddingTop: insets.top }}
-      >
-        <View className="flex-row items-center px-4 py-3">
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: OLED_BLACK }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={0}
+    >
+    <View style={styles.screen}>
+      <View style={[styles.header, { paddingTop: insets.top }]}>
+        <View style={styles.headerTop}>
           <Pressable
             onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
               router.back();
             }}
-            className="w-10 h-10 items-center justify-center -ml-2"
+            style={styles.backBtn}
           >
-            <ChevronLeft size={28} color="#fff" />
+            <ChevronLeft size={28} color="#fff" strokeWidth={STROKE} />
           </Pressable>
-          <Text className="text-white text-xl font-bold flex-1 text-center mr-8">
-            Settings
-          </Text>
+          <Text style={styles.headerTitle}>Settings</Text>
+          <View style={{ width: 40 }} />
         </View>
 
-        {/* Search Bar */}
-        <View className="px-4 pb-4">
-          <View className="flex-row items-center bg-white/10 rounded-lg px-4 py-3">
-            <Search size={18} color="rgba(255,255,255,0.5)" />
-            <VybeTextInput
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              placeholder="Search settings"
-              variant="search"
-              style={{ flex: 1, marginLeft: 12, backgroundColor: 'transparent', padding: 0, borderWidth: 0 }}
-            />
-          </View>
+        <View style={styles.searchShell}>
+          <Search size={20} color="rgba(255,255,255,0.5)" strokeWidth={STROKE} />
+          <VybeTextInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search settings"
+            variant="search"
+            style={styles.searchInput}
+          />
+          {searchQuery.length > 0 ? (
+            <Pressable
+              onPress={() => {
+                setSearchQuery('');
+                Keyboard.dismiss();
+              }}
+              hitSlop={10}
+            >
+              <Text style={styles.cancelBtn}>Cancel</Text>
+            </Pressable>
+          ) : null}
         </View>
-      </LinearGradient>
+      </View>
 
       <ScrollView
-        className="flex-1"
-        contentContainerStyle={{ paddingTop: 20, paddingBottom: bottomPadding }}
+        style={styles.scroll}
+        contentContainerStyle={{ paddingTop: 16, paddingBottom: bottomPadding }}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
-        {/* ACCOUNT */}
         <SettingsSection title="Account">
           <SettingsItem
-            icon={<User size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="account"><User /></CategoryIcon>}
             title="Profile"
             subtitle="Edit your name, photo, and how you appear on VYBE."
             showChevron
             onPress={() => router.push('/(app)/profile' as never)}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<Mail size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="account"><Mail /></CategoryIcon>}
             title="Email"
             subtitle="Manage the email linked to your account."
             showChevron
-            onPress={() => showVybePopup({ title: 'Change Email', message: 'To update your email, sign out and sign back in with your new email address.', type: 'info' })}
+            onPress={() =>
+              showVybePopup({
+                title: 'Change Email',
+                message: 'To update your email, sign out and sign back in with your new email address.',
+                type: 'info',
+              })
+            }
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<Lock size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="account"><Lock /></CategoryIcon>}
             title="Password"
             subtitle="Update your password to keep your account secure."
             showChevron
-            onPress={() => showVybePopup({ title: 'Password', message: 'VYBE uses passwordless sign-in via email code. No password to manage!', type: 'info' })}
+            onPress={() =>
+              showVybePopup({
+                title: 'Password',
+                message: 'VYBE uses passwordless sign-in via email code. No password to manage!',
+                type: 'info',
+              })
+            }
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<Link2 size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="account"><Link2 /></CategoryIcon>}
             title="Connected services"
             subtitle="Manage services you've connected to VYBE."
             showChevron
             onPress={() => router.push('/(app)/accounts' as never)}
           />
-          <SettingsDivider />
-          <SettingsItem
-            icon={<LogOut size={20} color="#EF4444" />}
-            title="Sign out"
-            subtitle="Sign out of this account on this device."
-            isDestructive
-            onPress={confirmSignOut}
-          />
         </SettingsSection>
 
-        {/* PLAYBACK */}
         <SettingsSection title="Playback">
           <SettingsItem
-            icon={<Volume2 size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="audio"><Volume2 /></CategoryIcon>}
             title="Audio quality"
             subtitle="Choose how your music sounds. Higher quality uses more data."
-            value="High"
+            value={audioQuality}
+            valueAccessory={
+              audioQuality === 'High' ? <HqBadge label="LOSSLESS" /> : null
+            }
             showChevron
-            onPress={() => {}}
+            onPress={cycleAudioQuality}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<Disc size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="audio"><Disc /></CategoryIcon>}
             title="Crossfade"
             subtitle="Smoothly blend songs together."
             showSwitch
             switchValue={crossfade}
             onSwitchChange={setCrossfade}
           />
-          <SettingsDivider />
+          {crossfade ? (
+            <ShadowSliderRow
+              searchQuery={q}
+              icon={<CategoryIcon category="audio"><Disc /></CategoryIcon>}
+              title="Crossfade duration"
+              subtitle="Seconds of overlap between tracks."
+              value={crossfadeSec}
+              minimumValue={1}
+              maximumValue={12}
+              onValueChange={setCrossfadeSec}
+            />
+          ) : null}
           <SettingsItem
-            icon={<Play size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="audio"><Play /></CategoryIcon>}
             title="Gapless playback"
             subtitle="Play albums and playlists without silence between tracks."
             showSwitch
             switchValue={gapless}
             onSwitchChange={setGapless}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<SlidersHorizontal size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="audio"><SlidersHorizontal /></CategoryIcon>}
             title="Equalizer"
             subtitle="Adjust the sound to your taste."
             showChevron
             onPress={() => {}}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<VolumeX size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="audio"><VolumeX /></CategoryIcon>}
             title="Normalize volume"
             subtitle="Keep volume consistent between songs."
             showSwitch
             switchValue={normalizeVolume}
             onSwitchChange={setNormalizeVolume}
           />
-          <SettingsDivider />
+          <ShadowSliderRow
+            searchQuery={q}
+            icon={<CategoryIcon category="audio"><Volume2 /></CategoryIcon>}
+            title="Playback volume"
+            subtitle="In-app level for supported sources."
+            value={playbackVolume}
+            minimumValue={0}
+            maximumValue={1}
+            onValueChange={(v) => setPlaybackVolume(v)}
+          />
           <SettingsItem
-            icon={<Radio size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="audio"><Radio /></CategoryIcon>}
             title="Autoplay"
             subtitle="Keep the music going when your queue ends."
             showSwitch
@@ -353,49 +623,49 @@ export default function SettingsScreen() {
           />
         </SettingsSection>
 
-        {/* DATA SAVER */}
         <SettingsSection title="Data Saver">
           <SettingsItem
-            icon={<Wifi size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="data"><Wifi /></CategoryIcon>}
             title="Data saver"
             subtitle="Reduce data usage while streaming."
             showSwitch
             switchValue={dataSaver}
             onSwitchChange={setDataSaver}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<Radio size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="data"><Radio /></CategoryIcon>}
             title="Streaming quality on cellular"
             subtitle="Lower quality uses less data."
-            value="Normal"
+            value={cellularStreamingQuality}
             showChevron
-            onPress={() => {}}
+            onPress={cycleCellularQuality}
           />
         </SettingsSection>
 
-        {/* NOTIFICATIONS */}
         <SettingsSection title="Notifications">
           <SettingsItem
-            icon={<Bell size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="notifications"><Bell /></CategoryIcon>}
             title="Push notifications"
             subtitle="Allow notifications from VYBE."
             showSwitch
             switchValue={pushNotifications}
             onSwitchChange={setPushNotifications}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<BellRing size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="notifications"><BellRing /></CategoryIcon>}
             title="New music and updates"
             subtitle="Get notified about new releases and recommendations."
             showSwitch
             switchValue={newMusicNotifications}
             onSwitchChange={setNewMusicNotifications}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<Gift size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="notifications"><Gift /></CategoryIcon>}
             title="Product announcements"
             subtitle="Hear about new features."
             showSwitch
@@ -404,36 +674,36 @@ export default function SettingsScreen() {
           />
         </SettingsSection>
 
-        {/* PRIVACY AND SOCIAL */}
         <SettingsSection title="Privacy and Social">
           <SettingsItem
-            icon={<EyeOff size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="privacy"><EyeOff /></CategoryIcon>}
             title="Private session"
             subtitle="Listening won't affect recommendations or social features."
             showSwitch
             switchValue={privateSession}
             onSwitchChange={setPrivateSession}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<Eye size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="privacy"><Eye /></CategoryIcon>}
             title="Listening activity"
             subtitle="Share what you're listening to."
             showSwitch
             switchValue={listeningActivity}
             onSwitchChange={setListeningActivity}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<UserX size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="privacy"><UserX /></CategoryIcon>}
             title="Blocked users"
             subtitle="Manage blocked accounts."
             showChevron
             onPress={() => {}}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<Shield size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="privacy"><Shield /></CategoryIcon>}
             title="Data and privacy"
             subtitle="Learn how we collect and use your data."
             showChevron
@@ -441,56 +711,57 @@ export default function SettingsScreen() {
           />
         </SettingsSection>
 
-        {/* CONTENT AND DISPLAY */}
         <SettingsSection title="Content and Display">
           <SettingsItem
-            icon={<AlertCircle size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="content"><AlertCircle /></CategoryIcon>}
             title="Explicit content"
             subtitle="Allow music marked explicit."
             showSwitch
             switchValue={explicitContent}
             onSwitchChange={setExplicitContent}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<Globe size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="content"><Globe /></CategoryIcon>}
             title="Language"
             subtitle="Choose your app language."
             value="English"
             showChevron
             onPress={() => {}}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<Moon size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="content"><Moon /></CategoryIcon>}
             title="Theme"
             subtitle="Dark (locked)."
             value="Dark"
           />
         </SettingsSection>
 
-        {/* DOWNLOADS */}
         <SettingsSection title="Downloads">
           <SettingsItem
-            icon={<Download size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="audio"><Download /></CategoryIcon>}
             title="Download audio quality"
             subtitle="Choose quality for downloaded music."
-            value="High"
+            value={downloadQuality}
+            valueAccessory={downloadQuality === 'High' ? <HqBadge label="HQ" /> : null}
             showChevron
-            onPress={() => {}}
+            onPress={cycleDownloadQuality}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<Wifi size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="data"><Wifi /></CategoryIcon>}
             title="Download over cellular"
             subtitle="Allow downloads without Wi-Fi."
             showSwitch
             switchValue={downloadCellular}
             onSwitchChange={setDownloadCellular}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<HardDrive size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="storage"><HardDrive /></CategoryIcon>}
             title="Manage downloads"
             subtitle="Remove downloaded music from this device."
             showChevron
@@ -498,15 +769,12 @@ export default function SettingsScreen() {
           />
         </SettingsSection>
 
-        {/* Helper text */}
-        <Text className="text-white/40 text-xs px-5 -mt-4 mb-8">
-          Downloads apply only to VYBE music.
-        </Text>
+        <Text style={styles.helperNote}>Downloads apply only to VYBE music.</Text>
 
-        {/* STORAGE */}
         <SettingsSection title="Storage">
           <SettingsItem
-            icon={<Trash2 size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="storage"><Trash2 /></CategoryIcon>}
             title="Clear cache"
             subtitle="Free up space. Downloads won't be removed."
             showChevron
@@ -518,41 +786,41 @@ export default function SettingsScreen() {
               });
             }}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<HardDrive size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="storage"><HardDrive /></CategoryIcon>}
             title="Cache size"
             value="245 MB"
           />
         </SettingsSection>
 
-        {/* DISCOVERY */}
         <SettingsSection title="Discovery">
           <SettingsItem
-            icon={<RefreshCw size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="discovery"><RefreshCw /></CategoryIcon>}
             title="Auto-refresh on app open"
             subtitle="Automatically discover new tracks when you open VYBE."
             showSwitch
             switchValue={autoRefreshEnabled}
             onSwitchChange={setAutoRefreshEnabled}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<Sparkles size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="discovery"><Sparkles /></CategoryIcon>}
             title="Seed tracks"
             subtitle="Tracks used to find similar music."
             value={`${seedTracksCount} tracks`}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<Sparkles size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="discovery"><Sparkles /></CategoryIcon>}
             title="Discovered tracks"
             subtitle="Tracks found based on your listening."
             value={`${discoveredTracksCount} tracks`}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<Trash2 size={20} color="#EF4444" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="destructive"><Trash2 /></CategoryIcon>}
             title="Clear discovery cache"
             subtitle="Reset Fresh Finds and rebuild from scratch."
             showChevron
@@ -569,7 +837,7 @@ export default function SettingsScreen() {
                     style: 'destructive',
                     onPress: () => {
                       clearDiscoveryCache();
-                      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                       showVybePopup({
                         title: 'Done',
                         message: 'Discovery cache cleared. New tracks will appear on next refresh.',
@@ -577,23 +845,23 @@ export default function SettingsScreen() {
                       });
                     },
                   },
-                ]
+                ],
               });
             }}
           />
         </SettingsSection>
 
-        {/* ABOUT */}
         <SettingsSection title="About">
           <SettingsItem
-            icon={<Info size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="about"><Info /></CategoryIcon>}
             title="Version"
             subtitle="Tap 5 times to unlock developer options"
             value="VYBE 1.0.0"
             onPress={() => {
               const unlocked = handleUnlockTap();
               if (unlocked) {
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 showVybePopup({
                   title: 'Developer Mode',
                   message: 'Playback Debug Mode has been unlocked!',
@@ -602,43 +870,45 @@ export default function SettingsScreen() {
               }
             }}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<FileText size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="about"><FileText /></CategoryIcon>}
             title="Terms of Service"
             showChevron
             onPress={() => {}}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<Shield size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="about"><Shield /></CategoryIcon>}
             title="Privacy Policy"
             showChevron
             onPress={() => {}}
           />
-          <SettingsDivider />
           <SettingsItem
-            icon={<HelpCircle size={20} color="#fff" />}
+            searchQuery={q}
+            icon={<CategoryIcon category="about"><HelpCircle /></CategoryIcon>}
             title="Contact support"
             showChevron
             onPress={() => {}}
           />
         </SettingsSection>
 
-        {/* DEVELOPER (only visible when debug mode is unlocked) */}
-        {debugModeEnabled && (
+        {debugModeEnabled ? (
           <SettingsSection title="Developer">
             <SettingsItem
-              icon={<Bug size={20} color="#8B5CF6" />}
+              searchQuery={q}
+              icon={<CategoryIcon category="developer"><Bug /></CategoryIcon>}
               title="Playback Debug Mode"
               subtitle="Show debug overlay with audio session info"
               showSwitch
               switchValue={debugOverlayVisible}
-              onSwitchChange={() => toggleDebugOverlay()}
+              onSwitchChange={(val) => {
+                if (val !== debugOverlayVisible) toggleDebugOverlay();
+              }}
             />
-            <SettingsDivider />
             <SettingsItem
-              icon={<Bug size={20} color="#fff" />}
+              searchQuery={q}
+              icon={<CategoryIcon category="developer"><Bug /></CategoryIcon>}
               title="Disable Debug Mode"
               subtitle="Hide developer options"
               showChevron
@@ -653,16 +923,341 @@ export default function SettingsScreen() {
                       text: 'Disable',
                       onPress: () => {
                         setDebugModeEnabled(false);
-                        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                       },
                     },
-                  ]
+                  ],
                 });
               }}
             />
           </SettingsSection>
-        )}
+        ) : null}
+
+        <Pressable style={styles.ghostSignOut} onPress={onGhostSignOut}>
+          <LogOut size={18} color="#FF00FF" strokeWidth={STROKE} />
+          <Text style={[styles.ghostSignOutText, { marginLeft: 10 }]}>Sign out</Text>
+        </Pressable>
+
+        <DaVinciFooterEgg />
       </ScrollView>
     </View>
+    </KeyboardAvoidingView>
   );
 }
+
+/**
+ * Footer easter egg. Long-press fires a Machined-Blue scan sweep across the
+ * footer, the label morphs to COOKIN_WITH_DAVINCI, then deep-links to
+ * davincidynamics.ai.
+ */
+function DaVinciFooterEgg() {
+  const [scanning, setScanning] = useState(false);
+  const tint = useSharedValue(0);
+  const scanX = useSharedValue(-1);
+  const scanOpacity = useSharedValue(0);
+
+  useEffect(() => {
+    if (scanning) {
+      tint.value = withTiming(1, { duration: 180 });
+      scanOpacity.value = withTiming(1, { duration: 120 });
+      scanX.value = withSequence(
+        withTiming(-1, { duration: 0 }),
+        withTiming(1, { duration: 720, easing: Easing.out(Easing.cubic) }),
+      );
+    } else {
+      tint.value = withTiming(0, { duration: 260 });
+      scanOpacity.value = withTiming(0, { duration: 200 });
+    }
+  }, [scanning, tint, scanOpacity, scanX]);
+
+  const onLongPress = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    setScanning(true);
+    tint.value = withSequence(
+      withTiming(1, { duration: 180 }),
+      withTiming(1, { duration: 560 }),
+      withTiming(0, { duration: 260 }, (finished) => {
+        if (finished) runOnJS(setScanning)(false);
+      }),
+    );
+    setTimeout(() => {
+      void Linking.openURL('https://davincidynamics.ai');
+    }, 820);
+  }, [tint]);
+
+  const textStyle = useAnimatedStyle(() => ({
+    color: interpolateColor(
+      tint.value,
+      [0, 1],
+      ['rgba(255,255,255,0.22)', '#00E5FF'],
+    ),
+  }));
+
+  const scanStyle = useAnimatedStyle(() => ({
+    opacity: scanOpacity.value,
+    transform: [{ translateX: scanX.value * 140 }],
+  }));
+
+  return (
+    <Pressable
+      onLongPress={onLongPress}
+      delayLongPress={480}
+      style={styles.settingsFooterEgg}
+      accessibilityLabel="System managed by DaVinci Dynamics"
+      accessibilityHint="Long press to visit DaVinci Dynamics"
+    >
+      <View style={styles.settingsFooterEggScanWrap}>
+        <Animated.Text style={[styles.settingsFooterEggText, textStyle]}>
+          {scanning ? 'COOKIN_WITH_DAVINCI' : 'System Managed By DaVinci Dynamics'}
+        </Animated.Text>
+        <Animated.View pointerEvents="none" style={[styles.settingsFooterEggScan, scanStyle]} />
+      </View>
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  header: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    backgroundColor: '#000000',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#FFFFFF10',
+  },
+  headerTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: -8,
+  },
+  headerTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+    ...Platform.select({
+      ios: {
+        textShadowColor: 'rgba(0,229,255,0.35)',
+        textShadowOffset: { width: 0, height: 0 },
+        textShadowRadius: 10,
+      },
+      default: {},
+    }),
+  },
+  searchShell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: OLED_BLACK,
+    borderWidth: 1,
+    borderColor: 'rgba(0,229,255,0.22)',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginTop: 4,
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: 10,
+    backgroundColor: 'transparent',
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    borderWidth: 0,
+    fontSize: 16,
+  },
+  cancelBtn: {
+    color: VIBRANT_BLUE,
+    fontSize: 15,
+    fontWeight: '700',
+    marginLeft: 10,
+  },
+  scroll: {
+    flex: 1,
+  },
+  sectionWrap: {
+    marginBottom: 22,
+    paddingHorizontal: 16,
+  },
+  sectionTitle: {
+    color: 'rgba(230,252,255,0.95)',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 2,
+    marginBottom: 10,
+    textTransform: 'uppercase',
+    ...Platform.select({
+      ios: {
+        textShadowColor: 'rgba(0,229,255,0.75)',
+        textShadowOffset: { width: 0, height: 0 },
+        textShadowRadius: 12,
+      },
+      android: {},
+    }),
+  },
+  shadowCard: {
+    backgroundColor: OLED_BLACK,
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(0,229,255,0.14)',
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+  rowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#FFFFFF10',
+  },
+  rowIcon: {
+    width: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconShell: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowBody: {
+    flex: 1,
+    marginLeft: 10,
+    minWidth: 0,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  rowTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    letterSpacing: -0.2,
+    flexShrink: 1,
+  },
+  rowSubtitle: {
+    color: '#666666',
+    fontSize: 13,
+    fontWeight: '500',
+    marginTop: 4,
+    lineHeight: 18,
+  },
+  rowValue: {
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 14,
+    fontWeight: '600',
+    marginRight: 6,
+    maxWidth: 100,
+  },
+  sliderRow: {
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+  },
+  sliderBody: {
+    flex: 1,
+    marginLeft: 10,
+    minWidth: 0,
+    paddingRight: 4,
+  },
+  slider: {
+    width: '100%',
+    height: 36,
+    marginTop: 8,
+  },
+  hqBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(0,229,255,0.45)',
+    backgroundColor: 'rgba(0,229,255,0.1)',
+    ...Platform.select({
+      ios: {
+        shadowColor: VIBRANT_BLUE,
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.55,
+        shadowRadius: 8,
+      },
+    }),
+  },
+  hqBadgeText: {
+    color: VIBRANT_BLUE,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+  },
+  helperNote: {
+    color: 'rgba(255,255,255,0.35)',
+    fontSize: 11,
+    fontWeight: '600',
+    paddingHorizontal: 20,
+    marginTop: -12,
+    marginBottom: 20,
+  },
+  ghostSignOut: {
+    marginHorizontal: 24,
+    marginTop: 8,
+    marginBottom: 24,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,0,255,0.55)',
+    backgroundColor: 'transparent',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ghostSignOutText: {
+    color: '#FF00FF',
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  settingsFooterEgg: {
+    alignSelf: 'center',
+    paddingVertical: 20,
+    paddingHorizontal: 24,
+    marginBottom: 8,
+  },
+  settingsFooterEggScanWrap: {
+    position: 'relative',
+    overflow: 'hidden',
+    paddingHorizontal: 2,
+  },
+  settingsFooterEggText: {
+    color: 'rgba(255,255,255,0.22)',
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 1.5,
+    textAlign: 'center',
+  },
+  settingsFooterEggScan: {
+    position: 'absolute',
+    top: -4,
+    bottom: -4,
+    width: 22,
+    left: '50%',
+    marginLeft: -11,
+    backgroundColor: '#00E5FF',
+    opacity: 0.35,
+    shadowColor: '#00E5FF',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.9,
+    shadowRadius: 8,
+  },
+});
