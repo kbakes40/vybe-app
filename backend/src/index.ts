@@ -164,7 +164,7 @@ app.route("/api/social", socialRouter);
 
 // Build marker — bumped to force Railway to pick up new commits.
 // If you see this in Railway logs, the new code IS deployed.
-const BUILD_MARKER = "vybe-backend@2026-04-19T05:35:00Z [social+_diag+bearer+yt-cookies]";
+const BUILD_MARKER = "vybe-backend@2026-04-19T05:50:00Z [PO-token-bypass: tv/ios/tv_embedded + missing_pot]";
 console.log("[boot]", BUILD_MARKER);
 app.get("/api/_build", (c) => c.json({ marker: BUILD_MARKER }));
 
