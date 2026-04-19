@@ -367,7 +367,10 @@ export function DynamicIsland() {
   }));
 
   // IMG_3643: hug the notch — `top: -4` relative to safe-area line (insets.top − 4).
-  const pillTop = insets.top - 4;
+  // Clamp to a minimum so the pill stays visible even if the SafeAreaProvider
+  // hasn't resolved insets yet on first paint (would otherwise render at -4
+  // and disappear behind the notch).
+  const pillTop = Math.max(insets.top - 4, Platform.OS === 'ios' ? 44 : 12);
 
   if (suppress) return null;
 

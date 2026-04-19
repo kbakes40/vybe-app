@@ -14,6 +14,7 @@ import * as SystemUI from 'expo-system-ui';
 import { StatusBar } from 'expo-status-bar';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { Appearance, Keyboard, LogBox, Platform } from 'react-native';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -174,18 +175,23 @@ export default function RootLayout() {
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
         <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#000000' }}>
-          <KeyboardProvider>
-            <VybePopupProvider>
-              <GlobalKeyboardChrome />
-              <StatusBar style="light" translucent backgroundColor="transparent" />
-              <RootLayoutNav />
-              {/* Hairline + mist: absolute overlay, no extra insets on the root (see DynamicIslandChrome) */}
-              <DynamicIslandChrome />
-              {/* Interactive Dynamic Island pill — sits above nav chrome (zIndex 9999). */}
-              <DynamicIsland />
-              <LoginMorphOverlay />
-            </VybePopupProvider>
-          </KeyboardProvider>
+          {/* SafeAreaProvider must wrap everything that calls useSafeAreaInsets
+              (DynamicIsland, MiniPlayer, tab bar, etc). Without it, insets.top
+              returns 0 and the DI pill renders behind the iPhone notch. */}
+          <SafeAreaProvider>
+            <KeyboardProvider>
+              <VybePopupProvider>
+                <GlobalKeyboardChrome />
+                <StatusBar style="light" translucent backgroundColor="transparent" />
+                <RootLayoutNav />
+                {/* Hairline + mist: absolute overlay, no extra insets on the root (see DynamicIslandChrome) */}
+                <DynamicIslandChrome />
+                {/* Interactive Dynamic Island pill — sits above nav chrome (zIndex 9999). */}
+                <DynamicIsland />
+                <LoginMorphOverlay />
+              </VybePopupProvider>
+            </KeyboardProvider>
+          </SafeAreaProvider>
         </GestureHandlerRootView>
       </QueryClientProvider>
     </ErrorBoundary>
