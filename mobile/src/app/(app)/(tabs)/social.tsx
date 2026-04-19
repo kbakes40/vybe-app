@@ -43,15 +43,15 @@ import type {
 import { MachinedGradientText } from '@/components/MachinedGradientText';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
 import { getSocialActivityFeed, getSocialFeed, type SocialPost } from '@/lib/api/social';
-import { VIBRANT_BLUE } from '@/constants/machinedTheme';
+import { MACHINED_CYAN } from '@/constants/machinedTheme';
 
 /** Set true to show Active Posts above the compose row again. */
 const SHOW_ACTIVE_POSTS_SECTION = false;
 
 const BRAND_FEED_ITEMS = [
   {
-    id: 'brand-davinci',
-    brand: 'DaVinci Dynamics',
+    id: 'brand-vybe-labs',
+    brand: 'VYBE Labs',
     headline: 'Machined Cyan 2.1',
     detail: 'Tighter token refresh windows · calmer vault handoffs.',
     timeLabel: '2h ago',
@@ -137,7 +137,7 @@ function PlaylistShareRow({ item, onJoin }: { item: PlaylistShareItem; onJoin: (
           accessibilityRole="button"
           accessibilityLabel="SoundCloud stream"
         >
-          <Cloud size={26} color={VIBRANT_BLUE} strokeWidth={2.35} />
+          <Cloud size={26} color={MACHINED_CYAN} strokeWidth={2.35} />
         </Pressable>
       ) : (
         <BlurView intensity={32} tint="dark" style={styles.joinBlur}>
@@ -184,7 +184,7 @@ function FeedPostSuccessPulse({ tick, bottom }: { tick: number; bottom: number }
       pointerEvents="none"
       style={[styles.feedSuccessBubble, { bottom }, bubbleStyle]}
     >
-      <Check size={26} strokeWidth={3} color={VIBRANT_BLUE} />
+      <Check size={26} strokeWidth={3} color={MACHINED_CYAN} />
     </Animated.View>
   );
 }
@@ -435,7 +435,7 @@ export default function SocialScreen() {
 
   return (
     <View style={styles.screen}>
-      <View style={[styles.topBar, { paddingTop: insets.top + 24 }]}>
+      <View style={[styles.topBar, { paddingTop: insets.top + 64 }]}>
         <View style={styles.topBarRow}>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={styles.screenTitle}>Vybe Activity</Text>
@@ -472,8 +472,8 @@ export default function SocialScreen() {
               void feedQuery.refetch();
               void activityQuery.refetch();
             }}
-            tintColor={VIBRANT_BLUE}
-            colors={[VIBRANT_BLUE]}
+            tintColor={MACHINED_CYAN}
+            colors={[MACHINED_CYAN]}
             progressBackgroundColor="#111111"
           />
         }
@@ -489,7 +489,7 @@ export default function SocialScreen() {
         />
         {feedQuery.isLoading ? (
           <View style={styles.feedLoading}>
-            <ActivityIndicator color={VIBRANT_BLUE} />
+            <ActivityIndicator color={MACHINED_CYAN} />
           </View>
         ) : isUnauthorized ? (
           <View style={styles.feedEmpty}>
@@ -527,7 +527,7 @@ export default function SocialScreen() {
           pressed && { transform: [{ scale: 0.96 }] },
         ]}
       >
-        <Plus size={26} color={VIBRANT_BLUE} strokeWidth={2.6} />
+        <Plus size={26} color={MACHINED_CYAN} strokeWidth={2.6} />
       </Pressable>
 
       <PostComposer
@@ -545,7 +545,10 @@ export default function SocialScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#000000',
+    // No solid backgroundColor — the root layout paints black behind this screen,
+    // and the transparent surface lets the root-level <DynamicIsland/> (zIndex 9999)
+    // render above the tab screen instead of being painted over by its opaque fill.
+    backgroundColor: 'transparent',
   },
   feedSuccessBubble: {
     position: 'absolute',
@@ -555,12 +558,12 @@ const styles = StyleSheet.create({
     borderRadius: 27,
     backgroundColor: 'rgba(0,229,255,0.1)',
     borderWidth: 1,
-    borderColor: VIBRANT_BLUE,
+    borderColor: MACHINED_CYAN,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 30000,
     elevation: 30000,
-    shadowColor: VIBRANT_BLUE,
+    shadowColor: MACHINED_CYAN,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.55,
     shadowRadius: 14,
@@ -599,14 +602,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.04)',
     borderWidth: 1,
     borderColor: 'rgba(0,229,255,0.22)',
-    shadowColor: VIBRANT_BLUE,
+    shadowColor: MACHINED_CYAN,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.18,
     shadowRadius: 10,
     elevation: 4,
   },
   brandName: {
-    color: VIBRANT_BLUE,
+    color: MACHINED_CYAN,
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 1.4,
@@ -641,7 +644,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,229,255,0.08)',
     borderWidth: 1,
     borderColor: 'rgba(0,229,255,0.55)',
-    shadowColor: VIBRANT_BLUE,
+    shadowColor: MACHINED_CYAN,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.5,
     shadowRadius: 12,
@@ -662,15 +665,15 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: 'rgba(0,229,255,0.12)',
     borderWidth: 1,
-    borderColor: VIBRANT_BLUE,
-    shadowColor: VIBRANT_BLUE,
+    borderColor: MACHINED_CYAN,
+    shadowColor: MACHINED_CYAN,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.45,
     shadowRadius: 8,
     elevation: 8,
   },
   topPostBtnText: {
-    color: VIBRANT_BLUE,
+    color: MACHINED_CYAN,
     fontSize: 13,
     fontWeight: '900',
     letterSpacing: 1.2,
@@ -808,11 +811,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: VIBRANT_BLUE,
+    borderColor: MACHINED_CYAN,
     backgroundColor: 'rgba(0,229,255,0.08)',
   },
   feedRetryText: {
-    color: VIBRANT_BLUE,
+    color: MACHINED_CYAN,
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 1.6,
@@ -828,7 +831,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#000000',
     borderWidth: 1,
     borderColor: 'rgba(0,229,255,0.85)',
-    shadowColor: VIBRANT_BLUE,
+    shadowColor: MACHINED_CYAN,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.5,
     shadowRadius: 12,
@@ -845,7 +848,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.03)',
     borderWidth: 1,
     borderColor: 'rgba(0,229,255,0.22)',
-    shadowColor: VIBRANT_BLUE,
+    shadowColor: MACHINED_CYAN,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.2,
     shadowRadius: 8,
@@ -875,15 +878,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(0,229,255,0.1)',
     borderWidth: 1,
-    borderColor: VIBRANT_BLUE,
-    shadowColor: VIBRANT_BLUE,
+    borderColor: MACHINED_CYAN,
+    shadowColor: MACHINED_CYAN,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.35,
     shadowRadius: 10,
     elevation: 6,
   },
   newPostCtaText: {
-    color: VIBRANT_BLUE,
+    color: MACHINED_CYAN,
     fontSize: 14,
     fontWeight: '900',
     letterSpacing: 2,
