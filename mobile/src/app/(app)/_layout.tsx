@@ -294,8 +294,10 @@ export default function AppLayout() {
             // Slides up from the mini player, leaves the previous screen visible
             // above, rounded top corners, swipe-down dismisses back into the
             // mini player. Matches Apple/Spotify/Google Music pattern.
+            // pageSheet uses UIKit's native animation — don't set `animation`
+            // alongside it or the custom animation can override and produce
+            // a full-screen slide instead of the detent-respecting sheet.
             presentation: 'pageSheet',
-            animation: 'slide_from_bottom',
             headerShown: false,
             headerTransparent: true,
             headerShadowVisible: false,
