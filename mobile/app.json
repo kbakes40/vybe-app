@@ -40,6 +40,13 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "3e020c5f-ccf8-4142-aaa0-dbc106204678"
+      }
+    },
+    "owner": "oneitch1scratch"
   }
 }
