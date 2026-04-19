@@ -44,7 +44,6 @@ import { MachinedGradientText } from '@/components/MachinedGradientText';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
 import { getSocialActivityFeed, getSocialFeed, type SocialPost } from '@/lib/api/social';
 import { VIBRANT_BLUE } from '@/constants/machinedTheme';
-import { FlashList } from '@shopify/flash-list';
 
 /** Set true to show Active Posts above the compose row again. */
 const SHOW_ACTIVE_POSTS_SECTION = false;
@@ -433,73 +432,6 @@ export default function SocialScreen() {
   const fabBottom = tabScreenContentContainerPaddingBottom(insets.bottom) + 12;
 
   const feedPosts = feedQuery.data ?? [];
-  const feedListData =
-    feedQuery.isLoading || isUnauthorized || feedQuery.isError ? [] : feedPosts;
-
-  const listHeader = useMemo(
-    () => (
-      <SocialFeedHeader
-        stories={stories}
-        activePosts={activePosts}
-        markStoryViewed={markStoryViewed}
-        togglePostHeart={togglePostHeart}
-        bumpReaction={bumpReaction}
-        handleOpenComposer={handleOpenComposer}
-        feedPostCount={feedQuery.data?.length}
-      />
-    ),
-    [
-      stories,
-      activePosts,
-      markStoryViewed,
-      togglePostHeart,
-      bumpReaction,
-      handleOpenComposer,
-      feedQuery.data?.length,
-    ],
-  );
-
-  const listFooter = useMemo(
-    () => <SocialFeedFooter playlistItems={playlistItems} interactionItems={interactionItems} />,
-    [playlistItems, interactionItems],
-  );
-
-  const renderFeedItem = useCallback(
-    ({ item }: { item: SocialPost }) => <FeedPostRow post={item} onFireTap={handleFeedFireTap} />,
-    [handleFeedFireTap],
-  );
-
-  const listEmpty = useCallback(() => {
-    if (feedQuery.isLoading) {
-      return (
-        <View style={styles.feedLoading}>
-          <ActivityIndicator color={VIBRANT_BLUE} />
-        </View>
-      );
-    }
-    if (isUnauthorized) {
-      return (
-        <View style={styles.feedEmpty}>
-          <Text style={styles.feedEmptyTitle}>Sign in to see the Feed</Text>
-          <Text style={styles.feedEmptySub}>Your session expired or isn&apos;t set up yet.</Text>
-        </View>
-      );
-    }
-    if (feedQuery.isError) {
-      return (
-        <View style={styles.feedEmpty}>
-          <Text style={styles.feedEmptyTitle}>Couldn&apos;t load feed</Text>
-          <Text style={styles.feedEmptySub} numberOfLines={2}>
-            {feedQuery.error instanceof Error ? feedQuery.error.message : 'Network error'}
-          </Text>
-          <Pressable style={styles.feedRetry} onPress={() => feedQuery.refetch()}>
-            <Text style={styles.feedRetryText}>RETRY</Text>
-          </Pressable>
-        </View>
-      );
-    }
-    return null;
-  }, [feedQuery, isUnauthorized]);
 
   return (
     <View style={styles.screen}>
@@ -523,17 +455,16 @@ export default function SocialScreen() {
         </View>
       </View>
 
-      <FlashList
+      {/*
+        ScrollView (not FlashList) for this screen: FlashList defers ListHeaderComponent until the
+        list has loaded/measured, which can block or omit compose actions in the header on first paint.
+      */}
+      <ScrollView
         style={{ flex: 1 }}
-        data={feedListData}
-        keyExtractor={(item) => item.id}
-        estimatedItemSize={220}
-        ListHeaderComponent={listHeader}
-        ListFooterComponent={listFooter}
-        renderItem={renderFeedItem}
-        ListEmptyComponent={listEmpty}
         contentContainerStyle={{ paddingBottom: tabScreenContentContainerPaddingBottom(insets.bottom) }}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
         refreshControl={
           <RefreshControl
             refreshing={feedQuery.isRefetching || activityQuery.isRefetching}
@@ -546,7 +477,40 @@ export default function SocialScreen() {
             progressBackgroundColor="#111111"
           />
         }
-      />
+      >
+        <SocialFeedHeader
+          stories={stories}
+          activePosts={activePosts}
+          markStoryViewed={markStoryViewed}
+          togglePostHeart={togglePostHeart}
+          bumpReaction={bumpReaction}
+          handleOpenComposer={handleOpenComposer}
+          feedPostCount={feedQuery.data?.length}
+        />
+        {feedQuery.isLoading ? (
+          <View style={styles.feedLoading}>
+            <ActivityIndicator color={VIBRANT_BLUE} />
+          </View>
+        ) : isUnauthorized ? (
+          <View style={styles.feedEmpty}>
+            <Text style={styles.feedEmptyTitle}>Sign in to see the Feed</Text>
+            <Text style={styles.feedEmptySub}>Your session expired or isn&apos;t set up yet.</Text>
+          </View>
+        ) : feedQuery.isError ? (
+          <View style={styles.feedEmpty}>
+            <Text style={styles.feedEmptyTitle}>Couldn&apos;t load feed</Text>
+            <Text style={styles.feedEmptySub} numberOfLines={2}>
+              {feedQuery.error instanceof Error ? feedQuery.error.message : 'Network error'}
+            </Text>
+            <Pressable style={styles.feedRetry} onPress={() => feedQuery.refetch()}>
+              <Text style={styles.feedRetryText}>RETRY</Text>
+            </Pressable>
+          </View>
+        ) : (
+          feedPosts.map((post) => <FeedPostRow key={post.id} post={post} onFireTap={handleFeedFireTap} />)
+        )}
+        <SocialFeedFooter playlistItems={playlistItems} interactionItems={interactionItems} />
+      </ScrollView>
 
       {/* Floating Action Button — opens PostComposer */}
       <Pressable
