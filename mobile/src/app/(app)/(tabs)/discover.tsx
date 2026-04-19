@@ -1171,7 +1171,7 @@ export default function DiscoverScreen() {
         }}
       />
 
-      <View style={{ paddingTop: insets.top + 24, paddingHorizontal: H_PAD, paddingBottom: 10 }}>
+      <View style={{ paddingTop: insets.top + 64, paddingHorizontal: H_PAD, paddingBottom: 10 }}>
         <Pressable onLongPress={handleEditPreferences} delayLongPress={550}>
           <MachinedGradientText neonGlow style={{ fontSize: 24, fontWeight: '800', letterSpacing: 0.35 }}>
             Discover

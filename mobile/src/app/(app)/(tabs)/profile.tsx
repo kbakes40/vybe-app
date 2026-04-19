@@ -106,7 +106,7 @@ export default function ProfileTabScreen() {
         showsVerticalScrollIndicator={false}
         automaticallyAdjustContentInsets={false}
       >
-        <View style={[styles.hero, { paddingTop: insets.top + 20 }]}>
+        <View style={[styles.hero, { paddingTop: insets.top + 64 }]}>
           <Text style={styles.kicker}>ACCOUNT</Text>
           {avatarUrl ? (
             <Image source={{ uri: avatarUrl }} style={styles.avatar} contentFit="cover" />

@@ -1748,7 +1748,7 @@ export default function HomeScreen() {
         <Animated.View style={listMotionStyle}>
         <View
           style={{
-            paddingTop: insets.top + 24,
+            paddingTop: insets.top + 64,
             backgroundColor: '#000000',
             paddingHorizontal: 20,
             alignItems: 'flex-start',
