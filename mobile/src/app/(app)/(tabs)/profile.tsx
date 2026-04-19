@@ -18,9 +18,11 @@ import { clearSessionBearerToken } from '@/lib/auth/sessionBearer';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
 import { OLED_BLACK, MACHINED_CYAN, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
 import { ListDisclosureMark } from '@/components/account/ListDisclosureMark';
+import { terminateAllPillNative } from '@/lib/NowPlayingActivityManager';
 
 async function bulletproofSignOut(replace: (path: string) => void) {
   console.log('[signOut:profile] starting…');
+  terminateAllPillNative();
   try {
     await authClient.signOut();
   } catch (e) {

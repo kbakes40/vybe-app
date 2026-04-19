@@ -75,7 +75,9 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
   const register = useNowPlayingSheetStore((s) => s.register);
   const setSheetExpanded = useNowPlayingSheetStore((s) => s.setSheetExpanded);
   // When collapsed, the full-player layer must not intercept touches (playlist list stays usable).
-  const [mainPointerEvents, setMainPointerEvents] = useState<'auto' | 'none'>(() =>
+  // When expanded, use `box-none` on the slot — `auto` would steal taps in the transparent
+  // region above the sheet (e.g. Radio tab play / heart / fire under the peek strip).
+  const [mainPointerEvents, setMainPointerEvents] = useState<'auto' | 'none' | 'box-none'>(() =>
     maxTranslate > 0 ? 'none' : 'auto',
   );
   /** When collapsed, entire sheet shell is non-hit-testable so touches reach MiniPlayer (z below). */
@@ -93,7 +95,7 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
       setMainPointerEvents('none');
       setShellPointerEvents('none');
     } else {
-      setMainPointerEvents('auto');
+      setMainPointerEvents('box-none');
       setShellPointerEvents('box-none');
     }
   }, []);

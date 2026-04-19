@@ -18,4 +18,6 @@ RCT_EXTERN_METHOD(updateNowPlaying:(BOOL)isPlaying
 
 RCT_EXTERN_METHOD(endNowPlaying)
 
+RCT_EXTERN_METHOD(terminateAllNowPlayingMetadata)
+
 @end

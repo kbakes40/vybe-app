@@ -132,6 +132,22 @@ class VybeDownloadActivityModule: NSObject {
     }
   }
 
+  /// PILL_LOCK_V2 — end all `VybeActivityAttributes` Live Activities (sign-out).
+  @objc func terminateAllActivities() {
+    guard #available(iOS 16.1, *) else { return }
+    Self._endToken &+= 1
+    Task { @MainActor in
+      if #available(iOS 16.2, *) {
+        for activity in Activity<VybeActivityAttributes>.activities {
+          await activity.end(nil, dismissalPolicy: .immediate)
+        }
+      } else if let act = Self._currentActivity as? Activity<VybeActivityAttributes> {
+        await act.end(nil, dismissalPolicy: .immediate)
+      }
+      Self._currentActivity = nil
+    }
+  }
+
   @objc func endActivity(_ success: Bool) {
     guard #available(iOS 16.1, *) else { return }
     Task { @MainActor in

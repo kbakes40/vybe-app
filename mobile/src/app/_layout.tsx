@@ -21,7 +21,9 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { VybePopupProvider } from '@/components/VybePopup';
 import { ShadowInputAccessory } from '@/components/ShadowInputAccessory';
 import { DynamicIslandChrome } from '@/components/DynamicIslandChrome';
+import { DynamicIslandTopFade } from '@/components/DynamicIslandTopFade';
 import { DynamicIsland } from '@/components/DynamicIsland';
+import { PillLockSync } from '@/components/PillLockSync';
 import { LoginMorphOverlay } from '@/components/LoginMorphOverlay';
 import { authClient } from '@/lib/auth/auth-client';
 import { useKeyboardChromeStore } from '@/stores/keyboardChromeStore';
@@ -184,9 +186,10 @@ export default function RootLayout() {
                 <GlobalKeyboardChrome />
                 <StatusBar style="light" translucent backgroundColor="transparent" />
                 <RootLayoutNav />
-                {/* Hairline + mist: absolute overlay, no extra insets on the root (see DynamicIslandChrome) */}
+                {/* PILL_LOCK_V2: PillLockSync + top fade (9997) / chrome (9998) / pill (9999) */}
+                <PillLockSync />
+                <DynamicIslandTopFade />
                 <DynamicIslandChrome />
-                {/* Interactive Dynamic Island pill — sits above nav chrome (zIndex 9999). */}
                 <DynamicIsland />
                 <LoginMorphOverlay />
               </VybePopupProvider>

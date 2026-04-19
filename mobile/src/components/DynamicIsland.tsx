@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 
 import { Dimensions, Platform, StyleSheet, Text, View, Linking } from 'react-native';
 import { Pressable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useSegments } from 'expo-router';
 import { Image } from 'expo-image';
 import Animated, {
   cancelAnimation,
@@ -26,6 +25,7 @@ import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import { VIBRANT_BLUE } from '@/constants/machinedTheme';
 import { islandAlignedPillTop } from '@/constants/iosIslandLayout';
 import { RadioParadiseSoulActions } from '@/components/radio/RadioParadiseSoulActions';
+import { usePillLockStore } from '@/stores/pillLockStore';
 
 /**
  * Global interactive pill mounted above navigation chrome.
@@ -125,8 +125,8 @@ function FireParticle({
 }
 
 export function DynamicIsland() {
-  const segments = useSegments();
   const insets = useSafeAreaInsets();
+  const allowIslandSurfaces = usePillLockStore((s) => s.allowIslandSurfaces);
 
   const currentTrack = usePlaybackController((s) => s.currentTrack);
   const playbackState = usePlaybackController((s) => s.playbackState);
@@ -182,12 +182,8 @@ export function DynamicIsland() {
     (playbackState === 'error' && !!currentTrack) || showVaultTimeoutLane;
   const eggActive = isEasterEggTrack(currentTrack?.artist);
 
-  // Suppress on auth / onboarding — matches DynamicIslandChrome so nothing
-  // lands on the sign-in screen during a fresh install.
-  const suppress = useMemo(() => {
-    const root = segments[0];
-    return root === 'sign-in' || root === 'onboarding' || root === 'verify-otp';
-  }, [segments]);
+  /** PILL_LOCK_V2 — synced from root `PillLockSync` (session + route). */
+  const suppress = !allowIslandSurfaces;
 
   // Local UI state kept in a ref so handlers see the latest without stale closures.
   const stateRef = useRef<DIState>('idle');
@@ -869,6 +865,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     letterSpacing: 0.2,
+    textShadowColor: 'rgba(0,0,0,0.82)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 5,
   },
   metaArtist: {
     color: 'rgba(255,255,255,0.6)',
@@ -876,6 +875,9 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginTop: 1,
     letterSpacing: 0.15,
+    textShadowColor: 'rgba(0,0,0,0.75)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   healingLine: {
     marginTop: 3,
@@ -926,12 +928,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0.2,
+    textShadowColor: 'rgba(0,0,0,0.82)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 5,
   },
   expandedArtist: {
     color: 'rgba(255,255,255,0.65)',
     fontSize: 12,
     fontWeight: '500',
     marginTop: 2,
+    textShadowColor: 'rgba(0,0,0,0.75)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   expandedPoweredBy: {
     color: '#6E6E73',

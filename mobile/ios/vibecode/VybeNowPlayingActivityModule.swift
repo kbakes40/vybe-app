@@ -87,6 +87,17 @@ class VybeNowPlayingActivityModule: RCTEventEmitter {
     // The Dynamic Island pill disappears naturally when the audio session ends.
   }
 
+  /// PILL_LOCK_V2 — hard reset for sign-out / auth surfaces: clears lock-screen
+  /// metadata so nothing remains “stuck” above the hardware pill.
+  @objc func terminateAllNowPlayingMetadata() {
+    isActive = false
+    artworkTask?.cancel()
+    artworkTask = nil
+    currentArtworkURL = ""
+    MPNowPlayingInfoCenter.default().nowPlayingInfo = [:]
+    NSLog("[VybeNowPlaying] terminateAllNowPlayingMetadata — MPNowPlaying cleared")
+  }
+
   // MARK: – Private
 
   private func setupRemoteCommandsOnce() {

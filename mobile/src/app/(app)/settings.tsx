@@ -60,6 +60,7 @@ import {
   Bug,
 } from 'lucide-react-native';
 import { authClient } from '@/lib/auth/auth-client';
+import { terminateAllPillNative } from '@/lib/NowPlayingActivityManager';
 import { clearSessionBearerToken } from '@/lib/auth/sessionBearer';
 import { useDiscoveryStore } from '@/stores/discoveryStore';
 import { useDownloadsStore, formatFileSize } from '@/stores/downloadsStore';
@@ -374,6 +375,7 @@ export default function SettingsScreen() {
 
   const handleSignOut = async () => {
     console.log('[signOut] starting…');
+    terminateAllPillNative();
     // Step 1: best-effort backend sign-out (don't let a backend hiccup block local cleanup).
     try {
       await authClient.signOut();

@@ -10,6 +10,7 @@ import {
   startVybeDownloadLiveActivity,
   takeLiveActivityFeedSnapshot,
 } from '@/lib/audio/PlaybackController';
+import { usePillLockStore } from '@/stores/pillLockStore';
 
 // ── Native background downloader (iOS only) ─────────────────────────────────
 // Uses URLSession.background so downloads keep running — and the Dynamic
@@ -60,6 +61,7 @@ async function laStartDownloadActivity(
   artistName: string,
   artworkUrl: string = '',
 ): Promise<void> {
+  if (!usePillLockStore.getState().allowIslandSurfaces) return;
   // Reset throttle state so the next track's first progress update fires
   // immediately instead of being blocked by the previous track's throttle window.
   if (_laFlushTimer) { clearTimeout(_laFlushTimer); _laFlushTimer = null; }
@@ -82,7 +84,7 @@ let _laFlushTimer: ReturnType<typeof setTimeout> | null = null;
 const LA_MIN_INTERVAL_MS = 200;
 
 function _laFlush(): void {
-  if (!_laPending) return;
+  if (!_laPending || !usePillLockStore.getState().allowIslandSurfaces) return;
   const { progress, statusText } = _laPending;
   _laPending = null;
   _laLastSentAt = Date.now();

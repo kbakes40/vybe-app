@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useSegments } from 'expo-router';
 import Svg, { Path } from 'react-native-svg';
 import Animated, {
   useAnimatedStyle,
@@ -15,6 +14,7 @@ import Animated, {
 import { usePlaybackController } from '@/stores/playbackController';
 import { VYBE_WAVE_PATH, VYBE_WAVE_MAGENTA_LEG } from '@/constants/vybeLogoPaths';
 import { islandAlignedTraceTop } from '@/constants/iosIslandLayout';
+import { usePillLockStore } from '@/stores/pillLockStore';
 
 const VIBRANT_BLUE = '#00E5FF';
 const OUTER_GLOW = '#00B0FF';
@@ -26,14 +26,11 @@ const NEON_MAGENTA = '#FF00D4';
  * Transport-driven breath modulates overall opacity while playing.
  */
 export function DynamicIslandChrome() {
-  const segments = useSegments();
   const insets = useSafeAreaInsets();
+  const allowIslandSurfaces = usePillLockStore((s) => s.allowIslandSurfaces);
   const breathOpacity = useSharedValue(0);
 
-  const suppressChrome = useMemo(() => {
-    const root = segments[0];
-    return root === 'sign-in' || root === 'onboarding' || root === 'verify-otp';
-  }, [segments]);
+  const suppressChrome = !allowIslandSurfaces;
   const [ghostTime, setGhostTime] = useState(() => new Date());
   const lastProgressRef = useRef(0);
 
@@ -153,7 +150,8 @@ export function DynamicIslandChrome() {
         StyleSheet.absoluteFill,
         {
           top: 0,
-          zIndex: 99,
+          zIndex: 9998,
+          elevation: 9998,
         },
       ]}
     >

@@ -12,4 +12,6 @@ RCT_EXTERN_METHOD(updateProgress:(double)progress
 
 RCT_EXTERN_METHOD(endActivity:(BOOL)success)
 
+RCT_EXTERN_METHOD(terminateAllActivities)
+
 @end

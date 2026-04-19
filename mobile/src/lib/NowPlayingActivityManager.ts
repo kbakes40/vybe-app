@@ -1,7 +1,20 @@
 import { NativeModules, Platform } from 'react-native';
+import { usePillLockStore } from '@/stores/pillLockStore';
 
-const { VybeNowPlayingActivity } = NativeModules;
+const { VybeNowPlayingActivity, VybeDownloadActivity } = NativeModules as {
+  VybeNowPlayingActivity?: {
+    startNowPlaying: (...a: unknown[]) => Promise<void>;
+    updateNowPlaying: (...a: unknown[]) => void;
+    endNowPlaying: () => void;
+    terminateAllNowPlayingMetadata?: () => void;
+  };
+  VybeDownloadActivity?: { terminateAllActivities?: () => Promise<void> };
+};
 const isAvailable = Platform.OS === 'ios' && !!VybeNowPlayingActivity;
+
+function isIslandSurfaceAllowed(): boolean {
+  return usePillLockStore.getState().allowIslandSurfaces;
+}
 
 // ── Time formatting ────────────────────────────────────────────────────────────
 
@@ -28,7 +41,7 @@ let throttleTimer: ReturnType<typeof setTimeout> | null = null;
 
 function flushThrottledUpdate() {
   throttleTimer = null;
-  if (!isAvailable || !pendingUpdate) {
+  if (!isAvailable || !isIslandSurfaceAllowed() || !pendingUpdate) {
     pendingUpdate = null;
     return;
   }
@@ -59,7 +72,7 @@ export async function startNowPlayingActivity(
   artworkURL: string,
   duration: number,
 ): Promise<void> {
-  if (!isAvailable) return;
+  if (!isAvailable || !isIslandSurfaceAllowed()) return;
   try {
     await VybeNowPlayingActivity.startNowPlaying(
       trackName,
@@ -82,7 +95,7 @@ export function updateNowPlayingActivity(
   trackName: string,
   artistName: string,
 ): void {
-  if (!isAvailable) return;
+  if (!isAvailable || !isIslandSurfaceAllowed()) return;
   pendingUpdate = {
     isPlaying,
     progress: Math.max(0, Math.min(1, progress)),
@@ -117,5 +130,24 @@ export function endNowPlayingActivity(): void {
   }
   try {
     VybeNowPlayingActivity.endNowPlaying();
+  } catch {}
+}
+
+/**
+ * PILL_LOCK_V2 — tear down native Now Playing metadata + ActivityKit download
+ * Live Activities (sign out / auth surface / policy off).
+ */
+export function terminateAllPillNative(): void {
+  pendingUpdate = null;
+  if (throttleTimer) {
+    clearTimeout(throttleTimer);
+    throttleTimer = null;
+  }
+  if (Platform.OS !== 'ios') return;
+  try {
+    VybeNowPlayingActivity?.terminateAllNowPlayingMetadata?.();
+  } catch {}
+  try {
+    VybeDownloadActivity?.terminateAllActivities?.();
   } catch {}
 }
