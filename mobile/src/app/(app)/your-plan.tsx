@@ -38,18 +38,50 @@ const BENEFITS = [
   { icon: <Crown size={18} color="#8B5CF6" />, text: 'Advanced discovery' },
 ];
 
-interface BenefitItemProps {
+type Benefit = (typeof BENEFITS)[number];
+
+interface BenefitCardProps {
   icon: React.ReactNode;
   text: string;
 }
 
-function BenefitItem({ icon, text }: BenefitItemProps) {
+function BenefitCard({ icon, text }: BenefitCardProps) {
   return (
-    <View className="flex-row items-center py-3">
-      <View className="w-8 h-8 rounded-full bg-[#8B5CF6]/20 items-center justify-center">
+    <View
+      className="flex-1 bg-[#111111] rounded-2xl p-4 justify-between"
+      style={{
+        minHeight: 112,
+        borderWidth: 1,
+        borderColor: 'rgba(139, 92, 246, 0.18)',
+      }}
+    >
+      <View className="w-9 h-9 rounded-full bg-[#8B5CF6]/20 items-center justify-center">
         {icon}
       </View>
-      <Text className="text-white text-base ml-4">{text}</Text>
+      <Text className="text-white text-[13px] font-semibold leading-5 mt-3">
+        {text}
+      </Text>
+    </View>
+  );
+}
+
+function BenefitGrid({ benefits }: { benefits: Benefit[] }) {
+  const rows: Array<[Benefit, Benefit | undefined]> = [];
+  for (let i = 0; i < benefits.length; i += 2) {
+    rows.push([benefits[i], benefits[i + 1]]);
+  }
+  return (
+    <View>
+      {rows.map((row, ri) => (
+        <View key={ri} className="flex-row gap-3 mb-3">
+          <BenefitCard icon={row[0].icon} text={row[0].text} />
+          {row[1] ? (
+            <BenefitCard icon={row[1].icon} text={row[1].text} />
+          ) : (
+            <View className="flex-1" />
+          )}
+        </View>
+      ))}
     </View>
   );
 }
@@ -177,14 +209,10 @@ export default function YourPlanScreen() {
         {isPlus ? (
           /* Active Subscription View */
           <View className="px-4 pt-6">
-            <View className="bg-[#1A1A1A] rounded-xl p-5">
-              <Text className="text-white font-semibold text-lg mb-4">
-                Your Benefits
-              </Text>
-              {BENEFITS.map((benefit, index) => (
-                <BenefitItem key={index} icon={benefit.icon} text={benefit.text} />
-              ))}
-            </View>
+            <Text className="text-white font-semibold text-lg mb-4">
+              Your Benefits
+            </Text>
+            <BenefitGrid benefits={BENEFITS} />
 
             <Pressable
               onPress={() => {
@@ -218,10 +246,8 @@ export default function YourPlanScreen() {
             </View>
 
             {/* Benefits */}
-            <View className="bg-[#1A1A1A] rounded-xl p-5 mb-6">
-              {BENEFITS.map((benefit, index) => (
-                <BenefitItem key={index} icon={benefit.icon} text={benefit.text} />
-              ))}
+            <View className="mb-6">
+              <BenefitGrid benefits={BENEFITS} />
             </View>
 
             {/* Pricing Options */}
