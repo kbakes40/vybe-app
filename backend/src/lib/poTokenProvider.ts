@@ -65,8 +65,14 @@ export async function getPoTokenForVideo(videoId: string): Promise<PoTokenBundle
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), POT_PROVIDER_TIMEOUT_MS);
     try {
-      const url = `${POT_PROVIDER_URL}/get_pot?content_binding=${encodeURIComponent(videoId)}`;
-      const res = await fetch(url, { signal: controller.signal });
+      // bgutil-ytdlp-pot-provider HTTP server only exposes POST /get_pot with JSON body
+      // (see Brainicism/bgutil-ytdlp-pot-provider server/src/main.ts). GET returns 404.
+      const res = await fetch(`${POT_PROVIDER_URL}/get_pot`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content_binding: videoId }),
+        signal: controller.signal,
+      });
       if (!res.ok) {
         console.warn(`[POT] provider HTTP ${res.status} for ${videoId}`);
         return null;
