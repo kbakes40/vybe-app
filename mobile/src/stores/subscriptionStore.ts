@@ -17,8 +17,12 @@ interface SubscriptionState {
   dismissAd: () => void;
 }
 
-export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
-  tier: __DEV__ ? 'plus' : 'free',
+export const useSubscriptionStore = create<SubscriptionState>((set) => ({
+  // Paywalls disabled: every user is treated as 'plus' regardless of build mode
+  // or real subscription state. useSkip is unconditional; openPaywall is a no-op
+  // so any stale caller can't surface the overlay. Flip `PAYWALLS_DISABLED` to
+  // false (and restore the original branches below) to re-enable gating.
+  tier: 'plus',
   skipsRemaining: 6,
   showPaywall: false,
   paywallTrigger: null,
@@ -29,19 +33,11 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
 
   setSkipsRemaining: (count) => set({ skipsRemaining: count }),
 
-  useSkip: () => {
-    if (__DEV__) return true;
-    const { tier, skipsRemaining, openPaywall } = get();
-    if (tier === 'plus') return true;
-    if (skipsRemaining <= 0) {
-      openPaywall('skip_limit');
-      return false;
-    }
-    set({ skipsRemaining: skipsRemaining - 1 });
-    return true;
-  },
+  useSkip: () => true,
 
-  openPaywall: (trigger) => set({ showPaywall: true, paywallTrigger: trigger }),
+  // Intentional no-ops while paywalls are disabled — keep the method signatures
+  // so existing callers (UI gates, skip-limit hooks, etc.) don't throw.
+  openPaywall: (_trigger) => {},
 
   closePaywall: () => set({ showPaywall: false, paywallTrigger: null }),
 
