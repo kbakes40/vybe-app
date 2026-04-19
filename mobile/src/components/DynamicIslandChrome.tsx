@@ -88,7 +88,7 @@ export function DynamicIslandChrome() {
   }, [progress, isPlaying, energySV]);
 
   useEffect(() => {
-    if (!isPlaying) return undefined;
+    if (!isPlaying) return () => {};
     const id = setInterval(() => {
       energySV.value *= 0.88;
     }, 90);
@@ -112,7 +112,7 @@ export function DynamicIslandChrome() {
   );
 
   useEffect(() => {
-    if (!isPlaying) return undefined;
+    if (!isPlaying) return () => {};
     setGhostTime(new Date());
     const id = setInterval(() => setGhostTime(new Date()), 30000);
     return () => clearInterval(id);

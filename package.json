@@ -1,7 +1,7 @@
 {
   "name": "vybe-app",
   "private": true,
-  "main": "expo-router/entry",
+  "main": "./mobile/node_modules/expo-router/entry.js",
   "scripts": {
     "build": "bun run --cwd backend build",
     "build:backend": "bun run --cwd backend build",

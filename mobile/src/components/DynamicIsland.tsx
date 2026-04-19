@@ -1,19 +1,13 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import {
-  Dimensions,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-  Linking,
-} from 'react-native';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { Dimensions, Platform, StyleSheet, Text, View, Linking } from 'react-native';
+import { Pressable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSegments } from 'expo-router';
 import { Image } from 'expo-image';
 import Animated, {
   cancelAnimation,
   interpolateColor,
+  type SharedValue,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -26,6 +20,7 @@ import { Check, Pause, Play, SkipForward } from 'lucide-react-native';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useNowPlayingSheetStore } from '@/stores/nowPlayingSheetStore';
 import { useDynamicIslandSignal } from '@/stores/dynamicIslandStore';
+import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import { VIBRANT_BLUE } from '@/constants/machinedTheme';
 
 /**
@@ -44,6 +39,8 @@ const NEON_RED = '#FF3355';
 const SOUNDCLOUD_IGNITION_ORANGE = '#FF3300';
 /** Baby blue pulse while the backend auto-heals a failed YouTube vault (SHADOW_HEALING). */
 const BABY_BLUE = '#9FD9FF';
+/** Pure Neon Cyan — distinguishes SHADOW_HEALING from a hard error (Neon Red). */
+const NEON_CYAN = '#00FFFF';
 const OLED = '#000000';
 
 const SPRING = { stiffness: 200, damping: 20, mass: 0.7 } as const;
@@ -73,6 +70,55 @@ function isEasterEggTrack(artist?: string | null): boolean {
   return !!artist && EGG_ARTIST_MATCH.test(artist);
 }
 
+/**
+ * Renders a 6-spoke fire-particle burst that fans outward from the pill
+ * centre when a Fire tap is registered. Lives inside the pill's clip so
+ * embers never leak past the rounded chrome — keeps the effect feeling
+ * "contained heat" instead of background fireworks.
+ */
+const FireParticleLayer = React.memo(function FireParticleLayer({
+  burstSV,
+}: {
+  burstSV: SharedValue<number>;
+}) {
+  const angles = React.useMemo(
+    () => Array.from({ length: 6 }, (_, i) => (i * Math.PI * 2) / 6),
+    [],
+  );
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      <View style={styles.fireBurstHost}>
+        {angles.map((angle, idx) => (
+          <FireParticle key={idx} angle={angle} burstSV={burstSV} />
+        ))}
+      </View>
+    </View>
+  );
+});
+
+function FireParticle({
+  angle,
+  burstSV,
+}: {
+  angle: number;
+  burstSV: SharedValue<number>;
+}) {
+  const dx = Math.cos(angle);
+  const dy = Math.sin(angle);
+  const style = useAnimatedStyle(() => {
+    const t = burstSV.value;
+    return {
+      opacity: t > 0 ? Math.max(0, 1 - t * 1.05) : 0,
+      transform: [
+        { translateX: dx * 26 * t },
+        { translateY: dy * 14 * t },
+        { scale: 0.6 + t * 0.6 },
+      ],
+    };
+  });
+  return <Animated.View style={[styles.fireParticle, style]} />;
+}
+
 export function DynamicIsland() {
   const segments = useSegments();
   const insets = useSafeAreaInsets();
@@ -88,6 +134,9 @@ export function DynamicIsland() {
   const playbackError = usePlaybackController((s) => s.error);
   const healingStreamActive = useDynamicIslandSignal((s) => s.healingStreamActive);
   const scIgnitionGlow = useDynamicIslandSignal((s) => s.scIgnitionGlow);
+  const firedAt = useDynamicIslandSignal((s) => s.firedAt);
+  /** Premium fidelity badge — drives the HD pill chip rendered in the playing row. */
+  const isPremium = useSubscriptionStore((s) => s.tier === 'plus');
 
   const isPlaying = playbackState === 'playing' && !!currentTrack;
   const isStreamResolving =
@@ -109,8 +158,8 @@ export function DynamicIsland() {
   // Local UI state kept in a ref so handlers see the latest without stale closures.
   const stateRef = useRef<DIState>('idle');
   const stateSV = useSharedValue(0); // 0=idle, 1=playing, 2=expanded, 3=davinci
-  const widthSV = useSharedValue(GEO.idle.w);
-  const heightSV = useSharedValue(GEO.idle.h);
+  const widthSV = useSharedValue<number>(GEO.idle.w);
+  const heightSV = useSharedValue<number>(GEO.idle.h);
   const borderHueSV = useSharedValue(0); // 0 = blue, 1 = amber
   /** 0 = machined blue family, 1 = SoundCloud ignition orange (after scMatchPromise). */
   const scIgnitionSV = useSharedValue(0);
@@ -124,12 +173,22 @@ export function DynamicIsland() {
   const resolvePulse = useSharedValue(0);
   const recoveryOpacity = useSharedValue(0);
   const recoveryHueSV = useSharedValue(0);
+  /** Pulses 0.45 → 1 while healingStreamActive — drives SHADOW_HEALING text breathing. */
+  const healingPulseSV = useSharedValue(0.45);
   const successOpacity = useSharedValue(0);
   const successCheckSV = useSharedValue(0);
+  /** 0 → no flare; 1 → full SC-Orange border bloom from a Fire tap. */
+  const fireFlareSV = useSharedValue(0);
+  /** 0 → particles hidden; 1 → particles fully spread (radial fire burst). */
+  const fireBurstSV = useSharedValue(0);
 
   const successAt = useDynamicIslandSignal((s) => s.successAt);
   const successLabel = useDynamicIslandSignal((s) => s.successLabel);
   const recoveryLabelOverride = useDynamicIslandSignal((s) => s.recoveryLabel);
+  /** Cyan-tinted recovery states (auto-heal / token refresh) vs red errors. */
+  const isHealingLabel =
+    recoveryLabelOverride === 'SHADOW_HEALING' ||
+    recoveryLabelOverride === 'TOKEN_REFRESH';
 
   // Derive geometry targets from logical state.
   const applyState = useCallback(
@@ -239,6 +298,26 @@ export function DynamicIsland() {
     scIgnitionSV.value = withTiming(on ? 1 : 0, { duration: 280 });
   }, [scIgnitionGlow, currentSource, eggActive, scIgnitionSV]);
 
+  // Fire flare — every Fire tap on Now Playing bumps `firedAt`, which fires
+  // an SC-Orange border bloom + a one-shot particle burst. The flare bleeds
+  // out over ~1.6s so the user gets crisp tactile feedback before the pill
+  // returns to its prior visual state (Machined Blue or steady SC ignition).
+  // Layout effect: sync with `flashFire()` before paint so Reanimated owns
+  // the burst from the same frame as the Fire `onPress` (not a later commit).
+  useLayoutEffect(() => {
+    if (!firedAt) return;
+    fireFlareSV.value = withSequence(
+      withTiming(1, { duration: 180 }),
+      withTiming(0.55, { duration: 420 }),
+      withTiming(0, { duration: 1000 }),
+    );
+    fireBurstSV.value = 0;
+    fireBurstSV.value = withSequence(
+      withTiming(1, { duration: 380 }),
+      withTiming(0, { duration: 520 }),
+    );
+  }, [firedAt, fireFlareSV, fireBurstSV]);
+
   // Machined-Blue bloom while playing — pill goes from a dim hairline to a
   // full neon glow. Play kick-in gets a brief over-shoot flash ("Integrated
   // Notch" pulse from IMG_3643) before settling to steady glow. Eases out on
@@ -269,6 +348,25 @@ export function DynamicIsland() {
       magPulse.value = withTiming(0.35, { duration: 280 });
     }
   }, [isPlaying, isStreamResolving, magPulse]);
+
+  // SHADOW_HEALING pulse — gentle breathing tied to healingStreamActive so
+  // the cyan label reads as "the system is actively working" rather than a
+  // static error. Cancelled the moment heal finishes (success or miss).
+  useEffect(() => {
+    if (healingStreamActive) {
+      healingPulseSV.value = withRepeat(
+        withSequence(
+          withTiming(1, { duration: 520 }),
+          withTiming(0.45, { duration: 620 }),
+        ),
+        -1,
+        true,
+      );
+    } else {
+      cancelAnimation(healingPulseSV);
+      healingPulseSV.value = withTiming(0.45, { duration: 220 });
+    }
+  }, [healingStreamActive, healingPulseSV]);
 
   useEffect(() => {
     isResolvingSV.value = withTiming(isStreamResolving ? 1 : 0, { duration: 160 });
@@ -328,18 +426,27 @@ export function DynamicIsland() {
   const pillAnimatedStyle = useAnimatedStyle(() => {
     const g = glowIntensitySV.value;
     const r = resolvePulse.value * isResolvingSV.value;
-    const ring = g + r * 1.15;
-    const capped = ring > 1.45 ? 1.45 : ring;
+    const flare = fireFlareSV.value;
+    const ring = g + r * 1.15 + flare * 1.2;
+    const capped = ring > 1.6 ? 1.6 : ring;
     const egg = borderHueSV.value;
     const sc = scIgnitionSV.value;
-    const hotColor =
+    // Fire flare wins the border colour while active: SC-Orange overrides
+    // both the egg amber and the steady ignition orange so the user feels
+    // the burn the instant they tap. Falls back to the prior hot color.
+    const baseColor =
       egg > 0.5
         ? interpolateColor(egg, [0.5, 1], [VIBRANT_BLUE, NEON_AMBER])
         : interpolateColor(sc, [0, 1], [VIBRANT_BLUE, SOUNDCLOUD_IGNITION_ORANGE]);
+    const hotColor = interpolateColor(
+      flare,
+      [0, 1],
+      [baseColor, SOUNDCLOUD_IGNITION_ORANGE],
+    );
     return {
       width: widthSV.value,
       height: heightSV.value,
-      borderWidth: 1,
+      borderWidth: 1 + flare * 0.8,
       borderColor: hotColor,
       shadowColor: hotColor,
       shadowOpacity: 0.25 + capped * 0.78,
@@ -374,6 +481,11 @@ export function DynamicIsland() {
     opacity: 0.4 + recoveryHueSV.value * 0.6,
     transform: [{ scale: 0.85 + recoveryHueSV.value * 0.25 }],
   }));
+  /** Cyan SHADOW_HEALING text — breathing opacity + subtle scale. */
+  const healingPulseStyle = useAnimatedStyle(() => ({
+    opacity: healingPulseSV.value,
+    transform: [{ scale: 0.96 + healingPulseSV.value * 0.06 }],
+  }));
   const successStyle = useAnimatedStyle(() => ({
     opacity: successOpacity.value,
     transform: [{ translateY: (1 - successOpacity.value) * -3 }],
@@ -382,11 +494,20 @@ export function DynamicIsland() {
     transform: [{ scale: 0.6 + successCheckSV.value * 0.5 }],
   }));
 
+  /** Tiny ember dot pulse — overlay shown briefly while a Fire flare is active. */
+  const fireDotStyle = useAnimatedStyle(() => ({
+    opacity: fireFlareSV.value,
+    transform: [{ scale: 0.6 + fireFlareSV.value * 0.5 }],
+  }));
+
   // IMG_3643: hug the notch — `top: -4` relative to safe-area line (insets.top − 4).
   // Clamp to a minimum so the pill stays visible even if the SafeAreaProvider
   // hasn't resolved insets yet on first paint (would otherwise render at -4
   // and disappear behind the notch).
   const pillTop = Math.max(insets.top - 4, Platform.OS === 'ios' ? 44 : 12);
+
+  /** HD badge appears for premium subs whenever audio is engaged. */
+  const showHdBadge = isPremium && (isPlaying || isStreamResolving);
 
   if (suppress) return null;
 
@@ -434,11 +555,19 @@ export function DynamicIsland() {
                   {currentTrack?.artist ?? ''}
                 </Text>
                 {healingStreamActive && isStreamResolving ? (
-                  <Text numberOfLines={1} style={styles.healingLine}>
+                  <Animated.Text
+                    numberOfLines={1}
+                    style={[styles.healingLine, healingPulseStyle]}
+                  >
                     SHADOW_HEALING
-                  </Text>
+                  </Animated.Text>
                 ) : null}
               </View>
+              {showHdBadge ? (
+                <View style={styles.hdBadge} pointerEvents="none">
+                  <Text style={styles.hdBadgeText}>HD</Text>
+                </View>
+              ) : null}
               <Animated.View
                 style={[
                   styles.heartbeat,
@@ -447,6 +576,13 @@ export function DynamicIsland() {
                 ]}
               />
             </Animated.View>
+
+            {/* ── FIRE FLARE: orange ember overlay during a Fire tap ───── */}
+            <FireParticleLayer burstSV={fireBurstSV} />
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.fireEmberDot, fireDotStyle]}
+            />
 
             {/* ── EXPANDED mini-controller ───────────────────────────────── */}
             <Animated.View
@@ -520,9 +656,25 @@ export function DynamicIsland() {
               pointerEvents={stateRef.current === 'recovery' ? 'auto' : 'none'}
               style={[StyleSheet.absoluteFill, styles.recoveryRoot, recoveryStyle]}
             >
-              <Animated.View style={[styles.recoveryDot, recoveryDotStyle]} />
-              <View style={styles.recoveryText}>
-                <Text style={styles.recoveryStatus}>
+              <Animated.View
+                style={[
+                  styles.recoveryDot,
+                  isHealingLabel ? styles.recoveryDotHealing : null,
+                  recoveryDotStyle,
+                ]}
+              />
+              <Animated.View
+                style={[
+                  styles.recoveryText,
+                  isHealingLabel ? healingPulseStyle : null,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.recoveryStatus,
+                    isHealingLabel ? styles.recoveryStatusHealing : null,
+                  ]}
+                >
                   {recoveryLabelOverride ?? 'MACHINED_RECOVERY'}
                 </Text>
                 <Text style={styles.recoverySub} numberOfLines={1}>
@@ -534,7 +686,7 @@ export function DynamicIsland() {
                         ? playbackError.replace(/^Failed to play:\s*/i, '').slice(0, 42)
                         : 'Re-routing stream'}
                 </Text>
-              </View>
+              </Animated.View>
             </Animated.View>
 
             {/* ── SUCCESS: Shadow Cyan checkmark, ~2s flash ───────────────── */}
@@ -626,10 +778,15 @@ const styles = StyleSheet.create({
   },
   healingLine: {
     marginTop: 3,
-    color: BABY_BLUE,
+    // Pure Neon Cyan distinguishes this from a Neon Red error or the BABY_BLUE
+    // progress shimmer. Pulses via `healingPulseStyle`.
+    color: NEON_CYAN,
     fontSize: 9,
     fontWeight: '900',
     letterSpacing: 1.4,
+    textShadowColor: NEON_CYAN,
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 6,
   },
   heartbeat: {
     width: 8,
@@ -736,6 +893,10 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     marginRight: 10,
   },
+  recoveryDotHealing: {
+    backgroundColor: NEON_CYAN,
+    shadowColor: NEON_CYAN,
+  },
   recoveryText: {
     flex: 1,
     minWidth: 0,
@@ -745,6 +906,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 1.8,
+  },
+  recoveryStatusHealing: {
+    color: NEON_CYAN,
+    textShadowColor: NEON_CYAN,
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 6,
   },
   recoverySub: {
     color: 'rgba(255,255,255,0.55)',
@@ -780,5 +947,49 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 1.6,
     textTransform: 'uppercase',
+  },
+  hdBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
+    marginRight: 8,
+    backgroundColor: 'rgba(0,229,255,0.18)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: VIBRANT_BLUE,
+  },
+  hdBadgeText: {
+    color: VIBRANT_BLUE,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+  },
+  fireBurstHost: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fireParticle: {
+    position: 'absolute',
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: SOUNDCLOUD_IGNITION_ORANGE,
+    shadowColor: SOUNDCLOUD_IGNITION_ORANGE,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 8,
+  },
+  fireEmberDot: {
+    position: 'absolute',
+    bottom: 4,
+    alignSelf: 'center',
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: SOUNDCLOUD_IGNITION_ORANGE,
+    shadowColor: SOUNDCLOUD_IGNITION_ORANGE,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 10,
   },
 });

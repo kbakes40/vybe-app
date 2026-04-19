@@ -210,17 +210,34 @@ export default function SearchScreen() {
 
   const allSearchableTracks = [...tracks, ...downloads];
 
+  // De-dupe: tracks (mockData) and downloads share id space ('yt3', etc.),
+  // and React would otherwise flag duplicate keys in the Songs rail.
+  const dedupeById = <T extends { id: string }>(rows: T[]) => {
+    const seen = new Set<string>();
+    const out: T[] = [];
+    for (const r of rows) {
+      if (seen.has(r.id)) continue;
+      seen.add(r.id);
+      out.push(r);
+    }
+    return out;
+  };
+
   const filteredTracks = searchQuery
-    ? allSearchableTracks.filter(t =>
-        t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        t.artist.toLowerCase().includes(searchQuery.toLowerCase())
+    ? dedupeById(
+        allSearchableTracks.filter(t =>
+          t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          t.artist.toLowerCase().includes(searchQuery.toLowerCase())
+        )
       )
     : [];
 
   const filteredDownloads = searchQuery
-    ? downloads.filter(t =>
-        t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        t.artist.toLowerCase().includes(searchQuery.toLowerCase())
+    ? dedupeById(
+        downloads.filter(t =>
+          t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          t.artist.toLowerCase().includes(searchQuery.toLowerCase())
+        )
       )
     : [];
 
@@ -397,13 +414,20 @@ export default function SearchScreen() {
   }));
 
   useFocusEffect(
+    // useFocusEffect callbacks MUST return a function (or nothing). Returning
+    // `undefined` from one branch and nothing from another sometimes lands as
+    // a non-function cleanup in Hermes-minified bundles and crashes with
+    // "TypeError: _b.call is not a function (it is undefined)". A no-op
+    // closing function is the bulletproof contract.
     useCallback(() => {
-      if (selectedGenre || searchQuery.trim().length > 0 || spotifyPlaylistId) return undefined;
+      if (selectedGenre || searchQuery.trim().length > 0 || spotifyPlaylistId) {
+        return () => {};
+      }
       gridEnterScale.value = 0.96;
       gridEnterOpacity.value = 0.75;
       gridEnterScale.value = withSpring(1, { damping: 16, stiffness: 260 });
       gridEnterOpacity.value = withTiming(1, { duration: 280 });
-      return undefined;
+      return () => {};
     }, [selectedGenre, searchQuery, spotifyPlaylistId]),
   );
 
@@ -666,7 +690,7 @@ export default function SearchScreen() {
                   <View style={{ marginBottom: 8 }}>
                     <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', paddingHorizontal: 20, marginBottom: 12 }}>Downloaded</Text>
                     {filteredDownloads.map(track => (
-                      <TrackCard key={track.id} track={track} queue={filteredDownloads} />
+                      <TrackCard key={`dl-${track.id}`} track={track} queue={filteredDownloads} />
                     ))}
                   </View>
                 ) : null}
@@ -684,7 +708,7 @@ export default function SearchScreen() {
                   <View>
                     <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', paddingHorizontal: 20, marginBottom: 12 }}>Songs</Text>
                     {filteredTracks.slice(0, 10).map(track => (
-                      <TrackCard key={track.id} track={track} queue={filteredTracks} />
+                      <TrackCard key={`song-${track.id}`} track={track} queue={filteredTracks} />
                     ))}
                   </View>
                 ) : null}
@@ -711,7 +735,7 @@ export default function SearchScreen() {
                       <Animated.View style={scListRevealStyle}>
                         {liveSoundCloudTracks.map((track) => (
                           <TrackCard
-                            key={track.id}
+                            key={`sc-${track.id}`}
                             track={track}
                             queue={liveSoundCloudTracks}
                             rowVariant="search"
@@ -732,7 +756,12 @@ export default function SearchScreen() {
                       <VaultMachinedSkeletonBlock />
                     ) : (
                       liveYtMusicTracks.map((track) => (
-                        <TrackCard key={track.id} track={track} queue={liveYtMusicTracks} rowVariant="search" />
+                        <TrackCard
+                          key={`vault-${track.id}`}
+                          track={track}
+                          queue={liveYtMusicTracks}
+                          rowVariant="search"
+                        />
                       ))
                     )}
                   </View>

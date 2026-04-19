@@ -7,5 +7,8 @@
  *
  * @see usePlaybackController
  */
-export { VYBE_TRACK_PLAYER_BUFFER_CONFIG } from '@/constants/playbackBuffer';
+export {
+  VYBE_TRACK_PLAYER_BUFFER_CONFIG,
+  getPlaybackBufferConfig,
+} from '@/constants/playbackBuffer';
 export { usePlaybackController as usePlaybackStore } from './playbackController';

@@ -1,5 +1,15 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { View, Text, ScrollView, Pressable, Dimensions, ActivityIndicator, RefreshControl, StyleSheet, Platform } from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  Pressable,
+  Dimensions,
+  ActivityIndicator,
+  RefreshControl,
+  StyleSheet,
+  Platform,
+} from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -47,6 +57,7 @@ import {
 import { getTasteSeedTracks } from '@/lib/tasteSeed';
 import { clearCuratedPlaylistWarmSession } from '@/lib/curatedPlaylistWarmup';
 import { preResolveYoutubeVideoId } from '@/lib/youtubeResolvePreloadCache';
+import { preResolveSoundcloudStreamUrl } from '@/lib/soundcloudStreamPreloadCache';
 import { normalizeYoutubePlaylistTracksPayload } from '@/lib/youtubePlaylistTracksNormalize';
 import { useCuratedPlaylistCardWarmup } from '@/hooks/useCuratedPlaylistCardWarmup';
 import { AlbumCard } from '@/components/AlbumCard';
@@ -125,6 +136,43 @@ function SourceIcon({ source }: { source: string | undefined }) {
   return (
     <View style={{ width: 16, height: 16, borderRadius: 3, backgroundColor: '#8B5CF6', alignItems: 'center', justifyContent: 'center', marginRight: 6 }}>
       <Headphones size={9} color="#fff" strokeWidth={2.5} />
+    </View>
+  );
+}
+
+/**
+ * Machined-Blue skeleton row used while SC-Ignition resolvers are pulling
+ * curated playlists for the home tab. Matches the search-tab skeleton
+ * language so the loading state feels native to the app, not a third-party
+ * shimmer. Renders 4 ghost cards in a horizontal strip.
+ */
+function MachinedBlueSkeletonRail() {
+  return (
+    <View style={{ flexDirection: 'row', paddingHorizontal: 20 }}>
+      {[0, 1, 2, 3].map((i) => (
+        <View
+          key={i}
+          style={{
+            width: 150,
+            height: 150,
+            borderRadius: 14,
+            marginRight: 12,
+            borderWidth: 1,
+            borderColor: 'rgba(0,229,255,0.55)',
+            backgroundColor: 'rgba(0,229,255,0.08)',
+            ...Platform.select({
+              ios: {
+                shadowColor: VIBRANT_BLUE,
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: 0.4,
+                shadowRadius: 10,
+              },
+              android: { elevation: 4 },
+              default: {},
+            }),
+          }}
+        />
+      ))}
     </View>
   );
 }
@@ -696,7 +744,27 @@ const HOME_KEYS = {
   ytmMoodEnergy: 'ytmMoodEnergy',
   ytmMoodSleep: 'ytmMoodSleep',
   shadowRadar: 'shadowRadar',
+  // SoundCloud-first home rails — primary discovery on the home tab.
+  scCuratedPlaylists: 'scCuratedPlaylists',
 } as const;
+
+interface SoundcloudCuratedTrackRow {
+  videoId: string;
+  title: string;
+  channelName: string;
+  thumbnailUrl: string;
+  publishedAt: string;
+  soundcloudUrl: string;
+}
+interface SoundcloudCuratedPlaylist {
+  playlistId: string;
+  name: string;
+  thumbnailUrl: string;
+  soundcloudSetUrl: string;
+  tracks: SoundcloudCuratedTrackRow[];
+  category?: string;
+  section?: string;
+}
 
 // SoundCloud track shape returned by /api/soundcloud/search
 interface SCApiTrack {
@@ -1017,6 +1085,16 @@ export default function HomeScreen() {
   const currentTrack = usePlaybackController(s => s.currentTrack);
   const pulseFeedPosts = useSocialActivityStore((s) => s.activePosts).slice(0, 24);
 
+  const onScTrendingViewable = useCallback(
+    (e: { viewableItems: Array<{ item: SCApiTrack }> }) => {
+      for (const v of e.viewableItems) {
+        const u = v.item?.soundcloudUrl;
+        if (u) preResolveSoundcloudStreamUrl(u);
+      }
+    },
+    [],
+  );
+
   useFocusEffect(
     useCallback(() => {
       return () => clearCuratedPlaylistWarmSession();
@@ -1059,6 +1137,11 @@ export default function HomeScreen() {
     const hit = homeMMKV.get<SCApiTrack[]>(HOME_KEYS.scTrendingTracks, TTL.GENRE);
     return hit?.value ?? [];
   });
+  /** SoundCloud-first home rails — curated playlists drive both New & Hot and Trending. */
+  const [scCuratedPlaylists, setScCuratedPlaylists] = useState<SoundcloudCuratedPlaylist[]>(() => {
+    const hit = homeMMKV.get<SoundcloudCuratedPlaylist[]>(HOME_KEYS.scCuratedPlaylists, TTL.CURATED);
+    return hit?.value ?? [];
+  });
   const [ytmTopVideos, setYtmTopVideos] = useState<PlaylistTrack[]>(() => {
     const hit = homeMMKV.get<PlaylistTrack[]>(HOME_KEYS.ytmTopVideos, TTL.GENRE);
     return hit?.value ?? [];
@@ -1091,6 +1174,9 @@ export default function HomeScreen() {
 
   const { showVybePopup } = useVybePopup();
   useFocusEffect(
+    // Always hand back a real cleanup so Hermes-minified expo-router never
+    // tries to invoke `undefined.call()` (the source of the
+    // "TypeError: _b.call is not a function" flood).
     useCallback(() => {
       if (usePostLoginWelcomeStore.getState().consumeEnjoyVibes()) {
         showVybePopup({
@@ -1099,6 +1185,7 @@ export default function HomeScreen() {
           type: 'success',
         });
       }
+      return () => {};
     }, [showVybePopup]),
   );
 
@@ -1169,12 +1256,19 @@ export default function HomeScreen() {
     return absent.sort(() => Math.random() - 0.5);
   };
 
-  // Fetch curated mixes and trigger discovery refresh on mount
+  // Fetch curated mixes and trigger discovery refresh on mount.
+  // Safety: even if something inside fetchMixes hangs (e.g. one of the
+  // sequential awaits stalls behind a degraded Railway endpoint), force the
+  // Machined-Blue skeleton to clear after 12s so the rails never sit in a
+  // permanent loading state. The fallback rail (scTrendingTracks) will pick
+  // up rendering responsibility once isLoadingMixes flips false.
   useEffect(() => {
     fetchMixes();
+    const skeletonSafetyTimer = setTimeout(() => setIsLoadingMixes(false), 12000);
     if (autoRefreshEnabled) {
       refreshDiscovery();
     }
+    return () => clearTimeout(skeletonSafetyTimer);
   }, []);
 
   // Era Hits artwork — independent effect so blank cards don't wait on the
@@ -1219,16 +1313,64 @@ export default function HomeScreen() {
   const fetchMixes = async () => {
     setIsLoadingMixes(true);
 
+    // FAST PATH — SC New & Hot / Trending rails. Fire immediately and set
+    // state the moment it lands (typically <300ms) so the cyan skeletons
+    // don't sit on screen while the slow Spotify/YouTube chain below works
+    // through 6+ sequential awaits. Also drives the trending-search fallback
+    // used when curated playlists comes back empty.
+    void Promise.all([
+      api
+        .get<SoundcloudCuratedPlaylist[]>(`/api/soundcloud/playlists`)
+        .catch((err: unknown) => {
+          console.log('[home] sc curated playlists fast-path failed:', err);
+          return null as SoundcloudCuratedPlaylist[] | null;
+        }),
+      api
+        .get<SCApiTrack[]>(
+          `/api/soundcloud/search?q=${encodeURIComponent('trending')}&maxResults=15`,
+        )
+        .catch(() => null as SCApiTrack[] | null),
+    ]).then(([scPlaylistsFast, scTrendingFast]) => {
+      if (Array.isArray(scPlaylistsFast) && scPlaylistsFast.length > 0) {
+        setScCuratedPlaylists(scPlaylistsFast);
+        homeMMKV.set(HOME_KEYS.scCuratedPlaylists, scPlaylistsFast);
+      }
+      if (Array.isArray(scTrendingFast) && scTrendingFast.length > 0) {
+        setScTrendingTracks(scTrendingFast);
+        homeMMKV.set(HOME_KEYS.scTrendingTracks, scTrendingFast);
+      }
+      // As soon as either source has rows, we have something to render —
+      // clear the skeletons immediately so the user never stares at empty
+      // cyan boxes while the rest of the pipeline finishes.
+      const haveAnything =
+        (Array.isArray(scPlaylistsFast) && scPlaylistsFast.length > 0) ||
+        (Array.isArray(scTrendingFast) && scTrendingFast.length > 0);
+      if (haveAnything) setIsLoadingMixes(false);
+    });
+
     try {
-      // Fetch all mixes
-      const mixesResponse = await api.get<MixDefinition[]>('/api/soundcloud/mixes');
+      // Fire each independent fetch in parallel and never let one bad
+      // endpoint (e.g. backend 502 on /api/soundcloud/mixes) short-circuit
+      // the rest of the home pipeline. Previously the awaited mixes call
+      // threw and skipped curated playlists, Spotify, AND the new SC New &
+      // Hot / Trending rails. Per-leg .catch() guarantees independence.
+      const mixesResponse = await api
+        .get<MixDefinition[]>('/api/soundcloud/mixes')
+        .catch((err: unknown) => {
+          console.log('[home] mixes fetch failed (continuing):', err);
+          return null as MixDefinition[] | null;
+        });
       if (mixesResponse) {
         setMixes(mixesResponse);
         homeMMKV.set(HOME_KEYS.mixes, mixesResponse);
       }
 
-      // Fetch curated YouTube Music playlists
-      const playlistsResponse = await api.get<CuratedPlaylist[]>('/api/youtube/playlists');
+      const playlistsResponse = await api
+        .get<CuratedPlaylist[]>('/api/youtube/playlists')
+        .catch((err: unknown) => {
+          console.log('[home] yt curated playlists fetch failed (continuing):', err);
+          return null as CuratedPlaylist[] | null;
+        });
       if (playlistsResponse) {
         const filtered = playlistsResponse
           .filter((p) => p.tracks.length > 0)
@@ -1316,6 +1458,12 @@ export default function HomeScreen() {
           .catch(() => null),
         Promise.resolve([] as PlaylistTrack[]),
         genreAll,
+        // SC-Ignition: curated SoundCloud playlists power the home tab's
+        // "New & Hot" + "Trending" rails. Backend resolves these from
+        // catalog/soundcloud-curated-playlists.json and returns playable rows.
+        api
+          .get<SoundcloudCuratedPlaylist[]>(`/api/soundcloud/playlists`)
+          .catch(() => null),
       ]);
 
       const ytmBundle = safeYtmBundle(
@@ -1419,6 +1567,13 @@ export default function HomeScreen() {
       if (scTrending && scTrending.length > 0) {
         setScTrendingTracks(scTrending);
         homeMMKV.set(HOME_KEYS.scTrendingTracks, scTrending);
+      }
+
+      const scPlaylistsResult =
+        settledMain[5]?.status === 'fulfilled' ? settledMain[5].value : null;
+      if (Array.isArray(scPlaylistsResult) && scPlaylistsResult.length > 0) {
+        setScCuratedPlaylists(scPlaylistsResult);
+        homeMMKV.set(HOME_KEYS.scCuratedPlaylists, scPlaylistsResult);
       }
 
       // SoundCloud tracks no longer use embedded playback - they open externally via search handoff
@@ -1671,13 +1826,15 @@ export default function HomeScreen() {
             <View style={{ marginTop: SECTION_GAP }}>
               <SectionHeader title="The Decades Vault" />
               <Text className="text-white/50 text-sm px-5 mb-4">Dial in a decade — one tap deep</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ paddingHorizontal: 20 }}
-                style={{ flexGrow: 0 }}
-              >
-                {DECADES_VAULT_CARDS.map((era) => {
+              <View style={{ height: 228, flexGrow: 0 }}>
+                <FlashList
+                  data={DECADES_VAULT_CARDS}
+                  horizontal
+                  estimatedItemSize={172}
+                  keyExtractor={(era) => era.playlistId}
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ paddingHorizontal: 20 }}
+                  renderItem={({ item: era }) => {
                   const thumb =
                     playlistArtworkById.get(era.playlistId) || playlistThumbOverrides[era.playlistId];
                   const v = resolveShadowPlaylistVisual({
@@ -1689,7 +1846,6 @@ export default function HomeScreen() {
                   });
                   return (
                     <ShadowCuratedPlaylistCard
-                      key={era.playlistId}
                       title={era.name}
                       artwork={v.artwork}
                       oledTitle={v.oledTitle}
@@ -1705,8 +1861,9 @@ export default function HomeScreen() {
                       }}
                     />
                   );
-                })}
-              </ScrollView>
+                }}
+                />
+              </View>
             </View>
           );
         })()}
@@ -1755,6 +1912,185 @@ export default function HomeScreen() {
             onPress={() => router.push('/(app)/vybe-mix')}
           />
         </View>
+
+        {/* ── SoundCloud-first home rails ──────────────────────────────────
+            "New & Hot" + "Trending" pulled from the SC-Ignition curated set.
+            Backend route /api/soundcloud/playlists resolves these from
+            backend/catalog/soundcloud-curated-playlists.json. While the
+            request is in flight we fall back to the Machined-Blue skeleton
+            rail so the home tab never feels empty during cold start. */}
+        {scCuratedPlaylists.length === 0 && isLoadingMixes ? (
+          <>
+            <View style={{ marginTop: SECTION_GAP }}>
+              <SectionHeader title="New & Hot" />
+              <MachinedBlueSkeletonRail />
+            </View>
+            <View style={{ marginTop: SECTION_GAP }}>
+              <SectionHeader title="Trending" />
+              <MachinedBlueSkeletonRail />
+            </View>
+          </>
+        ) : null}
+        {/* Fallback rails — when the curated catalog returns empty but the
+            parallel /api/soundcloud/search trending fetch came back with
+            tracks, surface those instead so the home tab never sits with a
+            blank "New & Hot / Trending" pair. Tap-to-play wires straight to
+            the SC-Ignition pool, same as the mini-player. */}
+        {scCuratedPlaylists.length === 0 && !isLoadingMixes && scTrendingTracks.length > 0 ? (() => {
+          const trendingQueue: Track[] = scTrendingTracks.map((x) => ({
+            id: `sc-${x.trackId}`,
+            title: x.title,
+            artist: x.artist,
+            artistId: '',
+            album: '',
+            albumId: '',
+            artwork: x.artwork,
+            duration: x.duration,
+            isLiked: false,
+            source: 'soundcloud' as const,
+            soundcloudUrl: x.soundcloudUrl,
+            audioUrl: '',
+          }));
+          const half = Math.max(1, Math.ceil(trendingQueue.length / 2));
+          const newHot = trendingQueue.slice(0, half);
+          const trending = trendingQueue.slice(half).length > 0
+            ? trendingQueue.slice(half)
+            : trendingQueue;
+          const renderTrackRail = (rows: Track[]) => (
+            <View style={{ height: 232, flexGrow: 0 }}>
+              <FlashList
+                data={rows}
+                horizontal
+                estimatedItemSize={80}
+                keyExtractor={(t) => t.id}
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 20 }}
+                renderItem={({ item: t }) => (
+                  <Pressable
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      if (t.artwork) prefetchHeroColors(t.artwork);
+                      void playTrack(t, trendingQueue);
+                    }}
+                    style={{ width: 150, marginRight: 12 }}
+                  >
+                    <ShadowArtworkImage
+                      source={{ uri: t.artwork }}
+                      style={{ width: 150, height: 150, borderRadius: ART_RADIUS }}
+                      contentFit="cover"
+                    />
+                    <View style={{ position: 'absolute', top: 8, right: 8 }}>
+                      <SourceCornerBadge source="soundcloud" compact />
+                    </View>
+                    <Text
+                      style={{ color: '#fff', fontSize: 13, fontWeight: '700', marginTop: 8, width: 150 }}
+                      numberOfLines={1}
+                    >
+                      {t.title}
+                    </Text>
+                    <Text
+                      style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, width: 150 }}
+                      numberOfLines={1}
+                    >
+                      {t.artist}
+                    </Text>
+                  </Pressable>
+                )}
+              />
+            </View>
+          );
+          return (
+            <>
+              <View style={{ marginTop: SECTION_GAP }}>
+                <SectionHeader title="New & Hot" onSeeAll={() => router.push('/(app)/discover' as never)} />
+                {renderTrackRail(newHot)}
+              </View>
+              <View style={{ marginTop: SECTION_GAP }}>
+                <SectionHeader title="Trending" onSeeAll={() => router.push('/(app)/discover' as never)} />
+                {renderTrackRail(trending)}
+              </View>
+            </>
+          );
+        })() : null}
+        {scCuratedPlaylists.length > 0 && (() => {
+          // Split the curated set in half: first slice powers the New & Hot
+          // rail, second slice powers Trending. Keeps both rails populated
+          // even when the catalog is small without duplicating cards.
+          const half = Math.max(1, Math.ceil(scCuratedPlaylists.length / 2));
+          const newHot = scCuratedPlaylists.slice(0, half);
+          const trending = scCuratedPlaylists.slice(half).length > 0
+            ? scCuratedPlaylists.slice(half)
+            : scCuratedPlaylists;
+          const renderRail = (rows: SoundcloudCuratedPlaylist[]) => (
+            <View style={{ height: 232, flexGrow: 0 }}>
+              <FlashList
+                data={rows}
+                horizontal
+                // Speed Mode: per the zero-lag tuning spec, our rail items
+                // virtualize off an 80pt baseline. FlashList still measures
+                // real cell heights — this just primes the windowing.
+                estimatedItemSize={80}
+                keyExtractor={(pl) => pl.playlistId}
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 20 }}
+                renderItem={({ item: pl }) => {
+                const art = pl.thumbnailUrl || pl.tracks[0]?.thumbnailUrl || '';
+                return (
+                  <Pressable
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      if (art) prefetchHeroColors(art);
+                      router.push({
+                        pathname: '/(app)/playlist-detail',
+                        params: {
+                          scSet: encodeURIComponent(pl.soundcloudSetUrl),
+                          playlistName: pl.name,
+                        },
+                      } as never);
+                    }}
+                    style={{ width: 150, marginRight: 12 }}
+                  >
+                    <ShadowArtworkImage
+                      source={{ uri: art }}
+                      style={{ width: 150, height: 150, borderRadius: ART_RADIUS }}
+                      contentFit="cover"
+                    />
+                    <View style={{ position: 'absolute', top: 8, right: 8 }}>
+                      <SourceCornerBadge source="soundcloud" compact />
+                    </View>
+                    <Text
+                      style={{ color: '#fff', fontSize: 13, fontWeight: '700', marginTop: 8, width: 150 }}
+                      numberOfLines={1}
+                    >
+                      {pl.name}
+                    </Text>
+                    {pl.category ? (
+                      <Text
+                        style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, width: 150 }}
+                        numberOfLines={1}
+                      >
+                        {pl.category}
+                      </Text>
+                    ) : null}
+                  </Pressable>
+                );
+              }}
+              />
+            </View>
+          );
+          return (
+            <>
+              <View style={{ marginTop: SECTION_GAP }}>
+                <SectionHeader title="New & Hot" onSeeAll={() => router.push('/(app)/discover' as never)} />
+                {renderRail(newHot)}
+              </View>
+              <View style={{ marginTop: SECTION_GAP }}>
+                <SectionHeader title="Trending" onSeeAll={() => router.push('/(app)/discover' as never)} />
+                {renderRail(trending)}
+              </View>
+            </>
+          );
+        })()}
 
         {curatedPlaylists.length > 0 && (
           <View style={{ marginTop: SECTION_GAP }}>
@@ -2023,7 +2359,6 @@ export default function HomeScreen() {
               horizontal
               keyExtractor={(item) => item.id}
               estimatedItemSize={172}
-              nestedScrollEnabled
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={{ paddingHorizontal: 20 }}
               renderItem={({ item: track }) => (
@@ -2164,7 +2499,7 @@ export default function HomeScreen() {
                     </View>
                     <Pressable
                       onPress={(e) => {
-                        e.stopPropagation();
+                        (e as unknown as { stopPropagation?: () => void }).stopPropagation?.();
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                         if (playlistTracks.length > 0) playTrack(playlistTracks[0], playlistTracks);
                       }}
@@ -2318,14 +2653,17 @@ export default function HomeScreen() {
             <Text className="text-white/50 text-sm px-5 mb-4">
               Independent artists and remixes
             </Text>
-            <ScrollView
-              horizontal
-              nestedScrollEnabled
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingHorizontal: 20 }}
-              style={{ flexGrow: 0 }}
-            >
-              {scTrendingTracks.map(t => {
+            <View style={{ height: 224, flexGrow: 0 }}>
+              <FlashList
+                data={scTrendingTracks}
+                horizontal
+                estimatedItemSize={156}
+                keyExtractor={(t) => `sc-${t.trackId}`}
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 20 }}
+                onViewableItemsChanged={onScTrendingViewable}
+                viewabilityConfig={{ itemVisiblePercentThreshold: 55, minimumViewTime: 80 }}
+                renderItem={({ item: t }) => {
                 const track = {
                   id: `sc-${t.trackId}`,
                   title: t.title,
@@ -2357,7 +2695,6 @@ export default function HomeScreen() {
                 const dim = 140;
                 return (
                   <Pressable
-                    key={track.id}
                     onPress={() => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                       playTrack(track, queueTracks);
@@ -2392,8 +2729,9 @@ export default function HomeScreen() {
                     </Text>
                   </Pressable>
                 );
-              })}
-            </ScrollView>
+              }}
+              />
+            </View>
           </View>
         ) : null}
 

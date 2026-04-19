@@ -17,6 +17,8 @@ import { DavinciDynamicsOverlay } from '@/components/DavinciDynamicsOverlay';
 import { useSignalTracker } from '@/hooks/useSignalTracker';
 import { useDiscoveryRefresh } from '@/hooks/useDiscoveryRefresh';
 import { authClient } from '@/lib/auth/auth-client';
+import { api } from '@/lib/api/api';
+import { prewarmTopGenres } from '@/lib/genreSearchCache';
 import { configurePurchases, getCustomerInfo, isPremiumActive } from '@/lib/purchases';
 import { useSubscriptionStore, setVipEmail } from '@/stores/subscriptionStore';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming } from 'react-native-reanimated';
@@ -231,6 +233,19 @@ export default function AppLayout() {
       warmSoundCloudRef = null;
       warmYouTubeRef = null;
     };
+  }, []);
+
+  // Prewarm the top-5 genre searches so the very first tap on a genre tile
+  // renders rows without spinning. Idempotent + best-effort; runs ~2s after
+  // mount to avoid contending with the warm-WebView pool boot and the
+  // initial home/discover fetches.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      void prewarmTopGenres({
+        get: <T,>(path: string) => api.get<T>(path),
+      });
+    }, 2000);
+    return () => clearTimeout(t);
   }, []);
 
   // Expo Router often omits `(tabs)` from `useSegments()` (e.g. `['index']` on Home). Combine checks

@@ -417,6 +417,7 @@ youtubeRouter.get("/audio/:videoId", async (c) => {
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Expose-Headers": "X-Soundcloud-First",
             "X-Soundcloud-First": "true",
+            "X-Accel-Buffering": "no",
           };
           if (!rangeHeader) {
             const len = scRes.headers.get("Content-Length");
@@ -528,6 +529,7 @@ youtubeRouter.get("/audio/:videoId", async (c) => {
       "Accept-Ranges": "bytes",
       "Cache-Control": "no-store",
       "Access-Control-Allow-Origin": "*",
+      "X-Accel-Buffering": "no",
     };
     const upstreamLength = upstream.headers.get("Content-Length");
     if (upstreamLength) responseHeaders["Content-Length"] = upstreamLength;
@@ -538,6 +540,7 @@ youtubeRouter.get("/audio/:videoId", async (c) => {
     "Content-Type": contentType,
     "Cache-Control": "no-store",
     "Access-Control-Allow-Origin": "*",
+    "X-Accel-Buffering": "no",
   };
 
   const contentLength = upstream.headers.get("Content-Length");

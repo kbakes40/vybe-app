@@ -21,9 +21,26 @@ export function ShadowArtworkImage({
   noDesaturate,
   ...rest
 }: ShadowArtworkImageProps) {
+  const uri =
+    typeof rest.source === 'object' &&
+    rest.source !== null &&
+    'uri' in rest.source &&
+    typeof (rest.source as { uri?: string }).uri === 'string'
+      ? (rest.source as { uri: string }).uri
+      : '';
+  const isRemoteHttps = /^https?:\/\//i.test(uri);
+  const imageProps =
+    isRemoteHttps && !rest.cachePolicy
+      ? {
+          ...rest,
+          cachePolicy: 'memory-disk' as const,
+          recyclingKey: uri,
+        }
+      : rest;
+
   return (
     <View style={[style, styles.clip, containerStyle]}>
-      <Image {...rest} style={StyleSheet.absoluteFillObject} />
+      <Image {...imageProps} style={StyleSheet.absoluteFillObject} />
       {!noDesaturate ? (
         <View
           pointerEvents="none"

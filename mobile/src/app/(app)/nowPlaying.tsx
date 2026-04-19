@@ -26,7 +26,7 @@ import {
   Shuffle,
   Repeat,
   Repeat1,
-  Heart,
+  Flame,
   ListMusic,
   Share2,
   Airplay,
@@ -67,6 +67,7 @@ import { showRoutePicker } from '@/lib/NowPlayingManager';
 import { shareSong } from '@/lib/share-helpers';
 import { formatDuration } from '@/data/mockData';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
+import { useDynamicIslandSignal } from '@/stores/dynamicIslandStore';
 import { usePiPStore } from '@/components/PiPVideoOverlay';
 import { useNowPlayingSheetStore } from '@/stores/nowPlayingSheetStore';
 import {
@@ -130,42 +131,50 @@ const nowPlayingChromeStyles = StyleSheet.create({
   },
 });
 
-const npHeartStyles = StyleSheet.create({
-  heartShadowHost: {
+/** Fire icon palette — SoundCloud Orange + warm ember tones for active state. */
+const FIRE_ORANGE = '#FF3300';
+const FIRE_EMBER = '#FFB020';
+
+const npFireStyles = StyleSheet.create({
+  fireShadowHost: {
     alignItems: 'center',
     justifyContent: 'center',
   },
-  heartShadowHostActive: {
-    shadowColor: '#FF00FF',
+  fireShadowHostActive: {
+    shadowColor: FIRE_ORANGE,
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.88,
-    shadowRadius: 12,
+    shadowOpacity: 0.95,
+    shadowRadius: 14,
     ...Platform.select({
       android: { elevation: 16 },
       default: {},
     }),
   },
-  likeHitArea: {
+  fireHitArea: {
     width: LIKE_HEART_CONTAINER,
     height: LIKE_HEART_CONTAINER,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  likeBurstRing: {
+  fireBurstRing: {
     position: 'absolute',
     width: 30,
     height: 30,
     borderRadius: 999,
     borderWidth: 4,
-    borderColor: '#FF00FF',
+    borderColor: FIRE_ORANGE,
     backgroundColor: 'transparent',
   },
-  likeParticle: {
+  fireParticle: {
     position: 'absolute',
     width: 4,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#FF00FF',
+    backgroundColor: FIRE_EMBER,
+    shadowColor: FIRE_ORANGE,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 6,
     left: LIKE_HEART_CONTAINER / 2 - 2,
     top: LIKE_HEART_CONTAINER / 2 - 2,
   },
@@ -646,52 +655,57 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
   const flyOpacity = useSharedValue(0);
   const [flyVisible, setFlyVisible] = useState(false);
 
-  const isLiked = currentTrack ? likedTracks.has(currentTrack.id) : false;
+  const isFired = currentTrack ? likedTracks.has(currentTrack.id) : false;
+  const flashFire = useDynamicIslandSignal((s) => s.flashFire);
 
-  const heartScale = useRef(new RNAnimated.Value(1)).current;
-  const likeRingScale = useRef(new RNAnimated.Value(1)).current;
-  const likeRingOpacity = useRef(new RNAnimated.Value(0)).current;
-  const likeBurstDriver = useRef(new RNAnimated.Value(0)).current;
+  const fireScale = useRef(new RNAnimated.Value(1)).current;
+  const fireRingScale = useRef(new RNAnimated.Value(1)).current;
+  const fireRingOpacity = useRef(new RNAnimated.Value(0)).current;
+  const fireBurstDriver = useRef(new RNAnimated.Value(0)).current;
 
-  const pulseHeart = useCallback(() => {
+  /** 1.3x bloom on every Fire tap — heavy, tactile, then snaps back. */
+  const bloomFire = useCallback(() => {
     RNAnimated.sequence([
-      RNAnimated.timing(heartScale, { toValue: 1.2, duration: 100, useNativeDriver: true }),
-      RNAnimated.timing(heartScale, { toValue: 1, duration: 100, useNativeDriver: true }),
+      RNAnimated.timing(fireScale, { toValue: 1.3, duration: 110, useNativeDriver: true }),
+      RNAnimated.timing(fireScale, { toValue: 1, duration: 140, useNativeDriver: true }),
     ]).start();
-  }, [heartScale]);
+  }, [fireScale]);
 
-  const runLikeRewardAnimation = useCallback(() => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+  const runFireRewardAnimation = useCallback(() => {
+    // Heavy thump — distinct from the soft Light/Medium taps used elsewhere.
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
 
-    likeRingScale.setValue(1);
-    likeRingOpacity.setValue(0);
-    likeBurstDriver.setValue(0);
+    fireRingScale.setValue(1);
+    fireRingOpacity.setValue(0);
+    fireBurstDriver.setValue(0);
 
-    pulseHeart();
+    bloomFire();
+    // Bump the DI pill so it flares SC-Orange + emits its own ember burst.
+    flashFire();
 
     RNAnimated.parallel([
-      RNAnimated.timing(likeRingScale, {
-        toValue: 1.6,
-        duration: 200,
+      RNAnimated.timing(fireRingScale, {
+        toValue: 1.7,
+        duration: 220,
         useNativeDriver: true,
       }),
       RNAnimated.sequence([
-        RNAnimated.timing(likeRingOpacity, { toValue: 1, duration: 100, useNativeDriver: true }),
-        RNAnimated.timing(likeRingOpacity, { toValue: 0, duration: 100, useNativeDriver: true }),
+        RNAnimated.timing(fireRingOpacity, { toValue: 1, duration: 110, useNativeDriver: true }),
+        RNAnimated.timing(fireRingOpacity, { toValue: 0, duration: 110, useNativeDriver: true }),
       ]),
-      RNAnimated.timing(likeBurstDriver, {
+      RNAnimated.timing(fireBurstDriver, {
         toValue: 1,
-        duration: 250,
+        duration: 280,
         useNativeDriver: true,
       }),
     ]).start(({ finished }) => {
       if (finished) {
-        likeRingScale.setValue(1);
-        likeRingOpacity.setValue(0);
-        likeBurstDriver.setValue(0);
+        fireRingScale.setValue(1);
+        fireRingOpacity.setValue(0);
+        fireBurstDriver.setValue(0);
       }
     });
-  }, [likeRingScale, likeRingOpacity, likeBurstDriver, pulseHeart]);
+  }, [fireRingScale, fireRingOpacity, fireBurstDriver, bloomFire, flashFire]);
   const isYouTube = currentSource === 'youtube';
   const isYouTubeMusic = currentSource === 'youtube_music';
   const isSoundCloud = currentSource === 'soundcloud';
@@ -1062,47 +1076,45 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                   <DownloadButton track={currentTrack} size={28} />
                   <Pressable
                     onPress={() => {
-                      if (isLiked) {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        toggleLike(currentTrack.id, currentTrack);
-                        return;
-                      }
-                      runLikeRewardAnimation();
+                      // Every Fire tap (light or unlight) gets the full reward —
+                      // heavy haptic + bloom + DI flare. The visual state then
+                      // toggles via likedSongs as the underlying "Fired" tag.
+                      runFireRewardAnimation();
                       toggleLike(currentTrack.id, currentTrack);
                     }}
                     className="p-2"
                     accessibilityRole="button"
-                    accessibilityLabel={isLiked ? 'Unlike' : 'Like'}
+                    accessibilityLabel={isFired ? 'Unfire' : 'Fire'}
                   >
-                    <View style={npHeartStyles.likeHitArea}>
+                    <View style={npFireStyles.fireHitArea}>
                       {LIKE_BURST_PARTICLE_ANGLES.map((angle, idx) => {
                         const dx = Math.cos(angle) * LIKE_BURST_DISTANCE;
                         const dy = Math.sin(angle) * LIKE_BURST_DISTANCE;
                         return (
                           <RNAnimated.View
-                            key={`like-particle-${idx}`}
+                            key={`fire-particle-${idx}`}
                             style={[
-                              npHeartStyles.likeParticle,
+                              npFireStyles.fireParticle,
                               {
-                                opacity: likeBurstDriver.interpolate({
+                                opacity: fireBurstDriver.interpolate({
                                   inputRange: [0, 0.08, 1],
                                   outputRange: [0, 1, 0],
                                 }),
                                 transform: [
                                   {
-                                    translateX: likeBurstDriver.interpolate({
+                                    translateX: fireBurstDriver.interpolate({
                                       inputRange: [0, 1],
                                       outputRange: [0, dx],
                                     }),
                                   },
                                   {
-                                    translateY: likeBurstDriver.interpolate({
+                                    translateY: fireBurstDriver.interpolate({
                                       inputRange: [0, 1],
                                       outputRange: [0, dy],
                                     }),
                                   },
                                   {
-                                    rotate: likeBurstDriver.interpolate({
+                                    rotate: fireBurstDriver.interpolate({
                                       inputRange: [0, 1],
                                       outputRange: ['0deg', '90deg'],
                                     }),
@@ -1116,10 +1128,10 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                       <RNAnimated.View
                         pointerEvents="none"
                         style={[
-                          npHeartStyles.likeBurstRing,
+                          npFireStyles.fireBurstRing,
                           {
-                            opacity: likeRingOpacity,
-                            transform: [{ scale: likeRingScale }],
+                            opacity: fireRingOpacity,
+                            transform: [{ scale: fireRingScale }],
                             left: LIKE_HEART_CONTAINER / 2 - 15,
                             top: LIKE_HEART_CONTAINER / 2 - 15,
                           },
@@ -1127,15 +1139,16 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                       />
                       <View
                         style={[
-                          npHeartStyles.heartShadowHost,
-                          isLiked && npHeartStyles.heartShadowHostActive,
+                          npFireStyles.fireShadowHost,
+                          isFired && npFireStyles.fireShadowHostActive,
                         ]}
                       >
-                        <RNAnimated.View style={{ transform: [{ scale: heartScale }] }}>
-                          <Heart
+                        <RNAnimated.View style={{ transform: [{ scale: fireScale }] }}>
+                          <Flame
                             size={28}
-                            color={isLiked ? '#FF00FF' : '#fff'}
-                            fill={isLiked ? '#FF00FF' : 'transparent'}
+                            color={isFired ? FIRE_ORANGE : '#fff'}
+                            fill={isFired ? FIRE_ORANGE : 'transparent'}
+                            strokeWidth={2.2}
                           />
                         </RNAnimated.View>
                       </View>

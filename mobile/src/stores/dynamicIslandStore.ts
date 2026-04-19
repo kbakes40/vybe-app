@@ -35,6 +35,15 @@ interface DynamicIslandSignalState {
   recoveryLabel: string | null;
   /** Set the recovery label override. Pass null to clear. */
   setRecoveryLabel: (label: string | null) => void;
+
+  /**
+   * Monotonic timestamp; bump from the Now Playing screen when the user taps
+   * the Fire icon. The pill flares its border to SoundCloud Orange and emits
+   * a fire-particle burst for ~1.6s before settling back.
+   */
+  firedAt: number;
+  /** Trigger a Fire flash on the pill. */
+  flashFire: () => void;
 }
 
 export const useDynamicIslandSignal = create<DynamicIslandSignalState>((set) => ({
@@ -52,4 +61,7 @@ export const useDynamicIslandSignal = create<DynamicIslandSignalState>((set) => 
   recoveryLabel: null,
   setRecoveryLabel: (label: string | null) =>
     set({ recoveryLabel: label?.slice(0, 28) ?? null }),
+
+  firedAt: 0,
+  flashFire: () => set({ firedAt: Date.now() }),
 }));

@@ -298,8 +298,11 @@ export default function TabLayout() {
             left: 0,
             right: 0,
             backgroundColor: '#000000',
-            borderTopWidth: 0.5,
-            borderTopColor: '#ffffff15',
+            // Sharp 1px OLED Black "machined" separation between mini-player
+            // bottom and tab-bar top. Black-on-black creates a physical seam
+            // (no visible color, but a 1px structural gap).
+            borderTopWidth: 1,
+            borderTopColor: '#000000',
             zIndex: 1000,
             elevation: 1000,
             alignItems: 'center',

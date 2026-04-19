@@ -21,6 +21,7 @@ addExcludedDomains([
 ]);
 
 import { Hono } from "hono";
+import { compress } from "hono/compress";
 import { cors } from "hono/cors";
 import "./env";
 import { ensureYoutubeCookiesFile } from "./lib/youtubeCookies";
@@ -43,6 +44,7 @@ import { socialRouter } from "./routes/social";
 import { searchRouter } from "./routes/search";
 import { vaultRouter } from "./routes/vault";
 import { logger } from "hono/logger";
+import { routeShield } from "./lib/route-shield";
 
 // Type the Hono app with user/session variables
 const app = new Hono<{
@@ -63,6 +65,8 @@ const allowed = [
   /** Expo dev / LAN — RN often omits Origin; when present it is `exp://…`. */
   /^exp:\/\/.+$/,
 ];
+
+app.use("*", compress({ encoding: "gzip", threshold: 512 }));
 
 app.use(
   "*",
@@ -148,6 +152,54 @@ app.get("/api/me", (c) => {
   return c.json({ data: user });
 });
 
+// Route shields — give SoundCloud and Discovery routes a 3s hard deadline
+// with last-known-good snapshot fallback. This prevents the 502 storms that
+// freeze the home/search/discover rails when an upstream stalls. The shield
+// MUST be installed before the router so it can race the handler.
+//
+// SoundCloud fallbacks are shaped like the various endpoint contracts:
+//  - /playlists  → []
+//  - /search     → []
+//  - /mixes      → []
+//  - /playlist-tracks → { tracks: [], playlistTitle: '', thumbnailUrl: '', canonicalUrl: '', playlistId: '' }
+// Sending [] for everything else is safe — the mobile client treats null/[]
+// the same way and just shows its empty/skeleton state.
+app.use("/api/soundcloud/*", routeShield({
+  timeoutMs: 3000,
+  snapshotTtlMs: 10 * 60 * 1000,
+  stableFallback: (c) => {
+    const path = new URL(c.req.url).pathname;
+    if (path.endsWith("/playlist-tracks")) {
+      return {
+        tracks: [],
+        playlistTitle: "",
+        thumbnailUrl: "",
+        canonicalUrl: "",
+        playlistId: "",
+      };
+    }
+    return [];
+  },
+}));
+
+app.use("/api/discovery/*", routeShield({
+  timeoutMs: 3000,
+  snapshotTtlMs: 10 * 60 * 1000,
+  stableFallback: (c) => {
+    const path = new URL(c.req.url).pathname;
+    if (path.endsWith("/profile")) {
+      return { topGenres: [], topMoods: [], topArtists: [], dna: null };
+    }
+    if (path.endsWith("/sections")) {
+      return [];
+    }
+    if (path.endsWith("/signal") || path.endsWith("/dislike") || path.endsWith("/hide-artist")) {
+      return { ok: true };
+    }
+    return [];
+  },
+}));
+
 // Routes
 app.route("/api/sample", sampleRouter);
 app.route("/api/user", userRouter);
@@ -168,7 +220,7 @@ app.route("/api/vault", vaultRouter);
 
 // Build marker — bumped to force Railway to pick up new commits.
 // If you see this in Railway logs, the new code IS deployed.
-const BUILD_MARKER = "vybe-backend@2026-04-19T12:10:00Z [audio proxy: 1 attempt, no useless retry]";
+const BUILD_MARKER = "vybe-backend@2026-04-19T18:30:00Z [route-shield: 3s deadline + lkg snapshot for sc/discovery]";
 console.log("[boot]", BUILD_MARKER);
 app.get("/api/_build", (c) => c.json({ marker: BUILD_MARKER }));
 

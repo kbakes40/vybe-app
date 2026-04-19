@@ -249,7 +249,12 @@ export default function SocialScreen() {
   }, [activePosts.length]);
 
   useEffect(() => {
-    return attachActivityRemoteListener();
+    // Wrap in a typeof guard so a stale build that returns a non-function
+    // teardown can't crash the screen with "_b.call is not a function".
+    const teardown = attachActivityRemoteListener();
+    return () => {
+      if (typeof teardown === 'function') teardown();
+    };
   }, []);
 
   const playlistItems = tailItems.filter((i): i is PlaylistShareItem => i.kind === 'playlist_share');

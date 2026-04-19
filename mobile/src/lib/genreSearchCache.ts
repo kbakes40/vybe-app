@@ -119,3 +119,108 @@ export function genreQueries(genre: string) {
     }
   );
 }
+
+/**
+ * Top-5 genres warmed at app launch so tapping any of them feels instant.
+ * Skipped if a fresh disk cache already exists for the genre — we never want
+ * to redundantly hammer the network during cold start.
+ */
+export const PREWARM_GENRES = ['Pop', 'Hip-Hop', 'Electronic', 'R&B', 'Lo-Fi'] as const;
+
+let prewarmStarted = false;
+
+/**
+ * Fire-and-forget background warmer for the top genres. Idempotent — calling
+ * twice within a session is a no-op. Safe to invoke from app startup; failures
+ * are swallowed so a 502 from the backend never blocks the main thread or
+ * surfaces an error.
+ *
+ * The actual fetch logic lives in `useGenreSearch`, but during prewarm we
+ * call the same backend endpoints directly and stuff the result into the same
+ * MMKV cache key shape, so the genre detail screen reads it instantly when
+ * the user taps the tile.
+ */
+export async function prewarmTopGenres(api: {
+  get: <T>(path: string) => Promise<T | null | undefined>;
+}): Promise<void> {
+  if (prewarmStarted) return;
+  prewarmStarted = true;
+
+  for (const g of PREWARM_GENRES) {
+    const cached = hydrateGenreFromDisk(g);
+    if (cached) continue;
+
+    const queries = genreQueries(g);
+
+    void Promise.allSettled([
+      api
+        .get<{ videoId: string; title: string; channelName: string; thumbnailUrl?: string; artwork?: string }[]>(
+          `/api/youtube/search?q=${encodeURIComponent(queries.ytMusic)}&maxResults=15`,
+        )
+        .catch(() => null),
+      api
+        .get<{ videoId: string; title: string; channelName: string; thumbnailUrl?: string; artwork?: string }[]>(
+          `/api/youtube/search?q=${encodeURIComponent(queries.youtube)}&maxResults=12`,
+        )
+        .catch(() => null),
+      api
+        .get<{ trackId: string; title: string; artist: string; artwork?: string; duration: number; soundcloudUrl: string }[]>(
+          `/api/soundcloud/search?q=${encodeURIComponent(queries.soundcloud)}&maxResults=15`,
+        )
+        .catch(() => null),
+    ]).then((results) => {
+      const ytm = results[0].status === 'fulfilled' ? results[0].value : null;
+      const yt = results[1].status === 'fulfilled' ? results[1].value : null;
+      const sc = results[2].status === 'fulfilled' ? results[2].value : null;
+
+      const ytMusic: Track[] = (ytm ?? []).map((t) => ({
+        id: `ytm-${t.videoId}`,
+        title: t.title,
+        artist: t.channelName,
+        artwork: t.artwork || t.thumbnailUrl || '',
+        source: 'youtube_music' as const,
+        youtubeMusicId: t.videoId,
+        audioUrl: '',
+        artistId: '',
+        album: '',
+        albumId: '',
+        isLiked: false,
+        duration: 0,
+      }));
+      const youtube: Track[] = (yt ?? []).map((t) => ({
+        id: `yt-${t.videoId}`,
+        title: t.title,
+        artist: t.channelName,
+        artwork: t.artwork || t.thumbnailUrl || '',
+        source: 'youtube' as const,
+        youtubeId: t.videoId,
+        audioUrl: '',
+        artistId: '',
+        album: '',
+        albumId: '',
+        isLiked: false,
+        duration: 0,
+      }));
+      const soundcloud: Track[] = (sc ?? []).map((t) => ({
+        id: `sc-${t.trackId}`,
+        title: t.title,
+        artist: t.artist,
+        artwork: t.artwork || '',
+        source: 'soundcloud' as const,
+        soundcloudUrl: t.soundcloudUrl,
+        audioUrl: '',
+        artistId: '',
+        album: '',
+        albumId: '',
+        isLiked: false,
+        duration: t.duration,
+      }));
+
+      // Only commit when at least one source returned rows — avoids
+      // overwriting any future fetch with a useless empty cache.
+      if (ytMusic.length === 0 && youtube.length === 0 && soundcloud.length === 0) return;
+
+      tryCommitGenreCache(g, { ytMusic, youtube, soundcloud });
+    });
+  }
+}

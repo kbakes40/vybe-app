@@ -551,6 +551,11 @@ export default function PlaylistDetailScreen() {
   // Recommended SoundCloud tracks based on the playlist's name keywords.
   const [recommended, setRecommended] = useState<Track[]>([]);
   const [recommendedLoading, setRecommendedLoading] = useState(false);
+  // Surface load failure so the user sees a Retry button instead of being
+  // dumped onto the generic "Playlist not found" screen when the backend
+  // returns a transient HTTP 502 (yt-dlp/SC backend hiccups).
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const playTrack = usePlaybackController(s => s.playTrack);
   const currentTrack = usePlaybackController(s => s.currentTrack);
@@ -559,16 +564,35 @@ export default function PlaylistDetailScreen() {
 
   useEffect(() => {
     async function load() {
+      setLoadError(null);
       if (scSet) {
-        try {
-          const decoded = decodeURIComponent(scSet);
-          const data = await api.get<{
+        const decoded = decodeURIComponent(scSet);
+        const fetchSc = () =>
+          api.get<{
             tracks: PlaylistTrack[];
             playlistTitle: string;
             thumbnailUrl: string;
             canonicalUrl: string;
             playlistId: string;
           }>(`/api/soundcloud/playlist-tracks?url=${encodeURIComponent(decoded)}`);
+        try {
+          let data: Awaited<ReturnType<typeof fetchSc>> | null = null;
+          try {
+            data = await fetchSc();
+          } catch (firstErr: unknown) {
+            // Auto-retry once on transient backend failures (HTTP 5xx) —
+            // SoundCloud playlist resolution sometimes 502s during scrape
+            // throttling. 800ms backoff is enough for the backend pool to
+            // recover without making the user wait noticeably.
+            const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+            if (/HTTP_5\d\d|HTTP 5\d\d/.test(msg)) {
+              console.log('[PlaylistDetail] SC playlist 5xx — retrying once');
+              await new Promise((r) => setTimeout(r, 800));
+              data = await fetchSc();
+            } else {
+              throw firstErr;
+            }
+          }
           if (data?.tracks?.length) {
             setPlaylist({
               playlistId: data.playlistId || `sc-${data.canonicalUrl.slice(-32)}`,
@@ -577,9 +601,17 @@ export default function PlaylistDetailScreen() {
               soundcloudSetUrl: data.canonicalUrl,
               tracks: data.tracks,
             });
+          } else {
+            setLoadError('This playlist came back empty. Try again in a moment.');
           }
         } catch (e) {
           console.error('[PlaylistDetail] SoundCloud load error:', e);
+          const msg = e instanceof Error ? e.message : String(e);
+          setLoadError(
+            /HTTP_5\d\d|HTTP 5\d\d/.test(msg)
+              ? 'SoundCloud is having a moment. Tap Retry.'
+              : 'Could not load this playlist.',
+          );
         } finally {
           setLoading(false);
         }
@@ -635,7 +667,7 @@ export default function PlaylistDetailScreen() {
       }
     }
     void load();
-  }, [id, scSet]);
+  }, [id, scSet, reloadKey]);
 
   const tracks = useMemo(() => {
     if (!playlist) return [] as Track[];
@@ -1236,14 +1268,56 @@ export default function PlaylistDetailScreen() {
   }
 
   if (!playlist) {
+    const headline = loadError
+      ? loadError
+      : !id && !scSet
+        ? 'Missing playlist link'
+        : 'Playlist not found';
+    const showRetry = !!loadError || !!scSet || !!id;
     return (
-      <View style={{ flex: 1, backgroundColor: '#0A0A0A', alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 16 }}>
-          {!id && !scSet ? 'Missing playlist link' : 'Playlist not found'}
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: '#0A0A0A',
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingHorizontal: 32,
+        }}
+      >
+        <Text
+          style={{
+            color: 'rgba(255,255,255,0.7)',
+            fontSize: 16,
+            textAlign: 'center',
+            marginBottom: 20,
+          }}
+        >
+          {headline}
         </Text>
-        <Pressable onPress={() => router.back()} style={{ marginTop: 16 }}>
-          <Text style={{ color: '#FF0000', fontSize: 16 }}>Go Back</Text>
-        </Pressable>
+        <View style={{ flexDirection: 'row', gap: 18 }}>
+          {showRetry ? (
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setLoading(true);
+                setReloadKey((k) => k + 1);
+              }}
+              style={{
+                paddingHorizontal: 18,
+                paddingVertical: 10,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: 'rgba(0,229,255,0.55)',
+                backgroundColor: 'rgba(0,229,255,0.08)',
+              }}
+            >
+              <Text style={{ color: '#00E5FF', fontSize: 15, fontWeight: '700' }}>Retry</Text>
+            </Pressable>
+          ) : null}
+          <Pressable onPress={() => router.back()} style={{ paddingHorizontal: 18, paddingVertical: 10 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 15 }}>Go Back</Text>
+          </Pressable>
+        </View>
       </View>
     );
   }

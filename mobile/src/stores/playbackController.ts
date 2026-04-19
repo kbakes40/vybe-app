@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { MMKV } from 'react-native-mmkv';
 import { AppState, AppStateStatus, NativeEventEmitter, NativeModules, Platform } from 'react-native';
+/** expo-av → native AVPlayer/ExoPlayer (RN invokes the module over the Turbo/JSI bridge when enabled). */
 import { Audio, AVPlaybackStatus, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 import { Track, TrackSource, RepeatMode } from '@/types/music';
 import * as Haptics from 'expo-haptics';
@@ -12,7 +13,7 @@ import { usePlaybackSettingsStore } from '@/stores/playbackSettingsStore';
 import { useRecommendationSignalStore } from '@/stores/recommendationSignalStore';
 import { useDownloadsStore, downloadSoundCloudTrack, enqueueDownload } from '@/stores/downloadsStore';
 import { openNowPlayingSheet } from '@/lib/openNowPlayingSheet';
-import { VYBE_TRACK_PLAYER_BUFFER_CONFIG } from '@/constants/playbackBuffer';
+import { getPlaybackBufferConfig } from '@/constants/playbackBuffer';
 import { useShadowPlaybackToastStore } from '@/stores/shadowPlaybackToastStore';
 import { useDynamicIslandSignal } from '@/stores/dynamicIslandStore';
 import {
@@ -233,8 +234,8 @@ async function triggerCrossfade(fadeSecs: number) {
       nextUri.startsWith('http');
     const crossfadeYtDownloadFirst =
       nextUri.includes('/api/youtube/audio/') ||
-      (VYBE_TRACK_PLAYER_BUFFER_CONFIG.minBufferMs >= 15_000 &&
-        VYBE_TRACK_PLAYER_BUFFER_CONFIG.playBufferMs >= 3_000);
+      (getPlaybackBufferConfig().minBufferMs >= 15_000 &&
+        getPlaybackBufferConfig().playBufferMs >= 3_000);
     const crossfadeSource = nextIsHttpYt
       ? createYoutubeAvPlaybackSource(nextUri)
       : { uri: nextUri };
@@ -552,6 +553,13 @@ interface PlaybackControllerState {
   // Silent playback detection
   checkSilentPlayback: () => void;
   resetSilentRetryCount: () => void;
+
+  /**
+   * DEV FAIL-SAFE — force the SHADOW_HEALING (vault_failure) flow on the
+   * current track without waiting for an actually blocked Video ID. Wired to
+   * the long-press on `POWERED_BY_DAVINCI` in the mini player.
+   */
+  simulateVaultFailure: () => Promise<void>;
 }
 
 // Stop VYBE native audio only
@@ -683,6 +691,18 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         source: 'soundcloud',
         soundcloudUrl: scUrlCoerce,
         soundcloudId: inferredScId,
+      };
+      source = 'soundcloud';
+    }
+
+    // Vault/search rows sometimes carry a stale `source` while `id` is `sc-*`
+    // and `soundcloudUrl` is set — force native SC stream path + HLS proxy.
+    if (scUrlCoerce && track.id.startsWith('sc-') && source !== 'soundcloud') {
+      track = {
+        ...track,
+        source: 'soundcloud',
+        soundcloudUrl: scUrlCoerce,
+        soundcloudId: inferredScId || track.id.replace(/^sc-/, ''),
       };
       source = 'soundcloud';
     }
@@ -959,17 +979,18 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         set({ duration: realDurationSec });
       }
 
+      const buf = getPlaybackBufferConfig();
       const ytProgressTick = Math.max(
-        250,
-        Math.min(1000, Math.round(VYBE_TRACK_PLAYER_BUFFER_CONFIG.playBufferMs / 4)),
+        50,
+        Math.min(1000, Math.round(buf.playBufferMs / 4)),
       );
 
       let youtubeLoadSucceeded = false;
       for (let loadAttempt = 0; loadAttempt < 2 && !youtubeLoadSucceeded; loadAttempt++) {
         const ytDownloadFirst =
           !fromCdn ||
-          (VYBE_TRACK_PLAYER_BUFFER_CONFIG.minBufferMs >= 15_000 &&
-            VYBE_TRACK_PLAYER_BUFFER_CONFIG.playBufferMs >= 3_000);
+          (getPlaybackBufferConfig().minBufferMs >= 15_000 &&
+            getPlaybackBufferConfig().playBufferMs >= 3_000);
         try {
           const sound = new Audio.Sound();
           vybeSound = sound;
@@ -1138,6 +1159,10 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
           }
 
           useDynamicIslandSignal.getState().setHealingStreamActive(true);
+          // SHADOW_HEALING surfaces on the recovery card in cyan while the
+          // backend swaps the dead YouTube vault for a SoundCloud match.
+          // Cleared inside playTrack on success (line ~894), or in finally on miss.
+          useDynamicIslandSignal.getState().setRecoveryLabel('SHADOW_HEALING');
           try {
             const healEnv = await fetchYoutubeHealResolveEnvelope(ytVideoId);
             if (healEnv?.healedMeta && isStillCurrent()) {
@@ -1152,6 +1177,8 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
             }
           } finally {
             useDynamicIslandSignal.getState().setHealingStreamActive(false);
+            // If playTrack already cleared this on success the call is a no-op.
+            useDynamicIslandSignal.getState().setRecoveryLabel(null);
           }
 
           const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -1160,17 +1187,24 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
           if (isYoutubeHardStreamFailure(msg)) {
             void (async () => {
-              const alt = await fetchSoundcloudMatchForYoutubeTrack(track);
-              if (!alt?.soundcloudUrl) return;
-              const stillSame = get().currentTrack?.id === track.id;
-              const stillErr = get().playbackState === 'error';
-              if (!stillSame || !stillErr) return;
-              const q = get().queue;
-              const mergedQueue = q.some((t) => t.id === track.id)
-                ? q.map((t) => (t.id === track.id ? alt : t))
-                : [alt];
-              useDynamicIslandSignal.getState().setScIgnitionGlow(true);
-              await get().playTrack(alt, mergedQueue, { expandNowPlaying: false });
+              useDynamicIslandSignal.getState().setHealingStreamActive(true);
+              useDynamicIslandSignal.getState().setRecoveryLabel('SHADOW_HEALING');
+              try {
+                const alt = await fetchSoundcloudMatchForYoutubeTrack(track);
+                if (!alt?.soundcloudUrl) return;
+                const stillSame = get().currentTrack?.id === track.id;
+                const stillErr = get().playbackState === 'error';
+                if (!stillSame || !stillErr) return;
+                const q = get().queue;
+                const mergedQueue = q.some((t) => t.id === track.id)
+                  ? q.map((t) => (t.id === track.id ? alt : t))
+                  : [alt];
+                useDynamicIslandSignal.getState().setScIgnitionGlow(true);
+                await get().playTrack(alt, mergedQueue, { expandNowPlaying: false });
+              } finally {
+                useDynamicIslandSignal.getState().setHealingStreamActive(false);
+                useDynamicIslandSignal.getState().setRecoveryLabel(null);
+              }
             })();
           }
 
@@ -1747,6 +1781,49 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
   resetSilentRetryCount: () => {
     set({ silentRetryCount: 0 });
+  },
+
+  simulateVaultFailure: async () => {
+    const track = get().currentTrack;
+    if (!track) return;
+    // Pretend the YouTube CDN refused this track and run the same SC heal
+    // path the real vault_failure flow uses. Surfaces SHADOW_HEALING on the
+    // recovery card so QA can verify the cyan label + pulse without a
+    // real blocked Video ID.
+    set({ playbackState: 'error', error: 'vault_failure (simulated)' });
+    useDynamicIslandSignal.getState().setHealingStreamActive(true);
+    useDynamicIslandSignal.getState().setRecoveryLabel('SHADOW_HEALING');
+    try {
+      const ytVideoId = extractYoutubeVideoId(track);
+      // 1. Try the real backend heal envelope first (mirrors the live failure path).
+      if (ytVideoId) {
+        const healEnv = await fetchYoutubeHealResolveEnvelope(ytVideoId);
+        if (healEnv?.healedMeta && get().currentTrack?.id === track.id) {
+          const healedTrack = trackFromYoutubeHealMeta(healEnv.healedMeta, track);
+          const q = get().queue;
+          const mergedQueue = q.some((t) => t.id === track.id)
+            ? q.map((t) => (t.id === track.id ? healedTrack : t))
+            : [healedTrack, ...q];
+          useDynamicIslandSignal.getState().flashSuccess('SC_RECOVERED');
+          await get().playTrack(healedTrack, mergedQueue, { expandNowPlaying: false });
+          return;
+        }
+      }
+      // 2. Fall back to the SC bridge match.
+      const alt = await fetchSoundcloudMatchForYoutubeTrack(track);
+      if (alt?.soundcloudUrl && get().currentTrack?.id === track.id) {
+        const q = get().queue;
+        const mergedQueue = q.some((t) => t.id === track.id)
+          ? q.map((t) => (t.id === track.id ? alt : t))
+          : [alt];
+        useDynamicIslandSignal.getState().setScIgnitionGlow(true);
+        useDynamicIslandSignal.getState().flashSuccess('SC_RECOVERED');
+        await get().playTrack(alt, mergedQueue, { expandNowPlaying: false });
+      }
+    } finally {
+      useDynamicIslandSignal.getState().setHealingStreamActive(false);
+      useDynamicIslandSignal.getState().setRecoveryLabel(null);
+    }
   },
 }));
 

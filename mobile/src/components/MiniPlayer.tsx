@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { View, Text, StyleSheet, LayoutChangeEvent, Platform, Pressable } from 'react-native';
+import { View, Text, StyleSheet, LayoutChangeEvent, Platform } from 'react-native';
+import { Pressable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useShallow } from 'zustand/react/shallow';
 import Animated, {
@@ -111,6 +112,7 @@ export function MiniPlayer({ bottomLift }: MiniPlayerProps) {
     pause,
     next,
     previous,
+    simulateVaultFailure,
   } = usePlaybackController(
     useShallow((s) => ({
       currentTrack: s.currentTrack,
@@ -121,6 +123,7 @@ export function MiniPlayer({ bottomLift }: MiniPlayerProps) {
       pause: s.pause,
       next: s.next,
       previous: s.previous,
+      simulateVaultFailure: s.simulateVaultFailure,
     })),
   );
 
@@ -507,14 +510,28 @@ export function MiniPlayer({ bottomLift }: MiniPlayerProps) {
     <Animated.View style={[styles.cardSurface, bloomBorderStyle]}>
       {cardBody}
       {meta.hasRealTrack ? (
-        <Animated.Text
-          numberOfLines={1}
-          style={[styles.davinciSubtext, davinciSubAnimatedStyle]}
+        // Hidden DEV FAIL-SAFE — long-press fires `simulateVaultFailure` so QA
+        // can verify the SHADOW_HEALING → SoundCloud transition without waiting
+        // for an actually blocked Video ID. Stays invisible to a11y.
+        <Pressable
+          onLongPress={() => {
+            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            void simulateVaultFailure();
+          }}
+          delayLongPress={650}
+          hitSlop={8}
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"
         >
-          POWERED_BY_DAVINCI
-        </Animated.Text>
+          <Animated.Text
+            numberOfLines={1}
+            style={[styles.davinciSubtext, davinciSubAnimatedStyle]}
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+          >
+            POWERED_BY_DAVINCI
+          </Animated.Text>
+        </Pressable>
       ) : null}
     </Animated.View>
   );
@@ -563,6 +580,11 @@ const styles = StyleSheet.create({
     right: 0,
     height: MINI_PLAYER_HEIGHT,
     zIndex: 999,
+    // 1px OLED Black bottom border keeps the baby-blue progress bar from
+    // bleeding into the tab bar — pairs with the tab bar's 1px black top
+    // border to create a sharp "Machined" seam.
+    borderBottomWidth: 1,
+    borderBottomColor: '#000000',
     ...Platform.select({
       android: { elevation: 999 },
       default: {},

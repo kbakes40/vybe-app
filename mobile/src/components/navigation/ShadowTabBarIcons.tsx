@@ -10,25 +10,36 @@ import Animated, {
   useSharedValue,
   withRepeat,
   withSequence,
+  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 import { useTabBarBloomStore } from '@/stores/tabBarBloomStore';
 
 /** Shadow tab chrome — shared across tab bar icons. */
 export const SHADOW_TAB_STROKE = 1.5;
-/** Vibrant cyan — active tab + machined indicator (global nav). */
-export const SHADOW_TAB_ACTIVE = '#00E5FF';
-/** Deep graphite — inactive silhouettes. */
-export const SHADOW_TAB_INACTIVE = '#444444';
+/** Neon Cyan — active tab + machined indicator (global nav). */
+export const SHADOW_TAB_ACTIVE = '#00FFFF';
+/** Muted Machined Grey — inactive silhouettes (white at 25% opacity). */
+export const SHADOW_TAB_INACTIVE = '#FFFFFF40';
 
 const MACHINED_BLUE = SHADOW_TAB_ACTIVE;
 const MAGENTA_HEARTBEAT = '#FF00FF';
 
-/** Base iOS shadow radius; doubles briefly on focus (bloom). */
-const SHADOW_R_DEFAULT = 6;
-const SHADOW_R_VYBE = 9;
-/** Permanent Machined Blue shadowOpacity floor (all tabs). */
-const TAB_GLOW_BASE = 0.6;
+/** Active-tab glow target — per spec: shadowOpacity 0.8 / shadowRadius 10. */
+const ACTIVE_SHADOW_OPACITY = 0.8;
+const ACTIVE_SHADOW_RADIUS = 10;
+/** Vybe (discover) hero variant — slightly stronger glow when focused. */
+const ACTIVE_SHADOW_RADIUS_VYBE = 14;
+/**
+ * Speed Mode "Always On" baseline — every tab keeps a faint Machined Blue
+ * presence at 0.6 opacity so the bar never feels dead. Focus springs the
+ * glow up to full (1.0) and brings the magenta heartbeat dot in below.
+ */
+const BASELINE_BORDER_OPACITY = 0.6;
+const BASELINE_SHADOW_OPACITY = 0.35;
+const BASELINE_SHADOW_RADIUS = 4;
+/** Spring physics for the cyan glow morph between tabs — stiff, snappy. */
+const FOCUS_SPRING = { damping: 18, stiffness: 220, mass: 0.6 } as const;
 
 const BLOOM_IN_MS = 150;
 const BLOOM_OUT_MS = 150;
@@ -54,43 +65,46 @@ export function ShadowTabIconShell({
   children: React.ReactNode;
 }) {
   const isVybe = variant === 'vybe';
-  const baseRadius = isVybe ? SHADOW_R_VYBE : SHADOW_R_DEFAULT;
+  const activeRadius = isVybe ? ACTIVE_SHADOW_RADIUS_VYBE : ACTIVE_SHADOW_RADIUS;
 
+  // Spring-driven focus value (0 = inactive, 1 = active). Drives borderColor
+  // opacity, shadow opacity, and shadow radius — so the cyan glow physically
+  // springs onto the new tab and away from the old one.
   const focusedSv = useSharedValue(focused ? 1 : 0);
-  const variantVybeSv = useSharedValue(isVybe ? 1 : 0);
   const bloomScale = useSharedValue(1);
-  const bloomShadowR = useSharedValue(baseRadius);
+  const bloomBoost = useSharedValue(0);
   const breath = useSharedValue(1);
   const dotPulse = useSharedValue(1);
   const lastPulseAtRef = useRef(0);
 
   useEffect(() => {
-    focusedSv.value = focused ? 1 : 0;
+    focusedSv.value = withSpring(focused ? 1 : 0, FOCUS_SPRING);
   }, [focused, focusedSv]);
 
   useEffect(() => {
-    variantVybeSv.value = isVybe ? 1 : 0;
-  }, [isVybe, variantVybeSv]);
-
-  useEffect(() => {
-    if (!pressRoute) return undefined;
+    if (!pressRoute) return () => {};
     const unsub = useTabBarBloomStore.subscribe((s) => {
       if (s.pulseRoute !== pressRoute) return;
       if (s.pulseAt === lastPulseAtRef.current) return;
       lastPulseAtRef.current = s.pulseAt;
       cancelAnimation(bloomScale);
-      cancelAnimation(bloomShadowR);
+      cancelAnimation(bloomBoost);
       bloomScale.value = withSequence(
         withTiming(1.2, { duration: BLOOM_IN_MS }),
         withTiming(1, { duration: BLOOM_OUT_MS }),
       );
-      bloomShadowR.value = withSequence(
-        withTiming(baseRadius * 2, { duration: BLOOM_IN_MS }),
-        withTiming(baseRadius, { duration: BLOOM_OUT_MS }),
+      bloomBoost.value = withSequence(
+        withTiming(1, { duration: BLOOM_IN_MS }),
+        withTiming(0, { duration: BLOOM_OUT_MS }),
       );
     });
-    return unsub;
-  }, [pressRoute, baseRadius, bloomScale, bloomShadowR]);
+    // Defensive guard: zustand returns an unsubscribe fn but if a build ever
+    // produced something else, calling it as `unsub.call()` would be the
+    // root of "TypeError: _b.call is not a function".
+    return () => {
+      if (typeof unsub === 'function') unsub();
+    };
+  }, [pressRoute, bloomScale, bloomBoost]);
 
   useEffect(() => {
     if (focused && isVybe) {
@@ -124,19 +138,36 @@ export function ShadowTabIconShell({
     }
   }, [focused, dotPulse]);
 
+  // Speed Mode tab chrome: every tab keeps a constant Machined Blue
+  // baseline (border 0.6, soft shadow at 0.35) so the bar feels alive even
+  // when nothing is focused. The spring then layers the active boost on
+  // top — full opacity ring, full glow, optional press bloom.
   const shellAnimatedStyle = useAnimatedStyle(() => {
     const f = focusedSv.value;
-    const vy = variantVybeSv.value;
-    const breathMix = vy > 0.5 ? breath.value : 1;
-    const shadowOpacity = Math.min(1, TAB_GLOW_BASE + f * 0.36 * breathMix);
-
+    const breathMix = isVybe ? breath.value : 1;
+    const boost = bloomBoost.value;
+    const borderOpacity = Math.min(
+      1,
+      BASELINE_BORDER_OPACITY + f * (1 - BASELINE_BORDER_OPACITY) + boost * 0.3,
+    );
+    const shadowOpacity = Math.min(
+      1,
+      BASELINE_SHADOW_OPACITY +
+        f * (ACTIVE_SHADOW_OPACITY - BASELINE_SHADOW_OPACITY) * breathMix +
+        boost * 0.2,
+    );
+    const shadowRadius =
+      BASELINE_SHADOW_RADIUS +
+      f * (activeRadius - BASELINE_SHADOW_RADIUS) * breathMix +
+      boost * 6;
     return {
       transform: [{ scale: bloomScale.value }],
+      borderColor: `rgba(0, 255, 255, ${borderOpacity})`,
       shadowColor: MACHINED_BLUE,
       shadowOffset: { width: 0, height: 0 },
       shadowOpacity,
-      shadowRadius: bloomShadowR.value,
-      elevation: Platform.OS === 'android' ? Math.min(14, bloomShadowR.value * 0.85) : 0,
+      shadowRadius,
+      elevation: Platform.OS === 'android' ? Math.min(14, shadowRadius * 0.85) : 0,
     };
   });
 
@@ -288,12 +319,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 3,
+    // Static border WIDTH only — color/opacity come from the animated style.
+    // Speed Mode keeps a 0.6 baseline ring on every tab; focus springs it
+    // up to full and brings the heartbeat dot in below.
     borderWidth: 1,
-    borderColor: MACHINED_BLUE,
+    borderColor: 'transparent',
     borderRadius: 12,
     backgroundColor: 'rgba(0,0,0,0.001)',
   },
-  /** Central Vybe — strongest 2px ring (always) so blue chrome reads as “hero”. */
+  /** Central Vybe — slightly thicker ring footprint when focused (animated). */
   shellVybe: {
     borderWidth: 2,
     borderRadius: 10,

@@ -1066,6 +1066,9 @@ export default function DiscoverScreen() {
   // Check if onboarding is needed and fetch data — re-runs every time the tab gains focus
   // so the card appears immediately after the user completes "Update Preferences"
   useFocusEffect(
+    // Hermes-minified expo-router invokes our cleanup as `_b.call()`; if we
+    // return nothing implicitly the call site explodes with
+    // "TypeError: _b.call is not a function". Always return a function.
     useCallback(() => {
       const init = async () => {
         const store = useDiscoverFeedStore.getState();
@@ -1104,6 +1107,7 @@ export default function DiscoverScreen() {
         refreshFeed();
       };
       init();
+      return () => {};
     }, [refreshFeed, fetchPreferences, completeOnboardingWithInstantFeed, router])
   );
 
@@ -1172,14 +1176,17 @@ export default function DiscoverScreen() {
         </Animated.View>
       ) : null}
 
+      {/* FlashList doesn't accept `style` (only `contentContainerStyle`).
+          Wrap in a flex:1 View so the list fills remaining vertical space
+          inside the Discover screen container. */}
+      <View style={{ flex: 1 }}>
       <MasonryFlashList
         ref={masonryRef as React.RefObject<MasonryFlashListRef<CrateTile>>}
         data={masonryData}
         numColumns={2}
         keyExtractor={(it) => it.id}
-        estimatedItemSize={240}
+        estimatedItemSize={80}
         optimizeItemArrangement
-        style={{ flex: 1 }}
         contentContainerStyle={{
           paddingHorizontal: H_PAD,
           paddingBottom: tabScreenContentContainerPaddingBottom(insets.bottom),
@@ -1222,6 +1229,7 @@ export default function DiscoverScreen() {
         }}
         renderItem={({ item }) => <CrateMasonryCell item={item} colW={colW} />}
       />
+      </View>
     </View>
   );
 }
