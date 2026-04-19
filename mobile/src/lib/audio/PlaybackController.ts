@@ -1,4 +1,5 @@
 import { NativeModules, Platform } from 'react-native';
+import { useSocialActivityStore } from '@/stores/socialActivityStore';
 
 /**
  * iOS `VybeDownloadActivity` → ActivityKit `VybeActivityAttributes` (canonical)
@@ -12,21 +13,32 @@ import { NativeModules, Platform } from 'react-native';
  * @see mobile/ios/vibecode/VybeActivityAttributes.swift
  */
 
-/** Activity Feed lines mirrored into Live Activity `recentPosts` (each ≤ 60 chars for ActivityKit payload limits). */
+/** Fallback lines used only when the live social store has nothing to show (e.g. first app launch, store unhydrated). */
 export const VYBE_LIVE_ACTIVITY_FEED_POSTS: readonly string[] = [
   'DaVinci · Machined Cyan 2.1 — tighter vault handoffs.',
   'Krak Coffee · Winter roast — Vybe Alerts partner taps.',
   'STAK · Stacked plates pop-up — RSVP this weekend.',
 ] as const;
 
-let _liveActivityFeedRotate = 0;
-
-/** Returns the top 3 feed strings, capped at 60 chars; rotates order each call so expanded island updates “cycle” visually. */
+/**
+ * Live-reads the top 3 social activePosts from the Zustand store and caps each
+ * to 60 chars (ActivityKit payload limit). Falls back to the static brand
+ * placeholders only when the store has zero posts. Called once per download
+ * progress tick via `downloadsStore`, so the Dynamic Island expanded feed
+ * naturally refreshes as new posts land.
+ */
 export function takeLiveActivityFeedSnapshot(): string[] {
-  const capped = VYBE_LIVE_ACTIVITY_FEED_POSTS.map((s) => (s.length > 60 ? s.slice(0, 60) : s));
-  const n = _liveActivityFeedRotate % 3;
-  _liveActivityFeedRotate += 1;
-  return [...capped.slice(n), ...capped.slice(0, n)];
+  const posts = useSocialActivityStore.getState().activePosts;
+  if (posts.length > 0) {
+    const lines = posts.slice(0, 3).map((p) => {
+      const who = p.userName ?? 'Vybe';
+      const what = p.vybeNote ?? '';
+      const line = what ? `${who} · ${what}` : who;
+      return line.length > 60 ? line.slice(0, 60) : line;
+    });
+    return lines.filter((s) => s.length > 0);
+  }
+  return VYBE_LIVE_ACTIVITY_FEED_POSTS.map((s) => (s.length > 60 ? s.slice(0, 60) : s)).slice(0, 3);
 }
 
 export interface VybeDownloadActivityStartPayload {

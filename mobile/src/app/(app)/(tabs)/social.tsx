@@ -43,7 +43,7 @@ import type {
 import { MachinedGradientText } from '@/components/MachinedGradientText';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
 import { getSocialActivityFeed, getSocialFeed, type SocialPost } from '@/lib/api/social';
-import { MACHINED_CYAN } from '@/constants/machinedTheme';
+import { MACHINED_CYAN, OLED_BLACK } from '@/constants/machinedTheme';
 
 /** Set true to show Active Posts above the compose row again. */
 const SHOW_ACTIVE_POSTS_SECTION = false;
@@ -222,11 +222,12 @@ function SocialFeedHeader({
   feedPostCount,
 }: SocialFeedHeaderProps) {
   return (
-    <View>
+    <View style={{ backgroundColor: OLED_BLACK }}>
       <SectionHeader title="Brand Feed" subtitle="Partner grid · Krak Coffee · STAK" />
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        style={{ backgroundColor: OLED_BLACK }}
         contentContainerStyle={styles.brandRow}
       >
         {BRAND_FEED_ITEMS.map((b) => (
@@ -246,6 +247,7 @@ function SocialFeedHeader({
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        style={{ backgroundColor: OLED_BLACK }}
         contentContainerStyle={styles.storiesRow}
       >
         {stories.map((story) => (
@@ -306,7 +308,7 @@ type SocialFeedFooterProps = {
 
 function SocialFeedFooter({ playlistItems, interactionItems }: SocialFeedFooterProps) {
   return (
-    <View>
+    <View style={{ backgroundColor: OLED_BLACK }}>
       <View style={styles.divider} />
 
       <SectionHeader
@@ -460,8 +462,11 @@ export default function SocialScreen() {
         list has loaded/measured, which can block or omit compose actions in the header on first paint.
       */}
       <ScrollView
-        style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: tabScreenContentContainerPaddingBottom(insets.bottom) }}
+        style={{ flex: 1, backgroundColor: OLED_BLACK }}
+        contentContainerStyle={{
+          paddingBottom: tabScreenContentContainerPaddingBottom(insets.bottom),
+          backgroundColor: OLED_BLACK,
+        }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
@@ -545,10 +550,9 @@ export default function SocialScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    // No solid backgroundColor — the root layout paints black behind this screen,
-    // and the transparent surface lets the root-level <DynamicIsland/> (zIndex 9999)
-    // render above the tab screen instead of being painted over by its opaque fill.
-    backgroundColor: 'transparent',
+    // Solid black: transparent relied on a parent fill that is not guaranteed (reads as white on iOS).
+    // Root Dynamic Island overlay still stacks above tab content via z-index.
+    backgroundColor: OLED_BLACK,
   },
   feedSuccessBubble: {
     position: 'absolute',
