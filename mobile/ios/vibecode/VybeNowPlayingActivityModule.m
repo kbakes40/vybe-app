@@ -1,7 +1,8 @@
 
 #import <React/RCTBridgeModule.h>
+#import <React/RCTEventEmitter.h>
 
-@interface RCT_EXTERN_MODULE(VybeNowPlayingActivity, NSObject)
+@interface RCT_EXTERN_MODULE(VybeNowPlayingActivity, RCTEventEmitter)
 
 RCT_EXTERN_METHOD(startNowPlaying:(NSString *)trackName
                   artistName:(NSString *)artistName

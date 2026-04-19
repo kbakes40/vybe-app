@@ -5,15 +5,32 @@ import UIKit
 import React
 
 /// Manages the Now Playing Live Activity state.
-/// On iOS 16.1+ with the audio background mode, iOS automatically shows a
-/// music pill in the Dynamic Island when MPNowPlayingInfoCenter has active info
-/// AND MPMediaItemPropertyArtwork is populated AND AVAudioSession is .playback.
+/// iOS auto-creates the Dynamic Island music pill only when ALL of these hold:
+///   1. MPNowPlayingInfoCenter has title + artist + artwork
+///   2. AVAudioSession is .playback and active
+///   3. At least one MPRemoteCommandCenter command is enabled with a handler
+/// Without #3 iOS treats the audio as "headless" and refuses to elevate.
 @objc(VybeNowPlayingActivity)
-class VybeNowPlayingActivityModule: NSObject {
+class VybeNowPlayingActivityModule: RCTEventEmitter {
 
   private var isActive = false
   private var currentArtworkURL: String = ""
   private var artworkTask: URLSessionDataTask?
+  private var commandsConfigured = false
+
+  override func supportedEvents() -> [String]! {
+    return [
+      "VybeRemotePlay",
+      "VybeRemotePause",
+      "VybeRemoteTogglePlayPause",
+      "VybeRemoteNextTrack",
+      "VybeRemotePreviousTrack",
+    ]
+  }
+
+  override static func requiresMainQueueSetup() -> Bool {
+    return false
+  }
 
   @objc func startNowPlaying(
     _ trackName: String,
@@ -23,6 +40,7 @@ class VybeNowPlayingActivityModule: NSObject {
   ) {
     isActive = true
     ensurePlaybackSession()
+    setupRemoteCommandsOnce()
     NSLog("[VybeNowPlaying] startNowPlaying track=\"\(trackName)\" art=\(artworkUrl.isEmpty ? "<EMPTY>" : artworkUrl)")
 
     // Clobber metadata on every start — track changes must reflect immediately.
@@ -65,11 +83,45 @@ class VybeNowPlayingActivityModule: NSObject {
     // The Dynamic Island pill disappears naturally when the audio session ends.
   }
 
-  @objc static func requiresMainQueueSetup() -> Bool {
-    return false
-  }
-
   // MARK: – Private
+
+  private func setupRemoteCommandsOnce() {
+    if commandsConfigured { return }
+    commandsConfigured = true
+    let center = MPRemoteCommandCenter.shared()
+
+    center.playCommand.isEnabled = true
+    center.playCommand.addTarget { [weak self] _ in
+      self?.sendEvent(withName: "VybeRemotePlay", body: nil)
+      return .success
+    }
+
+    center.pauseCommand.isEnabled = true
+    center.pauseCommand.addTarget { [weak self] _ in
+      self?.sendEvent(withName: "VybeRemotePause", body: nil)
+      return .success
+    }
+
+    center.togglePlayPauseCommand.isEnabled = true
+    center.togglePlayPauseCommand.addTarget { [weak self] _ in
+      self?.sendEvent(withName: "VybeRemoteTogglePlayPause", body: nil)
+      return .success
+    }
+
+    center.nextTrackCommand.isEnabled = true
+    center.nextTrackCommand.addTarget { [weak self] _ in
+      self?.sendEvent(withName: "VybeRemoteNextTrack", body: nil)
+      return .success
+    }
+
+    center.previousTrackCommand.isEnabled = true
+    center.previousTrackCommand.addTarget { [weak self] _ in
+      self?.sendEvent(withName: "VybeRemotePreviousTrack", body: nil)
+      return .success
+    }
+
+    NSLog("[VybeNowPlaying] MPRemoteCommandCenter handlers registered")
+  }
 
   private func ensurePlaybackSession() {
     let session = AVAudioSession.sharedInstance()
