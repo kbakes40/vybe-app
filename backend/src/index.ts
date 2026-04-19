@@ -227,7 +227,7 @@ app.route("/api/vault", vaultRouter);
 // Build marker — bumped to force Railway to pick up new commits.
 // If you see this in Railway logs, the new code IS deployed.
 const BUILD_MARKER =
-  "vybe-backend@2026-04-20T01 [SC/discovery onError + 200 empty JSON; startup DB ping; YT key quarantine for /search /info /new-releases /playlist-thumb]";
+  "vybe-backend@2026-04-20T02 [SC/discovery onError + 200 empty JSON; startup DB ping; YT key quarantine now also covers 403 quotaExceeded across all 4 hardened call sites]";
 console.log("[boot]", BUILD_MARKER);
 app.get("/api/_build", (c) => c.json({ marker: BUILD_MARKER }));
 

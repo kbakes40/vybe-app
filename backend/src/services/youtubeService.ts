@@ -418,6 +418,12 @@ export async function searchYouTube(
       if (response.status === 403) {
         const body = await response.text();
         if (body.includes('quotaExceeded') || body.includes('dailyLimitExceeded')) {
+          // Quarantine for the rest of the day — quota resets at midnight PT
+          // and the deadKeys set is cleared on rollover. Without quarantine,
+          // every cache-miss request re-iterated through the same exhausted
+          // key for one Google round-trip before rotating, which is the
+          // direct cause of the per-request lag the user is seeing.
+          markCurrentKeyDead('403 quotaExceeded (search)');
           const rotated = rotateKey(`403 quotaExceeded on key ${activeKeyIndex + 1}`);
           if (!rotated) return getCachedSearch(query, maxResults) ?? [];
           continue; // retry with new key
@@ -826,8 +832,10 @@ async function fetchPlaylistThumbnailFromAPI(playlistId: string): Promise<string
       if (!res.ok) {
         if (res.status === 400 || res.status === 403) {
           const body = await res.text().catch(() => '');
-          if (body.includes('API_KEY_INVALID') || body.includes('API key not valid') || body.includes('keyInvalid')) {
-            markCurrentKeyDead('400 API_KEY_INVALID (playlist thumb)');
+          const isInvalid = body.includes('API_KEY_INVALID') || body.includes('API key not valid') || body.includes('keyInvalid');
+          const isQuota = body.includes('quotaExceeded') || body.includes('dailyLimitExceeded');
+          if (isInvalid || isQuota) {
+            markCurrentKeyDead(isInvalid ? '400 API_KEY_INVALID (playlist thumb)' : '403 quotaExceeded (playlist thumb)');
             if (rotateKey('playlist thumb dead key')) continue;
           }
         }
@@ -939,8 +947,10 @@ export async function fetchNewReleases(maxResults = 20): Promise<NewReleaseResul
       if (!response.ok) {
         if (response.status === 400 || response.status === 403) {
           const body = await response.text().catch(() => '');
-          if (body.includes('API_KEY_INVALID') || body.includes('API key not valid') || body.includes('keyInvalid')) {
-            markCurrentKeyDead('400 API_KEY_INVALID (new releases)');
+          const isInvalid = body.includes('API_KEY_INVALID') || body.includes('API key not valid') || body.includes('keyInvalid');
+          const isQuota = body.includes('quotaExceeded') || body.includes('dailyLimitExceeded');
+          if (isInvalid || isQuota) {
+            markCurrentKeyDead(isInvalid ? '400 API_KEY_INVALID (new releases)' : '403 quotaExceeded (new releases)');
             if (rotateKey('new releases dead key')) continue;
           }
         }
@@ -1053,6 +1063,9 @@ export interface VideoInfo {
  * can't be found (caller should fall back to yt-dlp).
  */
 export async function getVideoInfoViaApi(videoId: string): Promise<VideoInfo | null> {
+  if (shouldSkipYoutubeDataApiDueToQuotaExhaustion()) {
+    return null;
+  }
   // Iterate past dead keys instead of giving up on the first 400. Without
   // this, /info on the very first request after restart would burn one
   // round-trip per dead key before hitting yt-dlp fallback (the source of
@@ -1067,8 +1080,10 @@ export async function getVideoInfoViaApi(videoId: string): Promise<VideoInfo | n
       if (!resp.ok) {
         if (resp.status === 400 || resp.status === 403) {
           const body = await resp.text().catch(() => '');
-          if (body.includes('API_KEY_INVALID') || body.includes('API key not valid') || body.includes('keyInvalid')) {
-            markCurrentKeyDead('400 API_KEY_INVALID (videoInfo)');
+          const isInvalid = body.includes('API_KEY_INVALID') || body.includes('API key not valid') || body.includes('keyInvalid');
+          const isQuota = body.includes('quotaExceeded') || body.includes('dailyLimitExceeded');
+          if (isInvalid || isQuota) {
+            markCurrentKeyDead(isInvalid ? '400 API_KEY_INVALID (videoInfo)' : '403 quotaExceeded (videoInfo)');
             if (rotateKey('videoInfo dead key')) continue;
           }
         }
