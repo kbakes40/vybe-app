@@ -8,7 +8,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import Animated, {
@@ -206,6 +206,11 @@ function PricingCard({ plan, price, subtext, badge, badgeColor = '#8B5CF6', isSe
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export default function UpgradeScreen() {
+  // Paywalls disabled — any navigation to /upgrade bounces straight back to
+  // the tabs home. Remove this single `return` to restore the upgrade flow;
+  // the rest of the component is intentionally left intact.
+  return <Redirect href="/(app)/(tabs)" />;
+  // eslint-disable-next-line no-unreachable
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { showVybePopup } = useVybePopup();
