@@ -4,7 +4,8 @@ import { BottomTabBar, type BottomTabBarProps } from '@react-navigation/bottom-t
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { SHADOW_TAB_ACTIVE } from '@/components/navigation/ShadowTabBarIcons';
 
-const INDICATOR_W = 18;
+/** Slightly narrower so eight dock slots stay legible without crowding the cyan line. */
+const INDICATOR_W = 15;
 const INDICATOR_H = 2;
 
 const SPRING = { damping: 22, stiffness: 300, mass: 0.55 };

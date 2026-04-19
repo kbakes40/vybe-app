@@ -323,6 +323,28 @@ export function ShadowVaultWaveIcon({ size, color }: IconBase) {
   );
 }
 
+/** Radio / broadcast — mast + radiating arcs (geometric stroke icon). */
+export function ShadowRadioTowerIcon({ size, color }: IconBase) {
+  const s = size;
+  return (
+    <Svg width={s} height={s} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M12 4v16M9 7l3-2 3 2M9 11l3-2 3 2M9 15l3-2 3 2"
+        stroke={color}
+        strokeWidth={SHADOW_TAB_STROKE}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Path
+        d="M15.5 6.5c2.5 1.8 4 4.6 4 7.5s-1.5 5.7-4 7.5M8.5 6.5C6 8.3 4.5 11.1 4.5 14s1.5 5.7 4 7.5"
+        stroke={color}
+        strokeWidth={SHADOW_TAB_STROKE}
+        strokeLinecap="round"
+      />
+    </Svg>
+  );
+}
+
 /** Plan / grid — 2×2 cells (Your Plan tab). */
 export function ShadowPlanGridIcon({ size, color }: IconBase) {
   const s = size;

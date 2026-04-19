@@ -6,6 +6,7 @@ import { useSegments } from 'expo-router';
 import { Image } from 'expo-image';
 import Animated, {
   cancelAnimation,
+  Easing,
   interpolateColor,
   type SharedValue,
   useAnimatedStyle,
@@ -18,11 +19,13 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import { Check, Pause, Play, SkipForward } from 'lucide-react-native';
 import { usePlaybackController } from '@/stores/playbackController';
+import { RADIO_PARADISE_BRAND_LOGO_URL } from '@/constants/radioParadise';
 import { useNowPlayingSheetStore } from '@/stores/nowPlayingSheetStore';
 import { useDynamicIslandSignal } from '@/stores/dynamicIslandStore';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import { VIBRANT_BLUE } from '@/constants/machinedTheme';
 import { islandAlignedPillTop } from '@/constants/iosIslandLayout';
+import { RadioParadiseSoulActions } from '@/components/radio/RadioParadiseSoulActions';
 
 /**
  * Global interactive pill mounted above navigation chrome.
@@ -137,6 +140,7 @@ export function DynamicIsland() {
   const healingStreamActive = useDynamicIslandSignal((s) => s.healingStreamActive);
   const scIgnitionGlow = useDynamicIslandSignal((s) => s.scIgnitionGlow);
   const firedAt = useDynamicIslandSignal((s) => s.firedAt);
+  const radioMachinedPulseAt = useDynamicIslandSignal((s) => s.radioMachinedPulseAt);
   /** Premium fidelity badge — drives the HD pill chip rendered in the playing row. */
   const isPremium = useSubscriptionStore((s) => s.tier === 'plus');
 
@@ -145,6 +149,23 @@ export function DynamicIsland() {
   const recoveryLabelOverride = useDynamicIslandSignal((s) => s.recoveryLabel);
 
   const isPlaying = playbackState === 'playing' && !!currentTrack;
+  const isLiveRadio = currentSource === 'global_radio' || currentSource === 'radio_paradise';
+  const chillLead = isLiveRadio && currentTrack?.globalRadioDiLeading === 'chill';
+  const diTag = currentTrack?.globalRadioDiTag;
+  /** Slim pill: RP mark / station art / chill glyph. */
+  const metaThumbUri = chillLead
+    ? null
+    : isLiveRadio && currentTrack?.globalRadioStationId === 'paradise'
+      ? RADIO_PARADISE_BRAND_LOGO_URL
+      : currentTrack?.artwork;
+  const expandedArtUri =
+    isLiveRadio && currentTrack?.globalRadioStationId === 'paradise'
+      ? currentTrack?.artwork || RADIO_PARADISE_BRAND_LOGO_URL
+      : currentTrack?.artwork;
+  const metaArtistLine =
+    isLiveRadio && diTag
+      ? `${diTag} · ${currentTrack?.artist ?? ''}`.replace(/\s·\s$/, '')
+      : currentTrack?.artist ?? '';
   const isStreamResolving =
     !!currentTrack &&
     (currentSource === 'youtube' || currentSource === 'youtube_music') &&
@@ -194,6 +215,8 @@ export function DynamicIsland() {
   const fireFlareSV = useSharedValue(0);
   /** 0 → particles hidden; 1 → particles fully spread (radial fire burst). */
   const fireBurstSV = useSharedValue(0);
+  /** Radio "HYPE" — brief Machined Cyan takeover of pill chrome (~1s). */
+  const radioCyanPulseSV = useSharedValue(0);
 
   /** Cyan-tinted recovery states (auto-heal / token refresh) vs red errors. */
   const isHealingLabel =
@@ -330,6 +353,16 @@ export function DynamicIsland() {
     );
   }, [firedAt, fireFlareSV, fireBurstSV]);
 
+  useLayoutEffect(() => {
+    if (!radioMachinedPulseAt) return;
+    radioCyanPulseSV.value = 0;
+    radioCyanPulseSV.value = withSequence(
+      withTiming(1, { duration: 220, easing: Easing.out(Easing.cubic) }),
+      withTiming(0.88, { duration: 200, easing: Easing.inOut(Easing.quad) }),
+      withTiming(0, { duration: 580, easing: Easing.in(Easing.cubic) }),
+    );
+  }, [radioMachinedPulseAt, radioCyanPulseSV]);
+
   // Machined-Blue bloom while playing — pill goes from a dim hairline to a
   // full neon glow. Play kick-in gets a brief over-shoot flash ("Integrated
   // Notch" pulse from IMG_3643) before settling to steady glow. Eases out on
@@ -448,7 +481,8 @@ export function DynamicIsland() {
     const g = glowIntensitySV.value;
     const r = resolvePulse.value * isResolvingSV.value;
     const flare = fireFlareSV.value;
-    const ring = g + r * 1.15 + flare * 1.2;
+    const radioPulse = radioCyanPulseSV.value;
+    const ring = g + r * 1.15 + flare * 1.2 + radioPulse * 0.85;
     const capped = ring > 1.6 ? 1.6 : ring;
     const egg = borderHueSV.value;
     const sc = scIgnitionSV.value;
@@ -464,14 +498,18 @@ export function DynamicIsland() {
       [0, 1],
       [baseColor, SOUNDCLOUD_IGNITION_ORANGE],
     );
+    const withRadio =
+      radioPulse > 0.002
+        ? interpolateColor(radioPulse, [0, 1], [hotColor, NEON_CYAN])
+        : hotColor;
     return {
       width: widthSV.value,
       height: heightSV.value,
-      borderWidth: 1 + flare * 0.8,
-      borderColor: hotColor,
-      shadowColor: hotColor,
-      shadowOpacity: 0.25 + capped * 0.78,
-      shadowRadius: 6 + capped * 22,
+      borderWidth: 1 + flare * 0.8 + radioPulse * 0.55,
+      borderColor: withRadio,
+      shadowColor: withRadio,
+      shadowOpacity: 0.25 + capped * 0.78 + radioPulse * 0.22,
+      shadowRadius: 6 + capped * 22 + radioPulse * 10,
     };
   });
 
@@ -560,9 +598,15 @@ export function DynamicIsland() {
               pointerEvents="none"
               style={[styles.row, styles.metaRow, metaStyle]}
             >
-              {currentTrack?.artwork ? (
+              {chillLead ? (
+                <View style={[styles.metaThumb, styles.chillThumb]} accessibilityLabel="Chill">
+                  <View style={styles.chillBar} />
+                  <View style={[styles.chillBar, styles.chillBarMid]} />
+                  <View style={styles.chillBar} />
+                </View>
+              ) : metaThumbUri ? (
                 <Image
-                  source={{ uri: currentTrack.artwork }}
+                  source={{ uri: metaThumbUri }}
                   style={styles.metaThumb}
                   contentFit="cover"
                   transition={120}
@@ -575,7 +619,7 @@ export function DynamicIsland() {
                   {currentTrack?.title ?? 'Now Playing'}
                 </Text>
                 <Text numberOfLines={1} style={styles.metaArtist}>
-                  {currentTrack?.artist ?? ''}
+                  {metaArtistLine}
                 </Text>
                 {healingStreamActive && isStreamResolving ? (
                   <Animated.Text
@@ -612,9 +656,9 @@ export function DynamicIsland() {
               pointerEvents={stateRef.current === 'expanded' ? 'auto' : 'none'}
               style={[StyleSheet.absoluteFill, styles.expandedRoot, expandedStyle]}
             >
-              {currentTrack?.artwork ? (
+              {expandedArtUri ? (
                 <Image
-                  source={{ uri: currentTrack.artwork }}
+                  source={{ uri: expandedArtUri }}
                   style={styles.expandedArt}
                   contentFit="cover"
                   transition={160}
@@ -640,6 +684,11 @@ export function DynamicIsland() {
                     POWERED_BY_DAVINCI
                   </Text>
                 </Pressable>
+                {isLiveRadio ? (
+                  <View style={styles.expandedSoul} pointerEvents="box-none">
+                    <RadioParadiseSoulActions layout="island_compact" />
+                  </View>
+                ) : null}
               </View>
               <View style={styles.expandedTransport}>
                 <Pressable
@@ -791,6 +840,25 @@ const styles = StyleSheet.create({
   metaThumbFallback: {
     backgroundColor: 'rgba(0,229,255,0.18)',
   },
+  chillThumb: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(0,255,255,0.45)',
+  },
+  chillBar: {
+    width: 14,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: NEON_CYAN,
+    opacity: 0.85,
+  },
+  chillBarMid: {
+    width: 10,
+    marginVertical: 3,
+    opacity: 0.55,
+  },
   metaText: {
     flex: 1,
     marginLeft: 10,
@@ -872,6 +940,10 @@ const styles = StyleSheet.create({
     letterSpacing: 1.8,
     marginTop: 6,
     textTransform: 'uppercase',
+  },
+  expandedSoul: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
   },
   expandedTransport: {
     flexDirection: 'row',

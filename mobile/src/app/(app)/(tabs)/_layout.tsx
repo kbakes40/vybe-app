@@ -14,6 +14,7 @@ import {
   ShadowProfileVybeVIcon,
   ShadowSearchIcon,
   ShadowVaultWaveIcon,
+  ShadowRadioTowerIcon,
   ShadowTabIconShell,
   SHADOW_TAB_ACTIVE,
   SHADOW_TAB_INACTIVE,
@@ -46,7 +47,7 @@ function AppleMusicIcon() {
 }
 
 // Fixed icon size - THE ONLY PLACE ICON SIZE IS DEFINED
-const ICON_SIZE = 28;
+const ICON_SIZE = 25;
 
 /**
  * Tab bar button — Shadow theme uses light haptic on every press.
@@ -403,6 +404,22 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
+          name="radio"
+          options={{
+            title: 'Radio',
+            tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="radio" />,
+            tabBarIcon: ({ focused, size }) => {
+              const dim = size ?? ICON_SIZE;
+              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              return (
+                <ShadowTabIconShell focused={focused} pressRoute="radio">
+                  <ShadowRadioTowerIcon size={dim} color={c} />
+                </ShadowTabIconShell>
+              );
+            },
+          }}
+        />
+        <Tabs.Screen
           name="plan"
           options={{
             title: 'Your Plan',
@@ -476,7 +493,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
-    minHeight: 48,
+    paddingVertical: 8,
+    minHeight: 46,
   },
 });

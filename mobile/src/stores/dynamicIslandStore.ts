@@ -44,6 +44,13 @@ interface DynamicIslandSignalState {
   firedAt: number;
   /** Trigger a Fire flash on the pill. */
   flashFire: () => void;
+
+  /**
+   * Radio "HYPE" — short Machined Cyan border / glow pulse on the pill (~1s).
+   * Distinct from {@link flashFire} (SoundCloud-orange like burst).
+   */
+  radioMachinedPulseAt: number;
+  flashRadioMachinedPulse: () => void;
 }
 
 export const useDynamicIslandSignal = create<DynamicIslandSignalState>((set) => ({
@@ -64,4 +71,7 @@ export const useDynamicIslandSignal = create<DynamicIslandSignalState>((set) => 
 
   firedAt: 0,
   flashFire: () => set({ firedAt: Date.now() }),
+
+  radioMachinedPulseAt: 0,
+  flashRadioMachinedPulse: () => set({ radioMachinedPulseAt: Date.now() }),
 }));

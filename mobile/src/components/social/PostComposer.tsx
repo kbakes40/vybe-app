@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   InputAccessoryView,
   Keyboard,
-  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -18,6 +17,7 @@ import * as Haptics from 'expo-haptics';
 import {
   BottomSheetModal,
   BottomSheetBackdrop,
+  BottomSheetScrollView,
   BottomSheetTextInput,
   useBottomSheetSpringConfigs,
 } from '@gorhom/bottom-sheet';
@@ -68,9 +68,8 @@ function trackToPostAttach(t: Track): {
 }
 
 /**
- * Fire-post composer — single-screen layout that fits above the keyboard.
- * No internal scrolling: pinned attached-track header → multiline input →
- * compact toolbar (vault search + photo + chips) → POST in iOS accessory bar.
+ * Fire-post composer — Gorhom handles keyboard + `BottomSheetScrollView` so the
+ * multiline field stays on-screen. Toolbar, vault chips, iOS accessory POST.
  */
 export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) {
   const insets = useSafeAreaInsets();
@@ -315,6 +314,8 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
       enableDismissOnClose
       enableContentPanningGesture={false}
       keyboardBlurBehavior="restore"
+      // Extend the sheet with the keyboard; nesting KeyboardAvoidingView on top of Gorhom collapses the compose area on iOS.
+      keyboardBehavior="extend"
       android_keyboardInputMode="adjustResize"
       topInset={insets.top}
       animationConfigs={animationConfigs}
@@ -324,12 +325,11 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
       onDismiss={handleDismiss}
       onChange={handleSheetChange}
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      <BottomSheetScrollView
         style={{ flex: 1 }}
-        keyboardVerticalOffset={0}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={[styles.body, { paddingBottom: 8 + insets.bottom }]}
       >
-        <View style={[styles.body, { paddingBottom: 8 + insets.bottom }]}>
           {/* Tight header — close X on left, title pill, POST chip on right */}
           <View style={styles.headerRow}>
             <Pressable
@@ -393,8 +393,7 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
             </View>
           ) : null}
 
-          {/* Main text input — flexes to fill the free space between the
-              pinned header/preview above and the toolbar below. */}
+          {/* Main text input — fixed min height so it stays visible above the keyboard. */}
           <BottomSheetTextInput
             ref={inputRef}
             value={text}
@@ -508,8 +507,7 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
           ) : null}
 
           {errorMsg ? <Text style={styles.errorText}>{errorMsg}</Text> : null}
-        </View>
-      </KeyboardAvoidingView>
+      </BottomSheetScrollView>
     </BottomSheetModal>
 
     {/* iOS keyboard accessory bar — POST is reachable without leaving the
@@ -556,7 +554,7 @@ const styles = StyleSheet.create({
     backgroundColor: GRAPHITE_GREY,
   },
   body: {
-    flex: 1,
+    flexGrow: 1,
     paddingHorizontal: 18,
     paddingTop: 6,
   },
@@ -654,18 +652,23 @@ const styles = StyleSheet.create({
     marginLeft: 6,
   },
   input: {
-    flex: 1,
-    // minHeight guards against a broken flex chain from ancestors — even if
-    // the parent hits a 0-height ambiguity the input stays visible.
-    minHeight: 140,
+    alignSelf: 'stretch',
+    // Fixed compose height: `flex:1` inside the sheet + iOS keyboard was resolving
+    // to ~0 visible lines so only the accessory bar appeared above the keyboard.
+    minHeight: 168,
+    maxHeight: 220,
     color: '#FFFFFF',
     fontSize: 17,
     lineHeight: 23,
     fontWeight: '600',
     letterSpacing: -0.2,
-    paddingVertical: 4,
-    paddingHorizontal: 0,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
     textAlignVertical: 'top',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.10)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
   },
   mediaThumbWrap: {
     position: 'relative',

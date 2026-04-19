@@ -1,4 +1,12 @@
-export type TrackSource = 'vybe' | 'youtube' | 'youtube_music' | 'soundcloud' | 'freepd';
+export type TrackSource =
+  | 'vybe'
+  | 'youtube'
+  | 'youtube_music'
+  | 'soundcloud'
+  | 'freepd'
+  | 'radio_paradise'
+  /** Internet radio / hi-fi relays (see `GlobalRadioClient`). */
+  | 'global_radio';
 
 export interface Track {
   id: string;
@@ -48,6 +56,15 @@ export interface Track {
   releaseYear?: number; // Year the track was released
   /** When set, tap opens this URL (e.g. vault promo) instead of starting playback. */
   externalHandoffUrl?: string;
+
+  /** `global_radio` — station key from `GlobalRadioClient`. */
+  globalRadioStationId?: string;
+  globalRadioMetadataSource?: 'radioparadise_api' | 'static';
+  /** Short channel tag for lock screen / Dynamic Island (e.g. `RP PARADISE`). */
+  globalRadioDiTag?: string;
+  globalRadioDiLeading?: 'default' | 'chill';
+  /** HIP HOP: max-frequency Fire shell pulse in soul actions. */
+  globalRadioFirePulse?: 'normal' | 'max';
 }
 
 export interface RelatedTrack extends Track {

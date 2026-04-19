@@ -43,6 +43,7 @@ import {
 } from 'lucide-react-native';
 import { Svg, Circle } from 'react-native-svg';
 import Animated, {
+  cancelAnimation,
   useSharedValue,
   useAnimatedStyle,
   withSpring,
@@ -76,6 +77,7 @@ import {
   VybeWavesNeonIcon,
 } from '@/assets/icons/VybeNeonSourceIcons';
 import { AnimatedArtworkBackground } from '@/components/NowPlaying/Background';
+import { RadioParadiseSoulActions } from '@/components/radio/RadioParadiseSoulActions';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const ARTWORK_SIZE = SCREEN_WIDTH - 56;
@@ -646,6 +648,32 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
     );
   }, [playRingPulse]);
 
+  const isLiveRadio = currentSource === 'global_radio' || currentSource === 'radio_paradise';
+  const livePulse = useSharedValue(1);
+  useEffect(() => {
+    if (!isLiveRadio) {
+      cancelAnimation(livePulse);
+      livePulse.value = 1;
+      return;
+    }
+    livePulse.value = withRepeat(
+      withSequence(
+        withTiming(0.52, { duration: 700, easing: Easing.inOut(Easing.quad) }),
+        withTiming(1, { duration: 700, easing: Easing.inOut(Easing.quad) }),
+      ),
+      -1,
+      true,
+    );
+    return () => {
+      cancelAnimation(livePulse);
+      livePulse.value = 1;
+    };
+  }, [isLiveRadio, livePulse]);
+
+  const liveBadgeOpacityStyle = useAnimatedStyle(() => ({
+    opacity: livePulse.value,
+  }));
+
   const playRingPulseStyle = useAnimatedStyle(() => ({
     transform: [{ scale: playRingPulse.value }],
     opacity: 0.72 + 0.22 * (playRingPulse.value - 1) / 0.05,
@@ -1112,16 +1140,49 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
             <Animated.View style={[INFO_STATIC_STYLE, { paddingHorizontal: 28, marginTop: 20 }]}>
               <View className="flex-row items-center justify-between">
                 <View className="flex-1 mr-4">
-                  <Text
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                    style={nowPlayingTypography.title}
-                  >
-                    {currentTrack.title}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    {isLiveRadio ? (
+                      <Animated.View
+                        style={[
+                          {
+                            paddingHorizontal: 10,
+                            paddingVertical: 4,
+                            borderRadius: 6,
+                            backgroundColor: 'rgba(255,0,212,0.22)',
+                            borderWidth: StyleSheet.hairlineWidth,
+                            borderColor: 'rgba(255,0,212,0.55)',
+                          },
+                          liveBadgeOpacityStyle,
+                        ]}
+                      >
+                        <Text
+                          style={{
+                            color: '#FF00D4',
+                            fontSize: 11,
+                            fontWeight: '900',
+                            letterSpacing: 1.2,
+                          }}
+                        >
+                          LIVE
+                        </Text>
+                      </Animated.View>
+                    ) : null}
+                    <Text
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                      style={[nowPlayingTypography.title, { flex: 1, minWidth: 0 }]}
+                    >
+                      {currentTrack.title}
+                    </Text>
+                  </View>
                   <Text numberOfLines={1} ellipsizeMode="tail" style={nowPlayingTypography.artist}>
                     {currentTrack.artist}
                   </Text>
+                  {isLiveRadio ? (
+                    <View style={{ marginTop: 14, alignSelf: 'flex-start' }}>
+                      <RadioParadiseSoulActions layout="full" />
+                    </View>
+                  ) : null}
                 </View>
                 <View className="flex-row items-center gap-2">
                   <DownloadButton track={currentTrack} size={28} />

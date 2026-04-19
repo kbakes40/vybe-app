@@ -34,6 +34,7 @@ import {
   resolveSoundcloudStreamUrlWithBudget,
 } from '@/lib/soundcloudStreamPreloadCache';
 import { filterDeadYoutubeQueueTracks, isDeadYoutubeQueueTitle } from '@/lib/queueSanitize';
+import { fetchRadioParadiseNowPlaying } from '@/lib/radioParadiseApi';
 import {
   fetchSoundcloudMatchForYoutubeTrack,
   isYoutubeHardStreamFailure,
@@ -423,6 +424,108 @@ function stopNowPlayingInterval() {
   }
 }
 
+/** Polls Radio Paradise `now_playing` while that station row is active. */
+let globalRadioMetaTimer: ReturnType<typeof setInterval> | null = null;
+
+function clearGlobalRadioMetaPoll() {
+  if (globalRadioMetaTimer) {
+    clearInterval(globalRadioMetaTimer);
+    globalRadioMetaTimer = null;
+  }
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Waits until the native player reports ~`targetMs` of playable media ahead of
+ * the playhead (or absolute buffer for t=0), reducing stutter on flaky 5G.
+ * Caps at `timeoutMs` then starts playback anyway.
+ */
+async function waitForNetworkAudioBufferAhead(
+  sound: InstanceType<typeof Audio.Sound>,
+  targetMs: number,
+  timeoutMs: number,
+): Promise<void> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const s = await sound.getStatusAsync();
+    if (!s.isLoaded) {
+      await sleepMs(140);
+      continue;
+    }
+    const pos = s.positionMillis ?? 0;
+    const buf = s.playableDurationMillis ?? 0;
+    const ahead = buf > pos ? buf - pos : buf;
+    if (ahead >= targetMs) return;
+    await sleepMs(160);
+  }
+}
+
+async function refreshRadioParadiseNowPlayingIfActive(expectedTrackId: string) {
+  const snap = usePlaybackController.getState();
+  const rpMeta =
+    snap.currentTrack?.globalRadioMetadataSource === 'radioparadise_api' ||
+    snap.currentSource === 'radio_paradise';
+  if (
+    snap.currentTrack?.id !== expectedTrackId ||
+    !rpMeta ||
+    snap.playbackState === 'idle' ||
+    snap.playbackState === 'error'
+  ) {
+    return;
+  }
+  const meta = await fetchRadioParadiseNowPlaying();
+  if (!meta) return;
+
+  const st = usePlaybackController.getState();
+  const stRp =
+    st.currentTrack?.globalRadioMetadataSource === 'radioparadise_api' ||
+    st.currentSource === 'radio_paradise';
+  if (st.currentTrack?.id !== expectedTrackId || !stRp) return;
+
+  const cur = st.currentTrack;
+  if (cur.title === meta.title && cur.artist === meta.artist && cur.artwork === meta.artwork) return;
+
+  const nextTrack = {
+    ...cur,
+    title: meta.title,
+    artist: meta.artist,
+    artwork: meta.artwork || cur.artwork,
+  };
+  usePlaybackController.setState({
+    currentTrack: nextTrack,
+    playbackRevision: st.playbackRevision + 1,
+  });
+
+  updateNowPlaying({
+    trackTitle: nextTrack.title,
+    artistName: nextTrack.artist,
+    artworkUrl: nextTrack.artwork ?? '',
+    duration: st.duration || 0,
+    currentTime: st.progress,
+    isPlaying: st.playbackState === 'playing',
+  });
+  if (nextTrack.artwork) setNowPlayingArtwork(nextTrack.artwork);
+  updateNowPlayingActivity(
+    st.playbackState === 'playing',
+    st.duration > 0 ? st.progress / st.duration : 0,
+    st.progress,
+    st.duration || 0,
+    nextTrack.title,
+    nextTrack.artist,
+  );
+}
+
+function startGlobalRadioMetaPoll(trackId: string) {
+  clearGlobalRadioMetaPoll();
+  void refreshRadioParadiseNowPlayingIfActive(trackId);
+  globalRadioMetaTimer = setInterval(() => {
+    void refreshRadioParadiseNowPlayingIfActive(trackId);
+  }, 12_000);
+}
+
 // Register adapter refs
 export const registerYouTubeAdapter = (adapter: PlayerAdapter | null) => {
   youtubeAdapterRef = adapter;
@@ -720,6 +823,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     // ONE PLAYER RULE: Stop all sources before starting new playback
     // (this may deactivate the iOS audio session)
     await stopAllSources();
+    clearGlobalRadioMetaPoll();
 
     // Another playTrack was called while we were stopping — bail out
     if (!isStillCurrent()) return;
@@ -787,6 +891,12 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     // Start / update Now Playing Live Activity (Dynamic Island)
     startNowPlayingActivity(track.title, track.artist, track.artwork ?? '', track.duration || 0);
     startNowPlayingInterval();
+    if (
+      track.globalRadioMetadataSource === 'radioparadise_api' ||
+      source === 'radio_paradise'
+    ) {
+      startGlobalRadioMetaPoll(track.id);
+    }
 
     // Downloads-store fast path — if this track has been downloaded (any source),
     // resolve the local file path BEFORE checking audioUrl. Most tracks passed
@@ -1391,61 +1501,97 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
             return;
           }
 
-          const { sound, status } = await Audio.Sound.createAsync(
-            { uri: track.audioUrl },
-            { shouldPlay: true, volume: get().volume },
-            (status: AVPlaybackStatus) => {
-              // Only update if this track is still active
-              const { currentTrack } = get();
-              if (currentTrack?.id !== track.id) return;
+          let soundForRepeat: InstanceType<typeof Audio.Sound> | null = null;
+          const onPlaybackStatusUpdate = (status: AVPlaybackStatus) => {
+            const { currentTrack } = get();
+            if (currentTrack?.id !== track.id) return;
 
-              if (status.isLoaded) {
-                const progressSec = status.positionMillis / 1000;
-                const durationSec = (status.durationMillis ?? track.duration * 1000) / 1000;
+            if (status.isLoaded) {
+              const progressSec = status.positionMillis / 1000;
+              const durationSec = (status.durationMillis ?? track.duration * 1000) / 1000;
 
-                set({
-                  progress: progressSec,
-                  duration: durationSec,
-                  playbackState: status.isPlaying ? 'playing' : 'paused',
-                });
+              set({
+                progress: progressSec,
+                duration: durationSec,
+                playbackState: status.isPlaying ? 'playing' : 'paused',
+              });
 
-                // Crossfade trigger
-                const { crossfadeEnabled, crossfadeDuration } = usePlaybackSettingsStore.getState();
-                if (
-                  crossfadeEnabled &&
-                  crossfadeTriggeredForTrackId !== track.id &&
-                  durationSec > 0 &&
-                  progressSec > 0 &&
-                  durationSec - progressSec <= crossfadeDuration
-                ) {
-                  crossfadeTriggeredForTrackId = track.id;
-                  triggerCrossfade(crossfadeDuration);
-                }
-
-                // Auto-play next track when finished
-                if (status.didJustFinish) {
-                  const { repeatMode } = get();
-                  if (repeatMode === 'one') {
-                    sound.replayAsync();
-                  } else if (crossfadeTriggeredForTrackId !== track.id) {
-                    set({ playbackState: 'ended' });
-                    get().next();
-                  }
-                }
-              } else if ('error' in status && status.error) {
-                console.error('[PlaybackController] Playback status error:', status.error);
-                set({ playbackState: 'error', error: 'Playback failed' });
+              const { crossfadeEnabled, crossfadeDuration } = usePlaybackSettingsStore.getState();
+              if (
+                crossfadeEnabled &&
+                crossfadeTriggeredForTrackId !== track.id &&
+                durationSec > 0 &&
+                progressSec > 0 &&
+                durationSec - progressSec <= crossfadeDuration
+              ) {
+                crossfadeTriggeredForTrackId = track.id;
+                triggerCrossfade(crossfadeDuration);
               }
-            }
-          );
 
-          // Verify sound loaded successfully before setting as playing
-          if (!isStillCurrent()) { sound.stopAsync().catch(() => {}); sound.unloadAsync().catch(() => {}); return; }
-          if (status.isLoaded) {
+              if (status.didJustFinish) {
+                const { repeatMode } = get();
+                if (repeatMode === 'one') {
+                  soundForRepeat?.replayAsync().catch(() => {});
+                } else if (crossfadeTriggeredForTrackId !== track.id) {
+                  set({ playbackState: 'ended' });
+                  get().next();
+                }
+              }
+            } else if ('error' in status && status.error) {
+              console.error('[PlaybackController] Playback status error:', status.error);
+              set({ playbackState: 'error', error: 'Playback failed' });
+            }
+          };
+
+          let sound: InstanceType<typeof Audio.Sound>;
+          let loadedOk = false;
+
+          if (source === 'global_radio') {
+            sound = new Audio.Sound();
+            soundForRepeat = sound;
+            sound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
+            await sound.loadAsync(
+              { uri: track.audioUrl },
+              {
+                shouldPlay: false,
+                volume: get().volume,
+                progressUpdateIntervalMillis: 500,
+              },
+            );
+            const st0 = await sound.getStatusAsync();
+            loadedOk = st0.isLoaded;
+            if (loadedOk) {
+              await waitForNetworkAudioBufferAhead(sound, 5000, 16000);
+            }
+            if (!isStillCurrent()) {
+              await sound.stopAsync().catch(() => {});
+              await sound.unloadAsync().catch(() => {});
+              return;
+            }
+            if (loadedOk) {
+              await sound.playAsync();
+            }
+          } else {
+            const created = await Audio.Sound.createAsync(
+              { uri: track.audioUrl },
+              { shouldPlay: true, volume: get().volume },
+              onPlaybackStatusUpdate,
+            );
+            sound = created.sound;
+            soundForRepeat = sound;
+            loadedOk = created.status.isLoaded;
+          }
+
+          if (!isStillCurrent()) {
+            sound.stopAsync().catch(() => {});
+            sound.unloadAsync().catch(() => {});
+            return;
+          }
+          if (loadedOk) {
             vybeSound = sound;
             set({ playbackState: 'playing' });
           } else {
-            console.error('[PlaybackController] Audio failed to load:', status);
+            console.error('[PlaybackController] Audio failed to load (global_radio or native)');
             set({ playbackState: 'error', error: 'Failed to load audio' });
           }
         } else {
@@ -1508,6 +1654,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
   stop: async () => {
     await stopAllSources();
+    clearGlobalRadioMetaPoll();
     clearNowPlaying();
     stopNowPlayingInterval();
     endNowPlayingActivity();

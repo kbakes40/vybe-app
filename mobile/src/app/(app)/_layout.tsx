@@ -260,6 +260,7 @@ export default function AppLayout() {
     tabLeaf === 'discover' ||
     tabLeaf === 'profile' ||
     tabLeaf === 'social' ||
+    tabLeaf === 'radio' ||
     tabLeaf === 'plan';
   const pathNorm = String(pathname ?? '/').replace(/\/$/, '') || '/';
   const isTabPath =
@@ -270,6 +271,7 @@ export default function AppLayout() {
     pathNorm === '/discover' ||
     pathNorm === '/profile' ||
     pathNorm === '/social' ||
+    pathNorm === '/radio' ||
     pathNorm === '/plan';
   const isTabScreen = segs.includes('(tabs)') || isKnownTabLeaf || isTabPath;
 
@@ -303,8 +305,9 @@ export default function AppLayout() {
             headerShadowVisible: false,
             contentStyle: { backgroundColor: '#000000' },
             gestureEnabled: true,
-            sheetAllowedDetents: ['medium', 'large'],
-            // Open at 'medium' (half-height) first; user can drag up to 'large'.
+            // Fractions of max sheet height (native-stack API); ~half then full.
+            sheetAllowedDetents: [0.5, 1.0],
+            // Open at first detent (~half-height); user can drag up to full.
             sheetInitialDetentIndex: 0,
             sheetCornerRadius: 32,
           }}
