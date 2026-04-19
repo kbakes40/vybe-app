@@ -823,6 +823,55 @@ youtubeRouter.get("/playlists", async (c) => {
   return c.json({ data: results });
 });
 
+/** Raw yt-dlp single-shot test. Returns stdout/stderr for one client so we can
+ *  see exactly what YouTube is rejecting (useful when the racer's error
+ *  capture loses the actual message). Visit:
+ *  /api/youtube/_test/dQw4w9WgXcQ?client=tv */
+youtubeRouter.get("/_test/:videoId", async (c) => {
+  const videoId = c.req.param("videoId");
+  if (!videoId || !VIDEO_ID_RE.test(videoId)) {
+    return c.json({ error: "Invalid video ID" }, 400);
+  }
+  const client = c.req.query("client") ?? "tv";
+  const fmt = c.req.query("fmt") ?? "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio/best/bestaudio*/best*";
+  const listFormats = c.req.query("listFormats") === "1";
+
+  const args = [
+    `https://www.youtube.com/watch?v=${videoId}`,
+    "-f", fmt,
+    listFormats ? "--list-formats" : "--get-url",
+    "--no-playlist",
+    "--no-warnings",
+    "--socket-timeout", "8",
+    "--extractor-args", `youtube:player_client=${client};formats=missing_pot`,
+    ...commonYtdlpArgs(),
+  ];
+
+  const startedAt = Date.now();
+  const proc = Bun.spawn(["/tmp/yt-dlp", ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  await proc.exited;
+  const elapsedMs = Date.now() - startedAt;
+
+  return c.json({
+    videoId,
+    client,
+    fmt,
+    listFormats,
+    elapsedMs,
+    exitCode: proc.exitCode,
+    stdout: stdout.slice(0, 6000),
+    stderr: stderr.slice(0, 6000),
+    cookies: cookieArgsForYtdlp().length > 0 ? "applied" : "missing",
+  });
+});
+
 youtubeRouter.get("/_diag", async (c) => {
   const fs = await import("fs");
   const { YTDLP_COOKIES_PATH } = await import("../lib/youtubeCookies");
