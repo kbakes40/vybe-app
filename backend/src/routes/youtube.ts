@@ -819,6 +819,110 @@ youtubeRouter.get("/playlists", async (c) => {
   return c.json({ data: results });
 });
 
+youtubeRouter.get("/_diag", async (c) => {
+  const fs = await import("fs");
+  const { YTDLP_COOKIES_PATH } = await import("../lib/youtubeCookies");
+
+  const rawEnv = (process.env.YOUTUBE_COOKIES ?? process.env.YOUTUBE_COOKIES_BASE64 ?? "").trim();
+  const envVarUsed = process.env.YOUTUBE_COOKIES
+    ? "YOUTUBE_COOKIES"
+    : process.env.YOUTUBE_COOKIES_BASE64
+      ? "YOUTUBE_COOKIES_BASE64"
+      : null;
+
+  const envSet = rawEnv.length > 0;
+  const envLength = rawEnv.length;
+  const envFirst40 = envSet ? rawEnv.slice(0, 40) : null;
+
+  const looksLikeRawCookies =
+    envSet &&
+    (rawEnv.startsWith("# Netscape") ||
+      rawEnv.startsWith("#HttpOnly_") ||
+      rawEnv.startsWith(".youtube.com") ||
+      rawEnv.includes("\t"));
+
+  let decodeOk = false;
+  let decodedPreview: string | null = null;
+  let decodeError: string | null = null;
+  let decodedLineCount = 0;
+  let cookieCount = 0;
+
+  if (envSet) {
+    try {
+      const decoded = Buffer.from(rawEnv, "base64").toString("utf-8");
+      decodedPreview = decoded.slice(0, 80);
+      decodedLineCount = decoded.split("\n").length;
+      cookieCount = decoded
+        .split("\n")
+        .filter((l) => {
+          const t = l.trim();
+          if (!t || t.startsWith("#")) return false;
+          return t.split("\t").length >= 7;
+        }).length;
+      decodeOk =
+        decoded.startsWith("# Netscape") ||
+        decoded.startsWith("#HttpOnly_") ||
+        decoded.startsWith(".youtube.com") ||
+        cookieCount > 0;
+    } catch (e) {
+      decodeError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  const wroteFile = ensureYoutubeCookiesFile();
+  let fileExists = false;
+  let fileBytes = 0;
+  try {
+    fileExists = fs.existsSync(YTDLP_COOKIES_PATH);
+    if (fileExists) fileBytes = fs.statSync(YTDLP_COOKIES_PATH).size;
+  } catch {
+    fileExists = false;
+  }
+
+  const ytDlpBinaryExists = fs.existsSync(YTDLP_BINARY_PATH);
+
+  const verdict =
+    !envSet
+      ? "MISSING_ENV — set YOUTUBE_COOKIES to base64 of cookies.txt"
+      : looksLikeRawCookies
+        ? "RAW_NOT_BASE64 — value looks like raw cookies.txt; encode with `base64 -i cookies.txt`"
+        : !decodeOk
+          ? "DECODE_BAD — base64 decoded but result is not a valid cookies file"
+          : !wroteFile
+            ? "WRITE_FAILED — could not write /tmp/youtube-cookies.txt"
+            : cookieCount === 0
+              ? "EMPTY_AFTER_DECODE — file written but no cookie rows parsed"
+              : "OK";
+
+  return c.json({
+    verdict,
+    envVarUsed,
+    env: {
+      set: envSet,
+      length: envLength,
+      first40: envFirst40,
+      looksLikeRawCookies,
+    },
+    decode: {
+      ok: decodeOk,
+      preview: decodedPreview,
+      error: decodeError,
+      lineCount: decodedLineCount,
+      cookieRowCount: cookieCount,
+    },
+    file: {
+      path: YTDLP_COOKIES_PATH,
+      exists: fileExists,
+      bytes: fileBytes,
+      ensureWroteOk: wroteFile,
+    },
+    ytDlp: {
+      binaryPath: YTDLP_BINARY_PATH,
+      binaryExists: ytDlpBinaryExists,
+    },
+  });
+});
+
 youtubeRouter.get("/quota", (c) => {
   const stats = getQuotaStats();
   const cacheSize = getSearchCacheSize();
