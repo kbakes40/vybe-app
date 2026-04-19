@@ -147,6 +147,35 @@ function getCachedUrl(videoId: string): string | null {
   return null;
 }
 
+// /search response cache — dedupes identical query strings so one render
+// burst doesn't hammer yt-dlp / burn Data API quota on repeat queries.
+// In-memory only; evicted FIFO when over SEARCH_CACHE_MAX entries.
+const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
+const SEARCH_CACHE_MAX = 500;
+const searchCache = new Map<string, { data: unknown; expires: number }>();
+
+function searchCacheKey(q: string, maxResults: number): string {
+  return `${q.toLowerCase()}|${maxResults}`;
+}
+
+function getCachedSearchResponse(key: string): unknown | null {
+  const entry = searchCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expires) {
+    searchCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCachedSearchResponse(key: string, data: unknown): void {
+  if (searchCache.size >= SEARCH_CACHE_MAX) {
+    const firstKey = searchCache.keys().next().value;
+    if (firstKey) searchCache.delete(firstKey);
+  }
+  searchCache.set(key, { data, expires: Date.now() + SEARCH_CACHE_TTL_MS });
+}
+
 function setCachedUrl(videoId: string, url: string): void {
   urlCache.set(videoId, { url, expires: Date.now() + URL_TTL_MS });
 }
@@ -751,17 +780,28 @@ youtubeRouter.get("/warm/:videoId", async (c) => {
 youtubeRouter.get("/search", async (c) => {
   const q = c.req.query("q")?.trim();
   const maxResults = Math.min(parseInt(c.req.query("maxResults") ?? "10", 10), 20);
+  const fresh = c.req.query("fresh") === "1";
   if (!q) return c.json({ error: "Missing q parameter" }, 400);
+
+  const cacheKey = searchCacheKey(q, maxResults);
+  if (!fresh) {
+    const cached = getCachedSearchResponse(cacheKey);
+    if (cached !== null) return c.json({ data: cached });
+  }
 
   try {
     const ytdlpResults = await searchYouTubeYtDlp(q, maxResults);
-    if (ytdlpResults.length > 0) return c.json({ data: ytdlpResults });
+    if (ytdlpResults.length > 0) {
+      setCachedSearchResponse(cacheKey, ytdlpResults);
+      return c.json({ data: ytdlpResults });
+    }
   } catch (e) {
     console.error("[YouTube] yt-dlp search failed:", e);
   }
 
   try {
     const apiResults = await searchYouTube(q, maxResults);
+    if (apiResults.length > 0) setCachedSearchResponse(cacheKey, apiResults);
     return c.json({ data: apiResults });
   } catch {
     return c.json({ data: [] });
