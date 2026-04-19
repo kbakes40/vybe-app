@@ -1,3 +1,7 @@
+// Schema source of truth for Railway: there is no prisma/migrations/ tree in
+// this repo — apply changes with `bunx prisma db push` (or your host’s
+// equivalent) so production matches this file.
+
 generator client {
   provider = "prisma-client-js"
 }

@@ -491,6 +491,30 @@ function extractSuggestedTags(title: string, artist: string, description: string
 
 const soundcloudRouter = new Hono();
 
+/** Empty playlist-tracks envelope — matches mobile + route-shield stableFallback. */
+const EMPTY_PLAYLIST_TRACKS = {
+  tracks: [],
+  playlistTitle: "",
+  thumbnailUrl: "",
+  canonicalUrl: "",
+  playlistId: "",
+};
+
+soundcloudRouter.onError((err, c) => {
+  console.error("[SoundCloud] unhandled route error:", err);
+  const p = c.req.path;
+  if (p.includes("playlist-tracks")) {
+    return c.json({ data: EMPTY_PLAYLIST_TRACKS }, 200);
+  }
+  if (p.includes("stream-url")) {
+    return c.json({ data: { url: "" } }, 200);
+  }
+  if (p.includes("import-playlist")) {
+    return c.json({ data: { tracks: [], isPlaylist: false, playlistTitle: "" } }, 200);
+  }
+  return c.json({ data: [] }, 200);
+});
+
 /**
  * Check if track description indicates downloads are enabled
  * Since oEmbed API doesn't expose download info directly, we check for keywords
@@ -1311,7 +1335,7 @@ soundcloudRouter.get("/search", async (c) => {
     return c.json({ data: tracks });
   } catch (e) {
     console.error("[SoundCloud] search error:", e);
-    return c.json({ error: { message: "Search failed", code: "SEARCH_FAILED" } }, 502);
+    return c.json({ data: [] }, 200);
   }
 });
 
@@ -1434,7 +1458,7 @@ soundcloudRouter.get("/stream-url", async (c) => {
   } catch (e) {
     const msg = e instanceof Error ? e.message : "resolve failed";
     console.error("[SoundCloud] stream-url:", msg);
-    return c.json({ error: { message: msg, code: "RESOLVE_FAILED" } }, 502);
+    return c.json({ data: { url: "" } }, 200);
   }
 });
 
@@ -1616,20 +1640,25 @@ soundcloudRouter.get("/download", async (c) => {
  * Curated SoundCloud sets (primary discovery playlists — replaces YouTube catalog in mobile).
  */
 soundcloudRouter.get("/playlists", async (c) => {
-  if (
-    soundcloudCuratedPlaylistsCache &&
-    Date.now() < soundcloudCuratedPlaylistsCache.expiresAt
-  ) {
+  try {
+    if (
+      soundcloudCuratedPlaylistsCache &&
+      Date.now() < soundcloudCuratedPlaylistsCache.expiresAt
+    ) {
+      c.header("Cache-Control", "public, max-age=900");
+      return c.json({ data: soundcloudCuratedPlaylistsCache.results });
+    }
+    const results = await buildSoundcloudCuratedPlaylists();
+    soundcloudCuratedPlaylistsCache = {
+      results,
+      expiresAt: Date.now() + SOUNDcloud_CURATED_PLAYLISTS_TTL_MS,
+    };
     c.header("Cache-Control", "public, max-age=900");
-    return c.json({ data: soundcloudCuratedPlaylistsCache.results });
+    return c.json({ data: results });
+  } catch (e) {
+    console.error("[SoundCloud] /playlists:", e);
+    return c.json({ data: [] }, 200);
   }
-  const results = await buildSoundcloudCuratedPlaylists();
-  soundcloudCuratedPlaylistsCache = {
-    results,
-    expiresAt: Date.now() + SOUNDcloud_CURATED_PLAYLISTS_TTL_MS,
-  };
-  c.header("Cache-Control", "public, max-age=900");
-  return c.json({ data: results });
 });
 
 /**
@@ -1658,7 +1687,7 @@ soundcloudRouter.get("/playlist-tracks", async (c) => {
     });
   } catch (error) {
     console.error("[SoundCloud] playlist-tracks:", error);
-    return c.json({ error: { message: "Failed to fetch playlist", code: "FETCH_FAILED" } }, 500);
+    return c.json({ data: EMPTY_PLAYLIST_TRACKS }, 200);
   }
 });
 
@@ -1700,7 +1729,7 @@ soundcloudRouter.post("/import-playlist", async (c) => {
     return c.json({ data: { tracks, isPlaylist: isPlaylist || tracks.length > 1, playlistTitle } });
   } catch (error) {
     console.error("[SoundCloud] import-playlist error:", error);
-    return c.json({ error: { message: "Failed to fetch playlist", code: "FETCH_FAILED" } }, 500);
+    return c.json({ data: { tracks: [], isPlaylist: false, playlistTitle: "" } }, 200);
   }
 });
 

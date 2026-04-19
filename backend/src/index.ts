@@ -31,6 +31,7 @@ import { Hono } from "hono";
 // !== 'undefined'` and import from `node:stream/web` as a fallback.
 import { cors } from "hono/cors";
 import "./env";
+import { prisma } from "./prisma";
 import { ensureYoutubeCookiesFile } from "./lib/youtubeCookies";
 
 ensureYoutubeCookiesFile();
@@ -225,11 +226,23 @@ app.route("/api/vault", vaultRouter);
 
 // Build marker — bumped to force Railway to pick up new commits.
 // If you see this in Railway logs, the new code IS deployed.
-const BUILD_MARKER = "vybe-backend@2026-04-19T20:45:00Z [route-shield now also rewrites handler-returned 5xx to cached/empty (sc/discovery)]";
+const BUILD_MARKER =
+  "vybe-backend@2026-04-20 [SC/discovery: onError + 200 empty JSON on upstream failures; startup DB ping]";
 console.log("[boot]", BUILD_MARKER);
 app.get("/api/_build", (c) => c.json({ marker: BUILD_MARKER }));
 
 const port = Number(process.env.PORT) || 3000;
+
+void (async () => {
+  let dbStatus = "disconnected";
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    dbStatus = "connected";
+  } catch (e) {
+    console.error("[SYSTEM] Database connectivity check failed:", e);
+  }
+  console.log(`[SYSTEM] Backend ignited on port ${port}. Database connected: ${dbStatus}`);
+})();
 
 // NOTE: Cache prewarm intentionally disabled. Firing 40 searches against
 // YouTube/SoundCloud at startup triggered YouTube's rate limiter on the
