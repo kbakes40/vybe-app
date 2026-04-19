@@ -10,6 +10,8 @@ export interface SocialPost {
   trackTitle?: string;
   trackArtist?: string;
   trackArtwork?: string;
+  /** Optional image/video URI from device (echoed by server for this session). */
+  mediaUrl?: string;
   fireCount: number;
   createdAt: string;
 }
@@ -20,6 +22,7 @@ export interface CreateSocialPostInput {
   trackTitle?: string;
   trackArtist?: string;
   trackArtwork?: string;
+  mediaUrl?: string;
 }
 
 /** GET /api/social/feed — auth-protected. Throws on 401. */

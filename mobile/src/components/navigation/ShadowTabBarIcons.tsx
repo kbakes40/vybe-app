@@ -1,7 +1,17 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, Platform, StyleSheet } from 'react-native';
 import Svg, { Path, Circle, Line } from 'react-native-svg';
 import { Radar } from 'lucide-react-native';
+import Animated, {
+  Easing,
+  cancelAnimation,
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
 
 /** Shadow tab chrome — shared across tab bar icons. */
 export const SHADOW_TAB_STROKE = 1.5;
@@ -10,40 +20,158 @@ export const SHADOW_TAB_ACTIVE = '#00E5FF';
 /** Deep graphite — inactive silhouettes. */
 export const SHADOW_TAB_INACTIVE = '#444444';
 
-const GLOW = SHADOW_TAB_ACTIVE;
+const MACHINED_BLUE = SHADOW_TAB_ACTIVE;
+const MAGENTA_HEARTBEAT = '#FF00FF';
 
-type IconBase = { size: number; color: string };
+/** Base iOS shadow radius; doubles briefly on focus (bloom). */
+const SHADOW_R_DEFAULT = 6;
+const SHADOW_R_VYBE = 9;
+const GLOW_OPACITY_MAX = 0.44;
+/** Inactive tab: glow at 60% of design max. */
+const GLOW_INACTIVE_MULT = 0.6;
+/** Central Vybe tab — extra dim when inactive. */
+const VYBE_INACTIVE_DIM = 0.52;
+
+const BLOOM_IN_MS = 150;
+const BLOOM_OUT_MS = 150;
+
+type TabIconVariant = 'default' | 'vybe';
 
 /**
- * Active: magenta / purple glow + slight scale-up (per Shadow tab spec).
+ * Tab icon shell — permanent Machined Blue 1px ring + outer glow (inactive 0.6 / active 1.0),
+ * Reanimated bloom on focus, magenta heartbeat dot under active tab.
+ * `variant="vybe"`: stronger ring + base glow; active uses slow breathing (0.8–1.0).
  */
 export function ShadowTabIconShell({
   focused,
+  variant = 'default',
   children,
 }: {
   focused: boolean;
+  /** Central Vybe (discover) — stronger ring + breathing glow when active. */
+  variant?: TabIconVariant;
   children: React.ReactNode;
 }) {
+  const isVybe = variant === 'vybe';
+  const baseRadius = isVybe ? SHADOW_R_VYBE : SHADOW_R_DEFAULT;
+
+  const focusedSv = useSharedValue(focused ? 1 : 0);
+  const variantVybeSv = useSharedValue(isVybe ? 1 : 0);
+  const bloomScale = useSharedValue(1);
+  const bloomShadowR = useSharedValue(baseRadius);
+  const breath = useSharedValue(1);
+  const dotPulse = useSharedValue(1);
+
+  useEffect(() => {
+    focusedSv.value = focused ? 1 : 0;
+  }, [focused, focusedSv]);
+
+  useEffect(() => {
+    variantVybeSv.value = isVybe ? 1 : 0;
+  }, [isVybe, variantVybeSv]);
+
+  useEffect(() => {
+    if (focused) {
+      bloomScale.value = withSequence(
+        withTiming(1.2, { duration: BLOOM_IN_MS }),
+        withTiming(1, { duration: BLOOM_OUT_MS }),
+      );
+      bloomShadowR.value = withSequence(
+        withTiming(baseRadius * 2, { duration: BLOOM_IN_MS }),
+        withTiming(baseRadius, { duration: BLOOM_OUT_MS }),
+      );
+    } else {
+      cancelAnimation(bloomScale);
+      cancelAnimation(bloomShadowR);
+      bloomScale.value = withTiming(1, { duration: 120 });
+      bloomShadowR.value = withTiming(baseRadius, { duration: 120 });
+    }
+  }, [focused, baseRadius, bloomScale, bloomShadowR]);
+
+  useEffect(() => {
+    if (focused && isVybe) {
+      breath.value = withRepeat(
+        withSequence(
+          withTiming(0.8, { duration: 2200, easing: Easing.inOut(Easing.sin) }),
+          withTiming(1.0, { duration: 2200, easing: Easing.inOut(Easing.sin) }),
+        ),
+        -1,
+        true,
+      );
+    } else {
+      cancelAnimation(breath);
+      breath.value = 1;
+    }
+  }, [focused, isVybe, breath]);
+
+  useEffect(() => {
+    if (focused) {
+      dotPulse.value = withRepeat(
+        withSequence(
+          withTiming(1.18, { duration: 380, easing: Easing.inOut(Easing.quad) }),
+          withTiming(1, { duration: 380, easing: Easing.inOut(Easing.quad) }),
+        ),
+        -1,
+        true,
+      );
+    } else {
+      cancelAnimation(dotPulse);
+      dotPulse.value = 1;
+    }
+  }, [focused, dotPulse]);
+
+  const shellAnimatedStyle = useAnimatedStyle(() => {
+    const f = focusedSv.value;
+    const vy = variantVybeSv.value;
+    const inactiveBase = GLOW_OPACITY_MAX * GLOW_INACTIVE_MULT;
+    const inactiveGlow = inactiveBase * (vy > 0.5 ? VYBE_INACTIVE_DIM : 1);
+    const activeGlowDefault = GLOW_OPACITY_MAX;
+    const activeGlowVybe = GLOW_OPACITY_MAX * breath.value;
+    const activeGlow = vy > 0.5 ? activeGlowVybe : activeGlowDefault;
+    const shadowOpacity = inactiveGlow + (activeGlow - inactiveGlow) * f;
+
+    return {
+      transform: [{ scale: bloomScale.value }],
+      shadowColor: MACHINED_BLUE,
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity,
+      shadowRadius: bloomShadowR.value,
+      elevation: Platform.OS === 'android' ? Math.min(14, bloomShadowR.value * 0.85) : 0,
+    };
+  });
+
+  const dotAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: dotPulse.value }],
+    opacity: interpolate(dotPulse.value, [1, 1.18], [0.88, 1]),
+  }));
+
   return (
-    <View
-      style={[
-        styles.shell,
-        focused && {
-          transform: [{ scale: 1.02 }],
-          shadowColor: GLOW,
-          shadowOffset: { width: 0, height: 0 },
-          shadowOpacity: Platform.OS === 'ios' ? 0.45 : 0.35,
-          shadowRadius: 4,
-          elevation: Platform.OS === 'android' ? 4 : 0,
-        },
-      ]}
-    >
-      {children}
+    <View style={styles.wrapCol} pointerEvents="box-none">
+      <Animated.View
+        style={[styles.shell, isVybe && styles.shellVybe, shellAnimatedStyle]}
+        renderToHardwareTextureAndroid
+        collapsable={false}
+      >
+        {children}
+      </Animated.View>
+      {focused ? (
+        <Animated.View
+          style={[styles.heartbeatDot, dotAnimatedStyle]}
+          pointerEvents="none"
+          renderToHardwareTextureAndroid
+          collapsable={false}
+        />
+      ) : null}
     </View>
   );
 }
 
+/** Alias — same component as {@link ShadowTabIconShell}. */
+export const TabIcon = ShadowTabIconShell;
+
 /** Minimal vault arch — thin continuous silhouette. */
+type IconBase = { size: number; color: string };
+
 export function ShadowHomeIcon({ size, color }: IconBase) {
   const s = size;
   return (
@@ -152,8 +280,35 @@ export function ShadowSparkleIcon({ size, color }: IconBase) {
 }
 
 const styles = StyleSheet.create({
+  wrapCol: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   shell: {
     alignItems: 'center',
     justifyContent: 'center',
+    padding: 3,
+    borderWidth: 1,
+    borderColor: MACHINED_BLUE,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.001)',
+  },
+  /** Central Vybe — strongest 2px ring (always) so blue chrome reads as “hero”. */
+  shellVybe: {
+    borderWidth: 2,
+    borderRadius: 10,
+    padding: 2,
+  },
+  heartbeatDot: {
+    marginTop: 5,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: MAGENTA_HEARTBEAT,
+    shadowColor: MAGENTA_HEARTBEAT,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.75,
+    shadowRadius: 3,
+    elevation: 4,
   },
 });

@@ -9,13 +9,22 @@ import {
   UIManager,
   StyleSheet,
   ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus } from 'lucide-react-native';
+import Animated, {
+  cancelAnimation,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
+import { Check, Plus } from 'lucide-react-native';
 import {
   useSocialActivityStore,
 } from '@/stores/socialActivityStore';
@@ -23,11 +32,15 @@ import { attachActivityRemoteListener } from '@/lib/socialActivityRemote';
 import { VybeStoryRing } from '@/components/social/VybeStoryRing';
 import { ActivePost } from '@/components/social/ActivePost';
 import { PostComposer } from '@/components/social/PostComposer';
+import { FeedPostRow } from '@/components/social/FeedPostRow';
 import type { PlaylistShareItem, SocialInteractionItem } from '@/types/socialActivity';
 import { MachinedGradientText } from '@/components/MachinedGradientText';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
 import { getSocialFeed, type SocialPost } from '@/lib/api/social';
 import { VIBRANT_BLUE } from '@/constants/machinedTheme';
+
+/** Set true to show Active Posts above the compose row again. */
+const SHOW_ACTIVE_POSTS_SECTION = false;
 
 function SectionHeader({
   title,
@@ -75,6 +88,45 @@ function PlaylistShareRow({ item, onJoin }: { item: PlaylistShareItem; onJoin: (
   );
 }
 
+const FEED_SUCCESS_SPRING = { mass: 1, damping: 18, stiffness: 200 } as const;
+
+function FeedPostSuccessPulse({ tick, bottom }: { tick: number; bottom: number }) {
+  const scale = useSharedValue(0);
+  const opacity = useSharedValue(0);
+
+  useEffect(() => {
+    if (!tick) return;
+    cancelAnimation(scale);
+    cancelAnimation(opacity);
+    scale.value = 0.55;
+    opacity.value = 0;
+    opacity.value = withSequence(
+      withTiming(1, { duration: 140 }),
+      withTiming(1, { duration: 1200 }),
+      withTiming(0, { duration: 300 }),
+    );
+    scale.value = withSequence(
+      withSpring(1, FEED_SUCCESS_SPRING),
+      withRepeat(withSequence(withTiming(1.1, { duration: 260 }), withTiming(1, { duration: 260 })), 5, true),
+      withTiming(0.75, { duration: 180 }),
+    );
+  }, [tick, scale, opacity]);
+
+  const bubbleStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    opacity: opacity.value,
+  }));
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[styles.feedSuccessBubble, { bottom }, bubbleStyle]}
+    >
+      <Check size={26} strokeWidth={3} color={VIBRANT_BLUE} />
+    </Animated.View>
+  );
+}
+
 function SocialInteractionRow({ item }: { item: SocialInteractionItem }) {
   return (
     <View style={styles.interactionRow}>
@@ -88,67 +140,6 @@ function SocialInteractionRow({ item }: { item: SocialInteractionItem }) {
   );
 }
 
-function FeedPostRow({ post }: { post: SocialPost }) {
-  const time = relativeTime(post.createdAt);
-  return (
-    <View style={styles.feedRow}>
-      <View style={styles.feedHeader}>
-        {post.avatar ? (
-          <Image source={{ uri: post.avatar }} style={styles.feedAvatar} contentFit="cover" />
-        ) : (
-          <View style={[styles.feedAvatar, styles.feedAvatarFallback]}>
-            <Text style={styles.feedAvatarLetter}>{post.username.slice(0, 1).toUpperCase()}</Text>
-          </View>
-        )}
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.feedUsername} numberOfLines={1}>
-            @{post.username}
-          </Text>
-          <Text style={styles.feedTime}>{time}</Text>
-        </View>
-        <Text style={styles.feedFire}>{formatCount(post.fireCount)} fire</Text>
-      </View>
-
-      <Text style={styles.feedText}>{post.text}</Text>
-
-      {post.trackId ? (
-        <View style={styles.feedTrackChip}>
-          {post.trackArtwork ? (
-            <Image source={{ uri: post.trackArtwork }} style={styles.feedTrackArt} contentFit="cover" />
-          ) : (
-            <View style={[styles.feedTrackArt, styles.feedTrackArtFallback]} />
-          )}
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={styles.feedTrackTitle} numberOfLines={1}>
-              {post.trackTitle ?? 'Track'}
-            </Text>
-            <Text style={styles.feedTrackArtist} numberOfLines={1}>
-              {post.trackArtist ?? ''}
-            </Text>
-          </View>
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-function relativeTime(iso: string): string {
-  const t = new Date(iso).getTime();
-  if (!Number.isFinite(t)) return '';
-  const diff = Math.max(0, Date.now() - t);
-  const m = Math.floor(diff / 60_000);
-  if (m < 1) return 'now';
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
-}
-
-function formatCount(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`;
-  return String(n);
-}
-
 export default function SocialScreen() {
   const insets = useSafeAreaInsets();
   const stories = useSocialActivityStore((s) => s.stories);
@@ -160,6 +151,7 @@ export default function SocialScreen() {
 
   const prevPostLen = useRef(activePosts.length);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [feedSuccessTick, setFeedSuccessTick] = useState(0);
   const queryClient = useQueryClient();
 
   // Auth-protected feed query — `api` helper auto-attaches the SecureStore
@@ -204,6 +196,16 @@ export default function SocialScreen() {
         old ? [post, ...old] : [post],
       );
       void queryClient.invalidateQueries({ queryKey: ['social', 'feed'] });
+      setFeedSuccessTick(Date.now());
+    },
+    [queryClient],
+  );
+
+  const handleFeedFireTap = useCallback(
+    (postId: string) => {
+      queryClient.setQueryData<SocialPost[]>(['social', 'feed'], (old) =>
+        old?.map((p) => (p.id === postId ? { ...p, fireCount: p.fireCount + 1 } : p)) ?? old,
+      );
     },
     [queryClient],
   );
@@ -213,16 +215,44 @@ export default function SocialScreen() {
     feedQuery.error instanceof Error &&
     /401|UNAUTHORIZED/i.test(feedQuery.error.message);
 
+  /** Clear tab bar + mini player + home indicator (same math as feed scroll padding). */
+  const fabBottom = tabScreenContentContainerPaddingBottom(insets.bottom) + 12;
+
   return (
     <View style={styles.screen}>
       <View style={[styles.topBar, { paddingTop: insets.top + 24 }]}>
-        <Text style={styles.screenTitle}>Vybe Activity</Text>
+        <View style={styles.topBarRow}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.screenTitle}>Vybe Activity</Text>
+            <Text style={styles.screenHint}>
+              Sparkle tab in the dock · POST or + opens a bottom sheet over the feed to compose.
+            </Text>
+          </View>
+          <Pressable
+            onPress={handleOpenComposer}
+            style={({ pressed }) => [styles.topPostBtn, pressed && { opacity: 0.88 }]}
+            accessibilityRole="button"
+            accessibilityLabel="New post"
+            hitSlop={6}
+          >
+            <Text style={styles.topPostBtnText}>POST</Text>
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView
         contentContainerStyle={{ paddingBottom: tabScreenContentContainerPaddingBottom(insets.bottom) }}
         showsVerticalScrollIndicator={false}
         automaticallyAdjustContentInsets={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={feedQuery.isRefetching}
+            onRefresh={() => void feedQuery.refetch()}
+            tintColor={VIBRANT_BLUE}
+            colors={[VIBRANT_BLUE]}
+            progressBackgroundColor="#111111"
+          />
+        }
       >
         <SectionHeader title="Vybe Alerts" subtitle="New & Noteworthy" />
         <ScrollView
@@ -240,6 +270,41 @@ export default function SocialScreen() {
         </ScrollView>
 
         <View style={styles.divider} />
+
+        {SHOW_ACTIVE_POSTS_SECTION ? (
+          <>
+            <SectionHeader title="Active Posts" subtitle="Live from your network" titleVariant="machined" />
+            {activePosts.map((post) => (
+              <ActivePost
+                key={post.id}
+                post={post}
+                onToggleHeart={togglePostHeart}
+                onBumpReaction={bumpReaction}
+              />
+            ))}
+            <View style={styles.divider} />
+          </>
+        ) : null}
+
+        <Pressable
+          onPress={handleOpenComposer}
+          style={({ pressed }) => [
+            styles.mindPrompt,
+            SHOW_ACTIVE_POSTS_SECTION && styles.mindPromptAfterActive,
+            pressed && { opacity: 0.88 },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Start a post"
+        >
+          <Text style={styles.mindPromptText}>What&apos;s on your mind?</Text>
+          <Text style={styles.mindPromptSub}>Tap to write — attach vault tracks & visuals</Text>
+        </Pressable>
+        <Pressable
+          onPress={handleOpenComposer}
+          style={({ pressed }) => [styles.newPostCta, styles.newPostCtaTight, pressed && { opacity: 0.9 }]}
+        >
+          <Text style={styles.newPostCtaText}>＋ NEW POST</Text>
+        </Pressable>
 
         <SectionHeader
           title="Feed"
@@ -266,20 +331,10 @@ export default function SocialScreen() {
             </Pressable>
           </View>
         ) : (
-          (feedQuery.data ?? []).map((post) => <FeedPostRow key={post.id} post={post} />)
+          (feedQuery.data ?? []).map((post) => (
+            <FeedPostRow key={post.id} post={post} onFireTap={handleFeedFireTap} />
+          ))
         )}
-
-        <View style={styles.divider} />
-
-        <SectionHeader title="Active Posts" subtitle="Live from your network" titleVariant="machined" />
-        {activePosts.map((post) => (
-          <ActivePost
-            key={post.id}
-            post={post}
-            onToggleHeart={togglePostHeart}
-            onBumpReaction={bumpReaction}
-          />
-        ))}
 
         <View style={styles.divider} />
 
@@ -307,7 +362,11 @@ export default function SocialScreen() {
         onPress={handleOpenComposer}
         style={({ pressed }) => [
           styles.fab,
-          { bottom: insets.bottom + 110 },
+          {
+            bottom: fabBottom,
+            zIndex: 5000,
+            elevation: 5000,
+          },
           pressed && { transform: [{ scale: 0.96 }] },
         ]}
       >
@@ -319,6 +378,9 @@ export default function SocialScreen() {
         onClose={() => setComposerOpen(false)}
         onPosted={handlePosted}
       />
+
+      {/* Above feed scroll + FAB so the checkmark is actually visible after post */}
+      <FeedPostSuccessPulse tick={feedSuccessTick} bottom={fabBottom + 72} />
     </View>
   );
 }
@@ -328,15 +390,66 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000000',
   },
+  feedSuccessBubble: {
+    position: 'absolute',
+    alignSelf: 'center',
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: 'rgba(0,229,255,0.1)',
+    borderWidth: 1,
+    borderColor: VIBRANT_BLUE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 30000,
+    elevation: 30000,
+    shadowColor: VIBRANT_BLUE,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.55,
+    shadowRadius: 14,
+  },
   topBar: {
     paddingHorizontal: 24,
     paddingBottom: 12,
+  },
+  topBarRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
   },
   screenTitle: {
     color: '#fff',
     fontSize: 24,
     fontWeight: '800',
     letterSpacing: -0.4,
+  },
+  screenHint: {
+    marginTop: 6,
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  topPostBtn: {
+    marginTop: 2,
+    marginLeft: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,229,255,0.12)',
+    borderWidth: 1,
+    borderColor: VIBRANT_BLUE,
+    shadowColor: VIBRANT_BLUE,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.45,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  topPostBtnText: {
+    color: VIBRANT_BLUE,
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 1.2,
   },
   sectionHeader: {
     paddingHorizontal: 20,
@@ -437,96 +550,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  feedRow: {
-    marginHorizontal: 20,
-    marginBottom: 12,
-    padding: 14,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.18)',
-  },
-  feedHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  feedAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#111',
-    marginRight: 10,
-  },
-  feedAvatarFallback: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,229,255,0.18)',
-  },
-  feedAvatarLetter: {
-    color: VIBRANT_BLUE,
-    fontSize: 14,
-    fontWeight: '900',
-  },
-  feedUsername: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '800',
-    letterSpacing: -0.2,
-  },
-  feedTime: {
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: 11,
-    fontWeight: '600',
-    marginTop: 1,
-  },
-  feedFire: {
-    color: '#FF7A45',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.3,
-  },
-  feedText: {
-    color: 'rgba(255,255,255,0.92)',
-    fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '500',
-  },
-  feedTrackChip: {
-    marginTop: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingLeft: 8,
-    paddingRight: 12,
-    borderRadius: 10,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(0,229,255,0.35)',
-  },
-  feedTrackArt: {
-    width: 32,
-    height: 32,
-    borderRadius: 5,
-    backgroundColor: '#111',
-    marginRight: 10,
-  },
-  feedTrackArtFallback: {
-    backgroundColor: 'rgba(0,229,255,0.12)',
-  },
-  feedTrackTitle: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  feedTrackArtist: {
-    color: VIBRANT_BLUE,
-    fontSize: 10,
-    fontWeight: '600',
-    letterSpacing: 0.3,
-    marginTop: 1,
-    textTransform: 'uppercase',
-  },
   feedLoading: {
     paddingVertical: 32,
     alignItems: 'center',
@@ -572,7 +595,7 @@ const styles = StyleSheet.create({
   },
   fab: {
     position: 'absolute',
-    right: 22,
+    right: 20,
     width: 56,
     height: 56,
     borderRadius: 28,
@@ -580,11 +603,65 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#000000',
     borderWidth: 1,
+    borderColor: 'rgba(0,229,255,0.85)',
+    shadowColor: VIBRANT_BLUE,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+  },
+  mindPromptAfterActive: {
+    marginTop: 4,
+  },
+  mindPrompt: {
+    marginHorizontal: 20,
+    marginBottom: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderWidth: 1,
+    borderColor: 'rgba(0,229,255,0.22)',
+    shadowColor: VIBRANT_BLUE,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  mindPromptText: {
+    color: 'rgba(255,255,255,0.82)',
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+  },
+  mindPromptSub: {
+    marginTop: 6,
+    color: 'rgba(107,110,115,0.95)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  newPostCtaTight: {
+    marginTop: 0,
+    marginBottom: 10,
+  },
+  newPostCta: {
+    marginHorizontal: 20,
+    marginBottom: 14,
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,229,255,0.1)',
+    borderWidth: 1,
     borderColor: VIBRANT_BLUE,
     shadowColor: VIBRANT_BLUE,
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.95,
-    shadowRadius: 18,
-    elevation: 12,
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  newPostCtaText: {
+    color: VIBRANT_BLUE,
+    fontSize: 14,
+    fontWeight: '900',
+    letterSpacing: 2,
   },
 });

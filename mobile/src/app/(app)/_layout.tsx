@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { View, StyleSheet, AppState, Linking, Text, Pressable } from 'react-native';
+import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -260,6 +261,7 @@ export default function AppLayout() {
     : Math.max(insets.bottom, 0);
 
   return (
+    <BottomSheetModalProvider>
     <View style={styles.container}>
       <Stack
         screenOptions={{
@@ -476,7 +478,7 @@ export default function AppLayout() {
 
 
       {/* Clipboard music link banner */}
-      {clipboardUrl && (
+      {clipboardUrl ? (
         <Animated.View
           style={[
             bannerStyle,
@@ -549,8 +551,9 @@ export default function AppLayout() {
             <X size={16} color="rgba(255,255,255,0.4)" />
           </Pressable>
         </Animated.View>
-      )}
+      ) : null}
     </View>
+    </BottomSheetModalProvider>
   );
 }
 

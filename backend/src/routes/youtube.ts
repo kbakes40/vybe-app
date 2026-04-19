@@ -98,10 +98,15 @@ function noCookieYtdlpArgs(): string[] {
   }
 })();
 
-// Cache resolved CDN URLs so repeated range requests don't re-run yt-dlp
-// YouTube CDN URLs expire after ~6 hours, so cache for 4 hours to be safe
+// Cache resolved CDN URLs so repeated range requests don't re-run yt-dlp.
+// IMPORTANT: YouTube CDN URLs carry a per-IP+per-client signature in the
+// query string (`expire=…`, `pot=…`). Even though the `expire` claims ~6h,
+// in practice these tokens stop being honored within ~30-90 minutes for
+// no-PO-token clients, after which the CDN returns 403. So we cache only
+// 30 minutes — long enough to keep range requests cheap, short enough that
+// a stale URL doesn't block playback.
 const urlCache = new Map<string, { url: string; expires: number }>();
-const URL_TTL_MS = 4 * 60 * 60 * 1000;
+const URL_TTL_MS = 30 * 60 * 1000;
 
 function getCachedUrl(videoId: string): string | null {
   const entry = urlCache.get(videoId);
@@ -112,6 +117,10 @@ function getCachedUrl(videoId: string): string | null {
 
 function setCachedUrl(videoId: string, url: string): void {
   urlCache.set(videoId, { url, expires: Date.now() + URL_TTL_MS });
+}
+
+function invalidateCachedUrl(videoId: string): void {
+  urlCache.delete(videoId);
 }
 
 /** Match download route — YouTube blocks datacenter IPs on some clients only.
@@ -601,6 +610,11 @@ youtubeRouter.get("/resolve/:videoId", async (c) => {
   const videoId = c.req.param("videoId");
   if (!videoId || !VIDEO_ID_RE.test(videoId)) {
     return c.json({ error: "Invalid video ID" }, 400);
+  }
+  // ?fresh=1 busts the cache — used by mobile when a previously-cached
+  // CDN URL just 403'd (signature/PO token expired client-side).
+  if (c.req.query("fresh") === "1") {
+    invalidateCachedUrl(videoId);
   }
   try {
     const url = await getAudioUrl(videoId);

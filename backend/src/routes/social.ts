@@ -23,6 +23,7 @@ interface SocialPost {
   trackTitle?: string;
   trackArtist?: string;
   trackArtwork?: string;
+  mediaUrl?: string;
   fireCount: number;
   createdAt: string;
 }
@@ -165,7 +166,14 @@ socialRouter.post("/post", async (c) => {
     return c.json({ error: { code: "UNAUTHORIZED", message: "Sign in required" } }, 401);
   }
 
-  let body: { text?: unknown; trackId?: unknown; trackTitle?: unknown; trackArtist?: unknown; trackArtwork?: unknown } = {};
+  let body: {
+    text?: unknown;
+    trackId?: unknown;
+    trackTitle?: unknown;
+    trackArtist?: unknown;
+    trackArtwork?: unknown;
+    mediaUrl?: unknown;
+  } = {};
   try {
     body = await c.req.json();
   } catch {
@@ -180,6 +188,10 @@ socialRouter.post("/post", async (c) => {
     );
   }
 
+  const rawMedia =
+    typeof body.mediaUrl === "string" ? body.mediaUrl.trim().slice(0, 2048) : "";
+  const mediaUrl = rawMedia.length > 0 ? rawMedia : undefined;
+
   const post: SocialPost = {
     id: `post_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     userId: user.id ?? "u_self",
@@ -189,6 +201,7 @@ socialRouter.post("/post", async (c) => {
     trackTitle: typeof body.trackTitle === "string" ? body.trackTitle : undefined,
     trackArtist: typeof body.trackArtist === "string" ? body.trackArtist : undefined,
     trackArtwork: typeof body.trackArtwork === "string" ? body.trackArtwork : undefined,
+    mediaUrl,
     fireCount: 0,
     createdAt: new Date().toISOString(),
   };

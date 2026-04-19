@@ -83,7 +83,7 @@ export type YoutubeStreamResolution = {
 export async function resolveYoutubeStreamForVideoId(
   videoId: string,
   backendBaseNoSlash: string,
-  options?: { forceRefresh?: boolean },
+  options?: { forceRefresh?: boolean; skipDirect?: boolean },
 ): Promise<YoutubeStreamResolution> {
   const proxyUrl = `${backendBaseNoSlash}/api/youtube/audio/${videoId}`;
 
@@ -91,22 +91,21 @@ export async function resolveYoutubeStreamForVideoId(
     invalidateYoutubeResolveCache(videoId);
   }
 
+  // Retry path: a previously-returned CDN URL just 403'd in AVPlayer.
+  // Skip CDN entirely and go straight to the proxy — which re-resolves
+  // server-side with fresh tokens and streams bytes directly. Saves ~5s.
+  if (options?.skipDirect) {
+    return { playUri: proxyUrl, fromCdn: false };
+  }
+
   const tryDirect = async (): Promise<string | null> => {
     void resolveYoutubeUrlForPlayback(videoId);
     return resolveYoutubeUrlForPlaybackWithBudget(videoId, RESOLVE_BUDGET_MS);
   };
 
-  let direct = await tryDirect();
+  const direct = await tryDirect();
   if (direct) {
     return { playUri: direct, fromCdn: true };
-  }
-
-  if (!options?.forceRefresh) {
-    invalidateYoutubeResolveCache(videoId);
-    direct = await tryDirect();
-    if (direct) {
-      return { playUri: direct, fromCdn: true };
-    }
   }
 
   if (!backendBaseNoSlash) {

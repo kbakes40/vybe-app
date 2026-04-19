@@ -1017,6 +1017,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
             useDynamicIslandSignal.getState().setRecoveryLabel('TOKEN_REFRESH');
             const again = await resolveYoutubeStreamForVideoId(ytVideoId, backendBase, {
               forceRefresh: true,
+              skipDirect: true,
             });
             playUri = again.playUri;
             fromCdn = again.fromCdn;

@@ -355,7 +355,7 @@ export default function TabLayout() {
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
               return (
-                <ShadowTabIconShell focused={focused}>
+                <ShadowTabIconShell focused={focused} variant="vybe">
                   <Image
                     source={VYBE_TAB_ICON}
                     style={{

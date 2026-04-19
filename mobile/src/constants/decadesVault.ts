@@ -35,6 +35,29 @@ export const DECADES_VAULT_CARDS: {
   },
 ];
 
+/** Curated picks for social “Attach from Decades Vault” search (YouTube ids + artwork). */
+export type DecadesVaultFeedTrackRef = {
+  trackId: string;
+  title: string;
+  artist: string;
+  artwork: string;
+};
+
+export const DECADES_VAULT_FEED_TRACKS: DecadesVaultFeedTrackRef[] = [
+  {
+    trackId: '2EwViQxSJJQ',
+    title: 'Heartless',
+    artist: 'Kanye West',
+    artwork: 'https://img.youtube.com/vi/2EwViQxSJJQ/hqdefault.jpg',
+  },
+  ...DECADES_VAULT_CARDS.map((c) => ({
+    trackId: c.seedVideoId,
+    title: c.name,
+    artist: c.subtitle,
+    artwork: `https://img.youtube.com/vi/${c.seedVideoId}/hqdefault.jpg`,
+  })),
+];
+
 export const DECADES_70S_PLAYLIST_ID = DECADES_VAULT_CARDS[0]!.playlistId;
 export const DECADES_90S_PLAYLIST_ID = DECADES_VAULT_CARDS[2]!.playlistId;
 
