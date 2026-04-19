@@ -1490,10 +1490,10 @@ soundcloudRouter.get("/audio", async (c) => {
 
   // Format selection based on quality param
   // low  → worstaudio (lowest bitrate, fastest server-side download ~48kbps)
-  // high → best available mp3/m4a (highest bitrate, best listening quality)
+  // high → prefer HLS/m4a AAC (up to 256kbps on Go+ tracks), fall back to MP3 (128kbps) for free tracks
   const formatArg = quality === "low"
     ? "worstaudio[ext=mp3]/worstaudio[ext=m4a]/worstaudio"
-    : "bestaudio[protocol=https][ext=mp3]/bestaudio[protocol=http][ext=mp3]/bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio";
+    : "bestaudio[protocol^=m3u8][abr>=128]/bestaudio[ext=m4a]/bestaudio[protocol=https][ext=mp3]/bestaudio[protocol=http][ext=mp3]/bestaudio[ext=mp3]/bestaudio";
 
   // Use a unique base path; let yt-dlp append the real extension via %(ext)s
   const tmpBase = `/tmp/sc_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -1589,7 +1589,7 @@ soundcloudRouter.get("/download", async (c) => {
     try {
       await ytDlp.execPromise([
         resolvedDownloadUrl,
-        "-f", "bestaudio[protocol=https][ext=mp3]/bestaudio[protocol=http][ext=mp3]/bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio",
+        "-f", "bestaudio[protocol^=m3u8][abr>=128]/bestaudio[ext=m4a]/bestaudio[protocol=https][ext=mp3]/bestaudio[protocol=http][ext=mp3]/bestaudio[ext=mp3]/bestaudio",
         "-o", `${safeBase}.%(ext)s`,
         "--no-playlist",
         "--quiet",
