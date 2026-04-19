@@ -21,7 +21,14 @@ addExcludedDomains([
 ]);
 
 import { Hono } from "hono";
-import { compress } from "hono/compress";
+// NOTE: `hono/compress` was removed because the Railway runtime here does
+// not expose `CompressionStream` as a global, which makes that middleware
+// throw `ReferenceError: CompressionStream is not defined` on EVERY request
+// (the route-shield masks the user-facing error but the CPU+log cost is
+// brutal). Railway's edge already gzips HTTPS responses, so dropping the
+// app-level compress is a net win until/unless we polyfill the Web Streams
+// API explicitly. If you re-add this, gate it behind `typeof CompressionStream
+// !== 'undefined'` and import from `node:stream/web` as a fallback.
 import { cors } from "hono/cors";
 import "./env";
 import { ensureYoutubeCookiesFile } from "./lib/youtubeCookies";
@@ -65,8 +72,6 @@ const allowed = [
   /** Expo dev / LAN — RN often omits Origin; when present it is `exp://…`. */
   /^exp:\/\/.+$/,
 ];
-
-app.use("*", compress({ encoding: "gzip", threshold: 512 }));
 
 app.use(
   "*",
@@ -220,7 +225,7 @@ app.route("/api/vault", vaultRouter);
 
 // Build marker — bumped to force Railway to pick up new commits.
 // If you see this in Railway logs, the new code IS deployed.
-const BUILD_MARKER = "vybe-backend@2026-04-19T18:30:00Z [route-shield: 3s deadline + lkg snapshot for sc/discovery]";
+const BUILD_MARKER = "vybe-backend@2026-04-19T20:15:00Z [route-shield + compress middleware removed (CompressionStream undefined on runtime)]";
 console.log("[boot]", BUILD_MARKER);
 app.get("/api/_build", (c) => c.json({ marker: BUILD_MARKER }));
 
