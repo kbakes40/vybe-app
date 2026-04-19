@@ -42,3 +42,11 @@ export const TAB_MAIN_SCROLL_PADDING_BOTTOM = BOTTOM_DOCK_HEIGHT + BOTTOM_DOCK_C
 
 /** Search tab — "Browse All" genre grid: extra inset so the last row clears the docked mini-player. */
 export const SEARCH_BROWSE_GRID_PADDING_EXTRA = 92;
+
+/**
+ * Fixed-value alias of the dock floor + 16pt gap — stops any ScrollView /
+ * FlashList exactly 16pt above the MiniPlayer so nothing scrolls behind it.
+ * Does NOT include safe-area bottom (callers that need the home-indicator
+ * inset should add `insets.bottom` or use {@link tabScreenContentContainerPaddingBottom}).
+ */
+export const SCROLL_VIEW_BOTTOM_PADDING = TAB_BAR_HEIGHT + MINI_PLAYER_HEIGHT + 16;

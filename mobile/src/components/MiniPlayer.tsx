@@ -93,7 +93,7 @@ type MiniPlayerProps = {
   bottomLift: number;
 };
 
-export function MiniPlayer({ bottomLift }: MiniPlayerProps) {
+function MiniPlayerInner({ bottomLift }: MiniPlayerProps) {
   const insets = useSafeAreaInsets();
   const sheetExpanded = useNowPlayingSheetStore((s) => s.isExpanded);
   const keyboardVisible = useKeyboardChromeStore((s) => s.keyboardVisible);
@@ -575,6 +575,13 @@ export function MiniPlayer({ bottomLift }: MiniPlayerProps) {
     </Animated.View>
   );
 }
+
+/**
+ * Memoized for tab-switch perf: MiniPlayer re-renders only when its single prop
+ * `bottomLift` actually changes; track state lives in zustand selectors inside
+ * the component so those drive re-renders independently.
+ */
+export const MiniPlayer = React.memo(MiniPlayerInner);
 
 const styles = StyleSheet.create({
   /** Root chrome only — never put `pointerEvents` here; it is not a valid style key. */
