@@ -14,6 +14,8 @@
 		7E2D88EB2F8F22640083D908 /* VybeDownloadWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7E2D88DA2F8F22630083D908 /* VybeDownloadWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		7E2D88F22F8F24F50083D908 /* VybeDownloadAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E2D88F12F8F24F50083D908 /* VybeDownloadAttributes.swift */; };
 		7E2D88F32F8F24F50083D908 /* VybeDownloadAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E2D88F12F8F24F50083D908 /* VybeDownloadAttributes.swift */; };
+		7E40A1012F9100010083D901 /* VybeActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E40A1002F9100010083D901 /* VybeActivityAttributes.swift */; };
+		7E40A1022F9100010083D902 /* VybeActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E40A1002F9100010083D901 /* VybeActivityAttributes.swift */; };
 		7E30AABD2F909EC90063C482 /* VybeDownloader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E30AABC2F909EC90063C482 /* VybeDownloader.swift */; };
 		7E30AABE2F909EC90063C482 /* VybeDownloader.m in Sources */ = {isa = PBXBuildFile; fileRef = 7E30AABB2F909EC90063C482 /* VybeDownloader.m */; };
 		B195FDFFC3F2C59B2B0F197E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 9E483C0E3678D1A7950AE571 /* PrivacyInfo.xcprivacy */; };
@@ -70,6 +72,7 @@
 		7E2D88DB2F8F22630083D908 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		7E2D88DD2F8F22630083D908 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		7E2D88F12F8F24F50083D908 /* VybeDownloadAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VybeDownloadAttributes.swift; path = vibecode/VybeDownloadAttributes.swift; sourceTree = "<group>"; };
+		7E40A1002F9100010083D901 /* VybeActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VybeActivityAttributes.swift; path = vibecode/VybeActivityAttributes.swift; sourceTree = "<group>"; };
 		7E30AABB2F909EC90063C482 /* VybeDownloader.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = VybeDownloader.m; path = vibecode/VybeDownloader.m; sourceTree = "<group>"; };
 		7E30AABC2F909EC90063C482 /* VybeDownloader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = VybeDownloader.swift; path = vibecode/VybeDownloader.swift; sourceTree = "<group>"; };
 		8C617EC77232E2A6E60B7C0D /* libPods-vibecode.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-vibecode.a"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -146,6 +149,7 @@
 				VYBE00000000000000000003 /* VybeNowPlayingActivityModule.swift */,
 				VYBE00000000000000000004 /* VybeNowPlayingActivityModule.m */,
 				VYBE00000000000000000005 /* VybeDownloadActivityModule.swift */,
+				7E40A1002F9100010083D901 /* VybeActivityAttributes.swift */,
 				7E2D88F12F8F24F50083D908 /* VybeDownloadAttributes.swift */,
 				VYBE00000000000000000006 /* VybeDownloadActivityModule.m */,
 				BB2F792B24A3F905000567C9 /* Supporting */,
@@ -443,6 +447,7 @@
 				VYBE00000000000000000011 /* VybeNowPlayingModule.swift in Sources */,
 				VYBE00000000000000000012 /* VybeNowPlayingModule.m in Sources */,
 				VYBE00000000000000000013 /* VybeNowPlayingActivityModule.swift in Sources */,
+				7E40A1012F9100010083D901 /* VybeActivityAttributes.swift in Sources */,
 				7E2D88F22F8F24F50083D908 /* VybeDownloadAttributes.swift in Sources */,
 				VYBE00000000000000000014 /* VybeNowPlayingActivityModule.m in Sources */,
 				VYBE00000000000000000015 /* VybeDownloadActivityModule.swift in Sources */,
@@ -456,6 +461,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7E40A1022F9100010083D902 /* VybeActivityAttributes.swift in Sources */,
 				7E2D88F32F8F24F50083D908 /* VybeDownloadAttributes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -491,7 +497,7 @@
 					"FB_SONARKIT_ENABLED=1",
 				);
 				INFOPLIST_FILE = vibecode/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -524,7 +530,7 @@
 				DEVELOPMENT_TEAM = FCXP585VH2;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = vibecode/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -569,7 +575,7 @@
 				INFOPLIST_FILE = VybeDownloadWidget/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = VybeDownloadWidget;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -619,7 +625,7 @@
 				INFOPLIST_FILE = VybeDownloadWidget/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = VybeDownloadWidget;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -689,7 +695,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
 				LD_RUNPATH_SEARCH_PATHS = (
 					/usr/lib/swift,
 					"$(inherited)",
@@ -748,7 +754,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.2;
 				LD_RUNPATH_SEARCH_PATHS = (
 					/usr/lib/swift,
 					"$(inherited)",

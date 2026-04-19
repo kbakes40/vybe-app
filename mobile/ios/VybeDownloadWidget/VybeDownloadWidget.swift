@@ -2,15 +2,90 @@ import WidgetKit
 import SwiftUI
 import ActivityKit
 
-/// This file lives in the VybeDownloadWidget target (widget extension).
-/// It renders the download Live Activity in 3 presentations:
-///   1. Compact/minimal Dynamic Island (icon + tiny progress indicator)
-///   2. Expanded Dynamic Island (track name + progress bar + percent)
-///   3. Lock Screen banner (same layout as expanded, larger)
-///
-/// Data flows from the main app via ActivityKit:
-///   Activity<VybeDownloadAttributes>.request(...)  → this widget renders
-///   activity.update(using:)                        → body re-renders
+/// Machined cyan (matches in-app headline pulse).
+private enum MachinedPalette {
+    static let cyan = Color(red: 0.40, green: 0.91, blue: 0.98) // #67E8F9
+    static let oledBlack = Color.black
+}
+
+// MARK: - Dynamic Island artwork (compact leading)
+
+@available(iOS 16.1, *)
+private struct CompactAlbumArt: View {
+    let urlString: String
+    let isComplete: Bool
+    var side: CGFloat = 26
+
+    var body: some View {
+        Group {
+            if let u = URL(string: urlString), !urlString.isEmpty, u.scheme == "https" || u.scheme == "http" {
+                AsyncImage(url: u) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    default:
+                        placeholder
+                    }
+                }
+            } else {
+                placeholder
+            }
+        }
+        .frame(width: side, height: side)
+        .clipShape(RoundedRectangle(cornerRadius: side * 0.22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: side * 0.22, style: .continuous)
+                .stroke(MachinedPalette.cyan.opacity(0.55), lineWidth: 0.5)
+        )
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            MachinedPalette.oledBlack
+            Image(systemName: isComplete ? "checkmark.circle.fill" : "arrow.down.circle.fill")
+                .font(.system(size: max(12, side * 0.48), weight: .semibold))
+                .foregroundStyle(MachinedPalette.cyan)
+        }
+    }
+}
+
+// MARK: - Expanded marquee line (horizontal scroll illusion)
+
+@available(iOS 16.1, *)
+private struct MachinedMarqueeLine: View {
+    let text: String
+    let font: Font
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { timeline in
+                let title = text.isEmpty ? "Vybe" : text
+                let t = timeline.date.timeIntervalSinceReferenceDate
+                // Smooth loop: ~14pt/s when overflow; still when short
+                let speed: CGFloat = 14
+                let estimatedChar: CGFloat = 8.2
+                let textW = max(w, CGFloat(title.count) * estimatedChar)
+                let overflow = max(0, textW - w + 12)
+                let period = Double(overflow) / Double(speed) + 2.5
+                let phase = period > 0 ? CGFloat(t.truncatingRemainder(dividingBy: period)) / CGFloat(period) : 0
+                let x = -phase * overflow
+
+                Text(title)
+                    .font(font)
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .offset(x: overflow > 1 ? x : 0)
+                    .frame(width: w, alignment: .leading)
+                    .clipped()
+            }
+        }
+        .frame(height: 22)
+    }
+}
 
 @main
 struct VybeDownloadWidgetBundle: WidgetBundle {
@@ -24,106 +99,113 @@ struct VybeDownloadWidgetBundle: WidgetBundle {
 @available(iOS 16.1, *)
 struct VybeDownloadWidget: Widget {
     var body: some WidgetConfiguration {
-        ActivityConfiguration(for: VybeDownloadAttributes.self) { context in
-            // MARK: Lock Screen / Banner
+        ActivityConfiguration(for: VybeActivityAttributes.self) { context in
             LockScreenView(context: context)
-                .activityBackgroundTint(Color.black.opacity(0.85))
+                .activityBackgroundTint(Color.black.opacity(0.92))
                 .activitySystemActionForegroundColor(Color.white)
         } dynamicIsland: { context in
             DynamicIsland {
-                // MARK: Expanded (user long-presses or pill expands)
                 DynamicIslandExpandedRegion(.leading) {
-                    Image(systemName: context.state.isComplete ? "checkmark.circle.fill" : "arrow.down.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(Self.vybePurple)
+                    CompactAlbumArt(
+                        urlString: resolvedArtworkURL(context),
+                        isComplete: context.state.isComplete
+                    )
+                    .padding(.leading, 2)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     Text("\(Int(context.state.progress * 100))%")
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundColor(.white)
+                        .foregroundColor(MachinedPalette.cyan)
                         .monospacedDigit()
                         .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(context.state.trackTitle.isEmpty ? context.attributes.trackTitle : context.state.trackTitle)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.white)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        Text(context.state.artistName.isEmpty ? context.attributes.artistName : context.state.artistName)
-                            .font(.system(size: 12))
-                            .foregroundColor(.white.opacity(0.6))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                    VStack(alignment: .leading, spacing: 8) {
+                        MachinedMarqueeLine(
+                            text: displayTitle(context),
+                            font: .system(size: 15, weight: .semibold)
+                        )
+                        MachinedMarqueeLine(
+                            text: displayArtist(context),
+                            font: .system(size: 12, weight: .medium)
+                        )
+                        .opacity(0.72)
                         ProgressView(value: context.state.progress)
                             .progressViewStyle(.linear)
-                            .tint(Self.vybePurple)
+                            .tint(MachinedPalette.cyan)
                     }
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } compactLeading: {
-                // MARK: Compact (normal Dynamic Island pill when collapsed)
-                Image(systemName: context.state.isComplete ? "checkmark" : "arrow.down")
-                    .foregroundColor(Self.vybePurple)
-                    .font(.system(size: 12, weight: .bold))
+                CompactAlbumArt(
+                    urlString: resolvedArtworkURL(context),
+                    isComplete: context.state.isComplete
+                )
             } compactTrailing: {
-                Text("\(Int(context.state.progress * 100))%")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundColor(.white)
-                    .monospacedDigit()
+                Text("V")
+                    .font(.system(size: 15, weight: .black, design: .rounded))
+                    .foregroundStyle(MachinedPalette.cyan)
             } minimal: {
-                // MARK: Minimal (when another activity is also live)
-                Image(systemName: context.state.isComplete ? "checkmark" : "arrow.down")
-                    .foregroundColor(Self.vybePurple)
+                Text("V")
+                    .font(.system(size: 12, weight: .heavy, design: .rounded))
+                    .foregroundStyle(MachinedPalette.cyan)
             }
-            .keylineTint(Self.vybePurple)
+            .keylineTint(MachinedPalette.cyan)
         }
     }
-
-    static var vybePurple: Color { Color(red: 0.545, green: 0.361, blue: 0.965) } // #8B5CF6
 }
 
-// MARK: Lock Screen rendering
+@available(iOS 16.1, *)
+private func displayTitle(_ context: ActivityViewContext<VybeActivityAttributes>) -> String {
+    let s = context.state.trackTitle.isEmpty ? context.attributes.trackTitle : context.state.trackTitle
+    return s.isEmpty ? "Vybe" : s
+}
+
+@available(iOS 16.1, *)
+private func displayArtist(_ context: ActivityViewContext<VybeActivityAttributes>) -> String {
+    context.state.artistName.isEmpty ? context.attributes.artistName : context.state.artistName
+}
+
+@available(iOS 16.1, *)
+private func resolvedArtworkURL(_ context: ActivityViewContext<VybeActivityAttributes>) -> String {
+    let u = context.state.artworkURL.isEmpty ? context.attributes.artworkURL : context.state.artworkURL
+    return u
+}
+
+// MARK: - Lock Screen
 
 @available(iOS 16.1, *)
 struct LockScreenView: View {
-    let context: ActivityViewContext<VybeDownloadAttributes>
-
-    private var vybePurple: Color { Color(red: 0.545, green: 0.361, blue: 0.965) }
+    let context: ActivityViewContext<VybeActivityAttributes>
 
     var body: some View {
         HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(vybePurple.opacity(0.2))
-                    .frame(width: 44, height: 44)
-                Image(systemName: context.state.isComplete ? "checkmark.circle.fill" : "arrow.down.circle.fill")
-                    .font(.title2)
-                    .foregroundColor(vybePurple)
-            }
+            CompactAlbumArt(
+                urlString: resolvedArtworkURL(context),
+                isComplete: context.state.isComplete,
+                side: 44
+            )
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text(context.state.trackTitle.isEmpty ? context.attributes.trackTitle : context.state.trackTitle)
+                    Text(displayTitle(context))
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(.white)
                         .lineLimit(1)
                     Spacer()
                     Text("\(Int(context.state.progress * 100))%")
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundColor(.white.opacity(0.85))
+                        .foregroundColor(MachinedPalette.cyan)
                         .monospacedDigit()
                 }
-                Text(context.state.artistName.isEmpty ? context.attributes.artistName : context.state.artistName)
+                Text(displayArtist(context))
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.55))
                     .lineLimit(1)
                 ProgressView(value: context.state.progress)
                     .progressViewStyle(.linear)
-                    .tint(vybePurple)
+                    .tint(MachinedPalette.cyan)
                 Text(context.state.statusText)
                     .font(.caption2)
                     .foregroundColor(.white.opacity(0.4))

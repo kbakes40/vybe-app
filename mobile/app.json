@@ -18,7 +18,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.vibecode.vybe",
       "appleTeamId": "FCXP585VH2",
-      "backgroundColor": "#000000"
+      "backgroundColor": "#000000",
+      "deploymentTarget": "17.2"
     },
     "android": {
       "edgeToEdgeEnabled": true,

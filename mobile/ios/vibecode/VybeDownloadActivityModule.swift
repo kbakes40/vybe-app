@@ -28,6 +28,7 @@ class VybeDownloadActivityModule: NSObject {
   // batch mode without going through the full start/update handshake.
   static var _lastTrackTitle: String = ""
   static var _lastArtistName: String = ""
+  static var _lastArtworkURL: String = ""
 
   // Monotonic token bumped by every startActivity/endActivity call. The
   // delayed end task re-checks this before actually tearing down — if the
@@ -36,8 +37,9 @@ class VybeDownloadActivityModule: NSObject {
 
   // MARK: – Public API (called from JS via the bridge)
 
-  @objc func startActivity(_ trackTitle: String, artistName: String) {
+  @objc func startActivity(_ trackTitle: String, artistName: String, artworkURL: String?) {
     guard #available(iOS 16.1, *) else { return }
+    let art = artworkURL ?? ""
     // Update cached title/artist SYNCHRONOUSLY (not inside the Task) so the
     // very next updateProgress call that JS fires — which may execute its
     // Task before our startActivity Task reaches the MainActor — already
@@ -45,6 +47,7 @@ class VybeDownloadActivityModule: NSObject {
     // would overwrite a freshly-written progress value with progress=0.
     Self._lastTrackTitle = trackTitle
     Self._lastArtistName = artistName
+    Self._lastArtworkURL = art
     Self._endToken &+= 1
 
     Task { @MainActor in
@@ -53,22 +56,23 @@ class VybeDownloadActivityModule: NSObject {
       // with the real progress value, so there's only one write path and
       // no chance of resetting progress back to 0.
       if #available(iOS 16.2, *),
-         Self._currentActivity as? Activity<VybeDownloadAttributes> != nil {
+         Self._currentActivity as? Activity<VybeActivityAttributes> != nil {
         return
       }
 
       guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
 
-      let attributes = VybeDownloadAttributes(trackTitle: trackTitle, artistName: artistName)
-      let initialState = VybeDownloadAttributes.DownloadState(
+      let attributes = VybeActivityAttributes(trackTitle: trackTitle, artistName: artistName, artworkURL: art)
+      let initialState = VybeActivityAttributes.DownloadState(
         progress: 0.0,
         statusText: "Starting…",
         isComplete: false,
         trackTitle: trackTitle,
-        artistName: artistName
+        artistName: artistName,
+        artworkURL: art
       )
       do {
-        let activity = try Activity<VybeDownloadAttributes>.request(
+        let activity = try Activity<VybeActivityAttributes>.request(
           attributes: attributes,
           contentState: initialState,
           pushType: nil
@@ -83,14 +87,15 @@ class VybeDownloadActivityModule: NSObject {
   @objc func updateProgress(_ progress: Double, statusText: String) {
     guard #available(iOS 16.1, *) else { return }
     Task { @MainActor in
-      guard let activity = Self._currentActivity as? Activity<VybeDownloadAttributes> else { return }
+      guard let activity = Self._currentActivity as? Activity<VybeActivityAttributes> else { return }
       let clamped = max(0.0, min(1.0, progress))
-      let state = VybeDownloadAttributes.DownloadState(
+      let state = VybeActivityAttributes.DownloadState(
         progress: clamped,
         statusText: statusText,
         isComplete: clamped >= 0.999,
         trackTitle: Self._lastTrackTitle,
-        artistName: Self._lastArtistName
+        artistName: Self._lastArtistName,
+        artworkURL: Self._lastArtworkURL
       )
       await activity.update(using: state)
     }
@@ -99,7 +104,7 @@ class VybeDownloadActivityModule: NSObject {
   @objc func endActivity(_ success: Bool) {
     guard #available(iOS 16.1, *) else { return }
     Task { @MainActor in
-      guard let activity = Self._currentActivity as? Activity<VybeDownloadAttributes> else { return }
+      guard let activity = Self._currentActivity as? Activity<VybeActivityAttributes> else { return }
 
       // First: short grace window (400ms). If a new startActivity fires
       // during this window (Download All batch), the token bumps and we
@@ -112,18 +117,19 @@ class VybeDownloadActivityModule: NSObject {
 
       // No follow-up download — this was a real end. Push "Downloaded"
       // state, let it linger so the user sees completion, then dismiss.
-      let finalState = VybeDownloadAttributes.DownloadState(
+      let finalState = VybeActivityAttributes.DownloadState(
         progress: success ? 1.0 : 0.0,
         statusText: success ? "Downloaded" : "Failed",
         isComplete: success,
         trackTitle: Self._lastTrackTitle,
-        artistName: Self._lastArtistName
+        artistName: Self._lastArtistName,
+        artworkURL: Self._lastArtworkURL
       )
       await activity.update(using: finalState)
       try? await Task.sleep(nanoseconds: 1_600_000_000)
       if Self._endToken != tokenAtEnd { return }
       await activity.end(using: finalState, dismissalPolicy: .immediate)
-      if let current = Self._currentActivity as? Activity<VybeDownloadAttributes>, current === activity {
+      if let current = Self._currentActivity as? Activity<VybeActivityAttributes>, current === activity {
         Self._currentActivity = nil
       }
     }
@@ -136,22 +142,23 @@ class VybeDownloadActivityModule: NSObject {
   // classes without going through the RN bridge.
 
   @available(iOS 16.1, *)
-  static func swiftStart(trackTitle: String, artistName: String) {
+  static func swiftStart(trackTitle: String, artistName: String, artworkURL: String = "") {
     _lastTrackTitle = trackTitle
     _lastArtistName = artistName
+    _lastArtworkURL = artworkURL
     _endToken &+= 1
     Task { @MainActor in
-      if #available(iOS 16.2, *), _currentActivity as? Activity<VybeDownloadAttributes> != nil {
+      if #available(iOS 16.2, *), _currentActivity as? Activity<VybeActivityAttributes> != nil {
         return
       }
       guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-      let attributes = VybeDownloadAttributes(trackTitle: trackTitle, artistName: artistName)
-      let initialState = VybeDownloadAttributes.DownloadState(
+      let attributes = VybeActivityAttributes(trackTitle: trackTitle, artistName: artistName, artworkURL: artworkURL)
+      let initialState = VybeActivityAttributes.DownloadState(
         progress: 0.0, statusText: "Starting…", isComplete: false,
-        trackTitle: trackTitle, artistName: artistName
+        trackTitle: trackTitle, artistName: artistName, artworkURL: artworkURL
       )
       do {
-        let activity = try Activity<VybeDownloadAttributes>.request(
+        let activity = try Activity<VybeActivityAttributes>.request(
           attributes: attributes, contentState: initialState, pushType: nil
         )
         _currentActivity = activity
@@ -164,12 +171,12 @@ class VybeDownloadActivityModule: NSObject {
   @available(iOS 16.1, *)
   static func swiftUpdate(progress: Double, statusText: String) {
     Task { @MainActor in
-      guard let activity = _currentActivity as? Activity<VybeDownloadAttributes> else { return }
+      guard let activity = _currentActivity as? Activity<VybeActivityAttributes> else { return }
       let clamped = max(0.0, min(1.0, progress))
-      let state = VybeDownloadAttributes.DownloadState(
+      let state = VybeActivityAttributes.DownloadState(
         progress: clamped, statusText: statusText,
         isComplete: clamped >= 0.999,
-        trackTitle: _lastTrackTitle, artistName: _lastArtistName
+        trackTitle: _lastTrackTitle, artistName: _lastArtistName, artworkURL: _lastArtworkURL
       )
       await activity.update(using: state)
     }
@@ -178,21 +185,21 @@ class VybeDownloadActivityModule: NSObject {
   @available(iOS 16.1, *)
   static func swiftEnd(success: Bool) {
     Task { @MainActor in
-      guard let activity = _currentActivity as? Activity<VybeDownloadAttributes> else { return }
+      guard let activity = _currentActivity as? Activity<VybeActivityAttributes> else { return }
       let tokenAtEnd = _endToken
       try? await Task.sleep(nanoseconds: 400_000_000)
       if _endToken != tokenAtEnd { return }
-      let finalState = VybeDownloadAttributes.DownloadState(
+      let finalState = VybeActivityAttributes.DownloadState(
         progress: success ? 1.0 : 0.0,
         statusText: success ? "Downloaded" : "Failed",
         isComplete: success,
-        trackTitle: _lastTrackTitle, artistName: _lastArtistName
+        trackTitle: _lastTrackTitle, artistName: _lastArtistName, artworkURL: _lastArtworkURL
       )
       await activity.update(using: finalState)
       try? await Task.sleep(nanoseconds: 1_600_000_000)
       if _endToken != tokenAtEnd { return }
       await activity.end(using: finalState, dismissalPolicy: .immediate)
-      if let current = _currentActivity as? Activity<VybeDownloadAttributes>, current === activity {
+      if let current = _currentActivity as? Activity<VybeActivityAttributes>, current === activity {
         _currentActivity = nil
       }
     }

@@ -35,6 +35,7 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
     let destPath: String      // absolute file path (may end .m4a)
     let trackTitle: String
     let artistName: String
+    let artworkUrl: String
   }
 
   private let stateLock = NSLock()
@@ -80,12 +81,13 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
     }
     let trackTitle = (params["trackTitle"] as? String) ?? "Unknown track"
     let artistName = (params["artistName"] as? String) ?? ""
+    let artworkUrl = (params["artworkUrl"] as? String) ?? ""
 
     let destPath = destPathRaw.replacingOccurrences(of: "file://", with: "")
 
     // Start the Live Activity (relabels if one is already alive).
     if #available(iOS 16.1, *) {
-      VybeDownloadActivityModule.swiftStart(trackTitle: trackTitle, artistName: artistName)
+      VybeDownloadActivityModule.swiftStart(trackTitle: trackTitle, artistName: artistName, artworkURL: artworkUrl)
     }
 
     let task = session.downloadTask(with: url)
@@ -94,7 +96,7 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
     stateLock.lock()
     metaByTaskId[taskId] = DownloadMeta(
       trackId: trackId, destPath: destPath,
-      trackTitle: trackTitle, artistName: artistName
+      trackTitle: trackTitle, artistName: artistName, artworkUrl: artworkUrl
     )
     metaByTrackId[trackId] = taskId
     promiseByTaskId[taskId] = (resolver, rejecter)
@@ -119,6 +121,7 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
             let trackId = params["trackId"] as? String else { continue }
       let trackTitle = (params["trackTitle"] as? String) ?? "Unknown track"
       let artistName = (params["artistName"] as? String) ?? ""
+      let artworkUrl = (params["artworkUrl"] as? String) ?? ""
       let destPath = destPathRaw.replacingOccurrences(of: "file://", with: "")
 
       let task = session.downloadTask(with: url)
@@ -127,7 +130,7 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
       stateLock.lock()
       metaByTaskId[taskId] = DownloadMeta(
         trackId: trackId, destPath: destPath,
-        trackTitle: trackTitle, artistName: artistName
+        trackTitle: trackTitle, artistName: artistName, artworkUrl: artworkUrl
       )
       metaByTrackId[trackId] = taskId
       stateLock.unlock()
@@ -135,7 +138,7 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
       // Start the Live Activity for the first track only — subsequent
       // tracks update via swiftStart in the progress callback.
       if started == 0, #available(iOS 16.1, *) {
-        VybeDownloadActivityModule.swiftStart(trackTitle: trackTitle, artistName: artistName)
+        VybeDownloadActivityModule.swiftStart(trackTitle: trackTitle, artistName: artistName, artworkURL: artworkUrl)
       }
 
       task.resume()
@@ -182,6 +185,7 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
       // concurrent task pushes its own title when it reports progress).
       VybeDownloadActivityModule._lastTrackTitle = meta.trackTitle
       VybeDownloadActivityModule._lastArtistName = meta.artistName
+      VybeDownloadActivityModule._lastArtworkURL = meta.artworkUrl
       let pct = Int(progress * 100)
       let status = "\(meta.trackTitle) · \(pct)%"
       VybeDownloadActivityModule.swiftUpdate(progress: progress, statusText: status)

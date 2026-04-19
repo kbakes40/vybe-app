@@ -21,6 +21,7 @@ async function nativeDownload(args: {
   trackId: string;
   trackTitle: string;
   artistName: string;
+  artworkUrl?: string;
   onProgress?: (progress: number) => void;
 }): Promise<{ filePath: string; fileSize: number; fileFormat: 'M4A' | 'MP3' }> {
   if (!NativeDownloader) throw new Error('Native downloader unavailable');
@@ -40,6 +41,7 @@ async function nativeDownload(args: {
       trackId: args.trackId,
       trackTitle: args.trackTitle,
       artistName: args.artistName,
+      ...(args.artworkUrl ? { artworkUrl: args.artworkUrl } : {}),
     });
     return {
       filePath: result.filePath,
@@ -51,14 +53,18 @@ async function nativeDownload(args: {
   }
 }
 
-async function laStartDownloadActivity(trackTitle: string, artistName: string): Promise<void> {
+async function laStartDownloadActivity(
+  trackTitle: string,
+  artistName: string,
+  artworkUrl: string = '',
+): Promise<void> {
   // Reset throttle state so the next track's first progress update fires
   // immediately instead of being blocked by the previous track's throttle window.
   if (_laFlushTimer) { clearTimeout(_laFlushTimer); _laFlushTimer = null; }
   _laPending = null;
   _laLastSentAt = 0;
   try {
-    await LiveActivityBridge?.startActivity(trackTitle, artistName);
+    await LiveActivityBridge?.startActivity(trackTitle, artistName, artworkUrl);
   } catch {
     /* ActivityKit optional */
   }
@@ -357,7 +363,7 @@ export async function downloadYouTubeTrack(
   // when the app is backgrounded. The Android fallback path still uses
   // the JS-driven Live Activity bridge.
   if (!NativeDownloader) {
-    await laStartDownloadActivity(trackTitle, artistName);
+    await laStartDownloadActivity(trackTitle, artistName, track.artwork ?? '');
   }
 
   const base = backendBaseUrl.replace(/\/$/, '');
@@ -397,6 +403,7 @@ export async function downloadYouTubeTrack(
         trackId: track.id,
         trackTitle,
         artistName,
+        artworkUrl: track.artwork ?? '',
         onProgress: (ratio) => {
           const mapped = 0.02 + ratio * 0.93;
           onProgress?.(mapped);
@@ -487,7 +494,7 @@ export async function downloadSoundCloudTrack(
   const artistName = track.artist ?? 'Unknown artist';
 
   if (!NativeDownloader) {
-    await laStartDownloadActivity(trackTitle, artistName);
+    await laStartDownloadActivity(trackTitle, artistName, track.artwork ?? '');
   }
 
   const base = backendBaseUrl.replace(/\/$/, '');
@@ -512,6 +519,7 @@ export async function downloadSoundCloudTrack(
         trackId: track.id,
         trackTitle,
         artistName,
+        artworkUrl: track.artwork ?? '',
         onProgress: (ratio) => {
           const mapped = 0.02 + ratio * 0.93;
           onProgress?.(mapped);

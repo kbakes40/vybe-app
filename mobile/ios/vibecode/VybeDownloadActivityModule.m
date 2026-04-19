@@ -3,7 +3,8 @@
 @interface RCT_EXTERN_MODULE(VybeDownloadActivity, NSObject)
 
 RCT_EXTERN_METHOD(startActivity:(NSString *)trackTitle
-                  artistName:(NSString *)artistName)
+                  artistName:(NSString *)artistName
+                  artworkURL:(NSString *)artworkURL)
 
 RCT_EXTERN_METHOD(updateProgress:(double)progress
                   statusText:(NSString *)statusText)

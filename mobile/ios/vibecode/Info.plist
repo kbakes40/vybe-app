@@ -27,6 +27,7 @@
       <dict>
         <key>CFBundleURLSchemes</key>
         <array>
+          <string>vybe</string>
           <string>vibecode</string>
           <string>com.vibecode.app</string>
         </array>
