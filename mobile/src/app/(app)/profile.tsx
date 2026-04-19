@@ -5,11 +5,12 @@ import {
   ScrollView,
   Pressable,
   Dimensions,
+  StyleSheet,
+  Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { ChevronLeft, Settings, Share2, ListMusic, Music2 } from 'lucide-react-native';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
@@ -22,7 +23,7 @@ import { VybePlusWordmark } from '@/components/VybePlusWordmark';
 import { MINI_PLAYER_HEIGHT } from './_layout';
 import { Track } from '@/types/music';
 import { authClient } from '@/lib/auth/auth-client';
-import { usePlaylistHeroColors } from '@/lib/usePlaylistHeroColors';
+import { VIBRANT_BLUE, OLED_BLACK } from '@/constants/machinedTheme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -120,8 +121,6 @@ export default function ProfileScreen() {
   // matches the same dominant-color pattern used on playlists / Vybe Mix
   // / Vybe Beats. Falls back to the default purple palette while loading
   // and for users with no avatar.
-  const heroColors = usePlaylistHeroColors(avatarUrl);
-
   const showMiniPlayer = !!currentTrack;
   const bottomPadding = insets.bottom + (showMiniPlayer ? MINI_PLAYER_HEIGHT : 0) + 40;
 
@@ -161,103 +160,66 @@ export default function ProfileScreen() {
   const recentlyPlayedTracks = recentTracks.slice(0, 10);
 
   return (
-    <View className="flex-1 bg-[#0A0A0A]">
+    <View style={styles.root}>
       <ScrollView
-        className="flex-1"
+        style={styles.scroll}
         contentContainerStyle={{ paddingBottom: bottomPadding }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header — gradient + glow derived from the user's avatar so the
-            profile screen matches the same dominant-color pattern as every
-            other playlist / Vybe Mix / Vybe Beats hero. */}
-        <LinearGradient
-          colors={heroColors.gradient as unknown as readonly [string, string, ...string[]]}
-          locations={heroColors.locations as unknown as readonly [number, number, ...number[]]}
-          style={{ paddingTop: insets.top }}
-        >
-          <View className="flex-row items-center justify-between px-4 py-3">
+        <View style={[styles.headerBlock, { paddingTop: insets.top }]}>
+          <View style={styles.headerRow}>
             <Pressable
               onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.back(); }}
-              className="w-10 h-10 items-center justify-center -ml-2"
+              style={styles.iconBtn}
             >
               <ChevronLeft size={28} color="#fff" />
             </Pressable>
-            <View className="flex-row">
+            <Text style={styles.accountKicker}>ACCOUNT</Text>
+            <View style={styles.headerRight}>
               <Pressable
                 onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-                className="w-10 h-10 items-center justify-center"
+                style={styles.iconBtn}
               >
                 <Share2 size={22} color="#fff" />
               </Pressable>
               <Pressable
                 onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/(app)/settings' as never); }}
-                className="w-10 h-10 items-center justify-center"
+                style={styles.iconBtn}
               >
                 <Settings size={22} color="#fff" />
               </Pressable>
             </View>
           </View>
 
-          {/* Profile avatar with dynamic halo */}
-          <View className="items-center px-4 pb-8">
-            <View
-              style={{
-                shadowColor: heroColors.glow,
-                shadowOffset: { width: 0, height: 8 },
-                shadowOpacity: 0.6,
-                shadowRadius: 24,
-              }}
-            >
-              {avatarUrl ? (
-                <Image
-                  source={{ uri: avatarUrl }}
-                  style={{
-                    width: 110,
-                    height: 110,
-                    borderRadius: 55,
-                    borderWidth: 2,
-                    borderColor: 'rgba(255,255,255,0.15)',
-                  }}
-                  contentFit="cover"
-                />
-              ) : (
-                <View
-                  style={{
-                    width: 110,
-                    height: 110,
-                    borderRadius: 55,
-                    backgroundColor: 'rgba(255,255,255,0.08)',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderWidth: 2,
-                    borderColor: 'rgba(255,255,255,0.15)',
-                  }}
-                >
-                  <VybeIcon size={72} backgroundColor="transparent" />
-                </View>
-              )}
-            </View>
+          <View style={styles.profileBlock}>
+            {avatarUrl ? (
+              <Image
+                source={{ uri: avatarUrl }}
+                style={styles.avatar}
+                contentFit="cover"
+              />
+            ) : (
+              <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                <VybeIcon size={72} backgroundColor="transparent" />
+              </View>
+            )}
 
-            <Text
-              className="text-white font-bold mt-4"
-              style={{ fontSize: 22, letterSpacing: -0.3 }}
-              numberOfLines={1}
-            >
+            <Text style={styles.displayName} numberOfLines={1}>
               {displayName}
             </Text>
             {displayEmail ? (
-              <Text className="text-white/50 text-sm mt-1" numberOfLines={1}>
+              <Text style={styles.displayEmail} numberOfLines={1}>
                 {displayEmail}
               </Text>
             ) : null}
 
             {tier === 'plus' && (
-              <View className="mt-3">
+              <View style={{ marginTop: 14 }}>
                 <VybePlusWordmark variant="badgeCapsule" />
               </View>
             )}
           </View>
-        </LinearGradient>
+        </View>
 
         {/* My Playlists */}
         {userPlaylists.length > 0 && (
@@ -350,7 +312,7 @@ export default function ProfileScreen() {
         {/* Empty state */}
         {userPlaylists.length === 0 && recentlyPlayedTracks.length === 0 && topArtists.length === 0 && (
           <View className="items-center justify-center px-8 pt-16">
-            <VybeIcon size={64} backgroundColor="#1A1A2E" />
+            <VybeIcon size={64} backgroundColor="#111" />
             <Text className="text-white/40 text-center mt-6 text-base">
               Start listening to build your profile
             </Text>
@@ -360,3 +322,79 @@ export default function ProfileScreen() {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: OLED_BLACK,
+  },
+  scroll: {
+    flex: 1,
+  },
+  headerBlock: {
+    backgroundColor: OLED_BLACK,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    paddingVertical: 8,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: 88,
+    justifyContent: 'flex-end',
+  },
+  iconBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  accountKicker: {
+    flex: 1,
+    textAlign: 'center',
+    color: 'rgba(255,255,255,0.92)',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 3.5,
+  },
+  profileBlock: {
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+    paddingTop: 8,
+  },
+  avatar: {
+    width: 108,
+    height: 108,
+    borderRadius: 54,
+    borderWidth: 2,
+    borderColor: VIBRANT_BLUE,
+  },
+  avatarPlaceholder: {
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  displayName: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: -0.4,
+    marginTop: 18,
+    ...Platform.select({
+      ios: { fontVariant: ['tabular-nums'] },
+      default: {},
+    }),
+  },
+  displayEmail: {
+    color: 'rgba(255,255,255,0.48)',
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 6,
+  },
+});

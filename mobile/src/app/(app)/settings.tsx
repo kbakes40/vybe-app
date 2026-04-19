@@ -8,7 +8,6 @@ import {
   StyleSheet,
   Keyboard,
   KeyboardAvoidingView,
-  Linking,
   Alert,
 } from 'react-native';
 import Animated, {
@@ -27,7 +26,6 @@ import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import {
   ChevronLeft,
-  ChevronRight,
   Search,
   User,
   Mail,
@@ -71,11 +69,12 @@ import { useUserSettingsStore } from '@/stores/userSettingsStore';
 import { MINI_PLAYER_HEIGHT } from './_layout';
 import { useVybePopup } from '@/components/VybePopup';
 import { ShadowNeonSwitch } from '@/components/ShadowNeonSwitch';
-import { VIBRANT_BLUE, OLED_BLACK, NAVY_TRACK } from '@/constants/machinedTheme';
+import { VIBRANT_BLUE, OLED_BLACK, NAVY_TRACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
+import { ListDisclosureMark } from '@/components/account/ListDisclosureMark';
 
 const STROKE = 1.5;
 
-const MACHINED_ICON = { color: VIBRANT_BLUE, glow: VIBRANT_BLUE } as const;
+const ROW_ICON = { color: NAV_BAR_PURPLE, glow: NAV_BAR_PURPLE } as const;
 
 type IconCategory =
   | 'account'
@@ -94,16 +93,16 @@ const CATEGORY_TINT: Record<
   IconCategory,
   { color: string; glow: string }
 > = {
-  account: MACHINED_ICON,
-  audio: MACHINED_ICON,
-  data: MACHINED_ICON,
-  notifications: MACHINED_ICON,
-  privacy: MACHINED_ICON,
-  content: MACHINED_ICON,
-  storage: MACHINED_ICON,
-  discovery: MACHINED_ICON,
-  about: MACHINED_ICON,
-  developer: MACHINED_ICON,
+  account: ROW_ICON,
+  audio: ROW_ICON,
+  data: ROW_ICON,
+  notifications: ROW_ICON,
+  privacy: ROW_ICON,
+  content: ROW_ICON,
+  storage: ROW_ICON,
+  discovery: ROW_ICON,
+  about: ROW_ICON,
+  developer: ROW_ICON,
   destructive: { color: '#EF4444', glow: '#EF4444' },
 };
 
@@ -114,21 +113,9 @@ function CategoryIcon({
   category: IconCategory;
   children: React.ReactElement<{ color?: string; size?: number; strokeWidth?: number }>;
 }) {
-  const { color, glow } = CATEGORY_TINT[category];
+  const { color } = CATEGORY_TINT[category];
   return (
-    <View
-      style={[
-        styles.iconShell,
-        Platform.OS === 'ios'
-          ? {
-              shadowColor: glow,
-              shadowOffset: { width: 0, height: 0 },
-              shadowOpacity: 0.85,
-              shadowRadius: 4,
-            }
-          : { elevation: 3 },
-      ]}
-    >
+    <View style={[styles.iconShell]}>
       {React.cloneElement(children, {
         size: 20,
         color,
@@ -234,7 +221,11 @@ function SettingsItem({
         ) : null}
       </View>
       {value ? <Text style={styles.rowValue}>{value}</Text> : null}
-      {showChevron ? <ChevronRight size={18} color="rgba(255,255,255,0.28)" strokeWidth={STROKE} /> : null}
+      {showChevron ? (
+        <View style={styles.rowDisclosure} accessibilityRole="image" accessibilityLabel="Opens detail">
+          <ListDisclosureMark />
+        </View>
+      ) : null}
       {showSwitch ? (
         <ShadowNeonSwitch
           value={switchValue}
@@ -466,7 +457,7 @@ export default function SettingsScreen() {
           >
             <ChevronLeft size={28} color="#fff" strokeWidth={STROKE} />
           </Pressable>
-          <Text style={styles.headerTitle}>Settings</Text>
+          <Text style={styles.headerTitle}>SETTINGS</Text>
           <View style={{ width: 40 }} />
         </View>
 
@@ -544,6 +535,37 @@ export default function SettingsScreen() {
             showChevron
             onPress={() => router.push('/(app)/accounts' as never)}
           />
+        </SettingsSection>
+
+        <SettingsSection title="Devices & status">
+          <View style={[styles.row, styles.rowBorder, { alignItems: 'flex-start' }]}>
+            <View style={styles.rowIcon}>
+              <CategoryIcon category="account"><Wifi /></CategoryIcon>
+            </View>
+            <View style={styles.rowBody}>
+              <Text style={styles.deviceRowText} numberOfLines={5}>
+                <Text style={styles.rowTitle}>Steve Jobs&apos; Left Toe (iPhone 15 Pro Max)</Text>
+                <Text style={styles.deviceStatusInline}> - LOGIC ACTIVE</Text>
+              </Text>
+            </View>
+            <View style={styles.activeBadge}>
+              <Text style={styles.activeBadgeText}>LOGIC ACTIVE</Text>
+            </View>
+          </View>
+          <View style={[styles.row, styles.rowBorder, { alignItems: 'flex-start' }]}>
+            <View style={styles.rowIcon}>
+              <CategoryIcon category="account"><Wifi /></CategoryIcon>
+            </View>
+            <View style={styles.rowBody}>
+              <Text style={styles.deviceRowText} numberOfLines={5}>
+                <Text style={styles.rowTitle}>Louis 🔐🔐🏴‍☠️ (iPhone 14 Pro Max)</Text>
+                <Text style={styles.deviceStatusInline}> - NATIVE PILL ACTIVE</Text>
+              </Text>
+            </View>
+            <View style={styles.activeBadge}>
+              <Text style={styles.activeBadgeText}>NATIVE PILL ACTIVE</Text>
+            </View>
+          </View>
         </SettingsSection>
 
         <SettingsSection title="Playback">
@@ -994,19 +1016,15 @@ export default function SettingsScreen() {
           <Text style={[styles.ghostSignOutText, { marginLeft: 10 }]}>Sign out</Text>
         </Pressable>
 
-        <DaVinciFooterEgg />
+        <VybeSystemFooter />
       </ScrollView>
     </View>
     </KeyboardAvoidingView>
   );
 }
 
-/**
- * Footer easter egg. Long-press fires a Machined-Blue scan sweep across the
- * footer, the label morphs to COOKIN_WITH_DAVINCI, then deep-links to
- * davincidynamics.ai.
- */
-function DaVinciFooterEgg() {
+/** Minimal footer — machined cyan accent only (no legacy brand colors). */
+function VybeSystemFooter() {
   const [scanning, setScanning] = useState(false);
   const tint = useSharedValue(0);
   const scanX = useSharedValue(-1);
@@ -1036,16 +1054,13 @@ function DaVinciFooterEgg() {
         if (finished) runOnJS(setScanning)(false);
       }),
     );
-    setTimeout(() => {
-      void Linking.openURL('https://davincidynamics.ai');
-    }, 820);
   }, [tint]);
 
   const textStyle = useAnimatedStyle(() => ({
     color: interpolateColor(
       tint.value,
       [0, 1],
-      ['rgba(255,255,255,0.22)', '#00E5FF'],
+      ['rgba(255,255,255,0.22)', VIBRANT_BLUE],
     ),
   }));
 
@@ -1059,12 +1074,12 @@ function DaVinciFooterEgg() {
       onLongPress={onLongPress}
       delayLongPress={480}
       style={styles.settingsFooterEgg}
-      accessibilityLabel="System managed by DaVinci Dynamics"
-      accessibilityHint="Long press to visit DaVinci Dynamics"
+      accessibilityLabel="VYBE system status"
+      accessibilityHint="Long press for status pulse"
     >
       <View style={styles.settingsFooterEggScanWrap}>
         <Animated.Text style={[styles.settingsFooterEggText, textStyle]}>
-          {scanning ? 'COOKIN_WITH_DAVINCI' : 'System Managed By DaVinci Dynamics'}
+          {scanning ? 'SIGNAL LOCKED' : 'VYBE · CONTINUOUS PLAYBACK CORE'}
         </Animated.Text>
         <Animated.View pointerEvents="none" style={[styles.settingsFooterEggScan, scanStyle]} />
       </View>
@@ -1099,17 +1114,9 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     color: '#fff',
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: -0.3,
-    ...Platform.select({
-      ios: {
-        textShadowColor: 'rgba(0,229,255,0.35)',
-        textShadowOffset: { width: 0, height: 0 },
-        textShadowRadius: 10,
-      },
-      default: {},
-    }),
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 3.2,
   },
   searchShell: {
     flexDirection: 'row',
@@ -1151,14 +1158,6 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     marginBottom: 10,
     textTransform: 'uppercase',
-    ...Platform.select({
-      ios: {
-        textShadowColor: 'rgba(0,229,255,0.75)',
-        textShadowOffset: { width: 0, height: 0 },
-        textShadowRadius: 12,
-      },
-      android: {},
-    }),
   },
   shadowCard: {
     backgroundColor: OLED_BLACK,
@@ -1206,6 +1205,15 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
     flexShrink: 1,
   },
+  deviceRowText: {
+    flexShrink: 1,
+  },
+  deviceStatusInline: {
+    color: VIBRANT_BLUE,
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: -0.15,
+  },
   rowSubtitle: {
     color: '#666666',
     fontSize: 13,
@@ -1219,6 +1227,28 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginRight: 6,
     maxWidth: 100,
+  },
+  rowDisclosure: {
+    width: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activeBadge: {
+    borderWidth: 1,
+    borderColor: 'rgba(0,229,255,0.55)',
+    backgroundColor: 'rgba(0,229,255,0.08)',
+    paddingHorizontal: 7,
+    paddingVertical: 6,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    maxWidth: 118,
+  },
+  activeBadgeText: {
+    color: VIBRANT_BLUE,
+    fontSize: 8,
+    fontWeight: '900',
+    letterSpacing: 0.35,
+    textAlign: 'center',
   },
   sliderRow: {
     alignItems: 'flex-start',
@@ -1242,14 +1272,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(0,229,255,0.45)',
     backgroundColor: 'rgba(0,229,255,0.1)',
-    ...Platform.select({
-      ios: {
-        shadowColor: VIBRANT_BLUE,
-        shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.55,
-        shadowRadius: 8,
-      },
-    }),
   },
   hqBadgeText: {
     color: VIBRANT_BLUE,
@@ -1309,11 +1331,7 @@ const styles = StyleSheet.create({
     width: 22,
     left: '50%',
     marginLeft: -11,
-    backgroundColor: '#00E5FF',
+    backgroundColor: VIBRANT_BLUE,
     opacity: 0.35,
-    shadowColor: '#00E5FF',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9,
-    shadowRadius: 8,
   },
 });

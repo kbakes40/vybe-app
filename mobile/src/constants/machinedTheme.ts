@@ -1,6 +1,8 @@
-/** Global “Machined Blue” + neon cyan system — Search, Discover, Library, Social, Settings, tabs. */
+/** Global machined cyan system + nav purple accents — Search, Discover, Library, Social, Settings, tabs. */
 
 export const VIBRANT_BLUE = '#00E5FF';
+/** Tab bar / account list iconography — unified purple (not “DaVinci blue”). */
+export const NAV_BAR_PURPLE = '#8B5CF6';
 /** Secondary lines — artist, sizes, live/source labels */
 export const GRAPHITE_GREY = '#666666';
 export const SHADOW_BLUE = '#0891B2';

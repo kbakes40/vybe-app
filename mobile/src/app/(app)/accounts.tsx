@@ -4,10 +4,10 @@ import {
   Text,
   ScrollView,
   Pressable,
+  StyleSheet,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import {
@@ -23,6 +23,7 @@ import Svg, { Path } from 'react-native-svg';
 import { authClient } from '@/lib/auth/auth-client';
 import { clearSessionBearerToken } from '@/lib/auth/sessionBearer';
 import { useVybePopup } from '@/components/VybePopup';
+import { OLED_BLACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
 
 // Mock accounts data
 const MOCK_ACCOUNTS: Array<{ id: string; name: string; email: string; image: string; isCurrent: boolean }> = [];
@@ -55,7 +56,7 @@ function AccountItem({ account, onPress, onRemove }: AccountItemProps) {
         <Text className="text-white/50 text-sm mt-0.5">{account.email}</Text>
       </View>
       {account.isCurrent ? (
-        <View className="w-6 h-6 rounded-full bg-[#8B5CF6] items-center justify-center">
+        <View className="w-6 h-6 rounded-full items-center justify-center" style={{ backgroundColor: NAV_BAR_PURPLE }}>
           <Check size={14} color="#fff" strokeWidth={3} />
         </View>
       ) : (
@@ -258,27 +259,22 @@ export default function AccountsScreen() {
   };
 
   return (
-    <View className="flex-1 bg-[#0A0A0A]">
-      {/* Header */}
-      <LinearGradient
-        colors={['#1a1a2e', '#0A0A0A']}
-        style={{ paddingTop: insets.top }}
-      >
-        <View className="flex-row items-center px-4 py-3">
+    <View style={acctStyles.screen}>
+      <View style={[acctStyles.header, { paddingTop: insets.top }]}>
+        <View style={acctStyles.headerRow}>
           <Pressable
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
               router.back();
             }}
-            className="w-10 h-10 items-center justify-center -ml-2"
+            style={acctStyles.backBtn}
           >
             <ChevronLeft size={28} color="#fff" />
           </Pressable>
-          <Text className="text-white text-xl font-bold flex-1 text-center mr-8">
-            Accounts
-          </Text>
+          <Text style={acctStyles.title}>ACCOUNTS</Text>
+          <View style={{ width: 40 }} />
         </View>
-      </LinearGradient>
+      </View>
 
       <ScrollView
         className="flex-1"
@@ -290,7 +286,7 @@ export default function AccountsScreen() {
           <Text className="text-white/50 text-xs uppercase tracking-wider px-5 mb-3 font-medium">
             Signed In Accounts
           </Text>
-          <View className="bg-[#1A1A1A] mx-4 rounded-xl overflow-hidden">
+          <View style={acctStyles.card}>
             {accounts.map((account, index) => (
               <View key={account.id}>
                 <AccountItem
@@ -316,13 +312,13 @@ export default function AccountsScreen() {
               }}
               className="flex-row items-center justify-center py-4 bg-[#1A1A1A] rounded-xl"
             >
-              <Plus size={22} color="#8B5CF6" />
-              <Text className="text-[#8B5CF6] font-semibold text-base ml-2">
+              <Plus size={22} color={NAV_BAR_PURPLE} />
+              <Text style={{ color: NAV_BAR_PURPLE, fontWeight: '700', fontSize: 16, marginLeft: 8 }}>
                 Add Account
               </Text>
             </Pressable>
           ) : (
-            <View style={{ backgroundColor: '#1C1C1E', borderRadius: 16, overflow: 'hidden' }}>
+            <View style={acctStyles.addPanel}>
               <Text style={{ color: '#fff', fontWeight: '500', fontSize: 15, textAlign: 'center', paddingTop: 18, paddingBottom: 14 }}>
                 Add Another Account
               </Text>
@@ -378,3 +374,50 @@ export default function AccountsScreen() {
     </View>
   );
 }
+
+const acctStyles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: OLED_BLACK,
+  },
+  header: {
+    backgroundColor: OLED_BLACK,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  title: {
+    flex: 1,
+    textAlign: 'center',
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 3.2,
+  },
+  card: {
+    marginHorizontal: 16,
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(0,229,255,0.2)',
+    backgroundColor: OLED_BLACK,
+  },
+  addPanel: {
+    backgroundColor: OLED_BLACK,
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(0,229,255,0.18)',
+  },
+});
