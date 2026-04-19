@@ -22,6 +22,16 @@ function sheetExpandedHeightPx(windowHeight: number): number {
   return Math.max(120, windowHeight);
 }
 
+/**
+ * When the sheet is fully "open", rest translateY at this offset from the top.
+ * Leaves a strip of the previous screen (status bar + DI pill) visible above
+ * the sheet's rounded top corners — Apple/Spotify/Google Music pattern.
+ */
+const EXPANDED_TOP_OFFSET = 80;
+
+/** Keeps the top corners rounded even when the sheet is fully open. */
+const EXPANDED_TOP_RADIUS = 32;
+
 /** Open: gentle ease-out — slower start, soft landing (no snap). */
 const EASE_OPEN = Easing.bezier(0.16, 1, 0.22, 1);
 /** Close: standard material ease-in */
@@ -90,7 +100,9 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
 
   const expand = useCallback(() => {
     const d = timingForOpen(ty.value);
-    ty.value = withTiming(0, { duration: d, easing: EASE_OPEN });
+    // Target EXPANDED_TOP_OFFSET (not 0) so the sheet doesn't cover the
+    // status bar / DI pill — leaves space for the rounded top corners to read.
+    ty.value = withTiming(EXPANDED_TOP_OFFSET, { duration: d, easing: EASE_OPEN });
   }, [ty]);
 
   const collapse = useCallback(() => {
@@ -191,10 +203,13 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
       };
     }
     const m = maxTranslate;
+    // Corners stay rounded at fully-open (bottom of input range is now the
+    // rest offset, not 0) so the sheet reads as a page-sheet, not a
+    // full-screen takeover. Radius grows as the sheet lifts — max at rest.
     const topRadius = interpolate(
       ty.value,
-      [m, m * 0.88, m * 0.42, 0],
-      [16, 14, 6, 0],
+      [m, m * 0.88, m * 0.42, EXPANDED_TOP_OFFSET],
+      [16, 22, 28, EXPANDED_TOP_RADIUS],
       Extrapolation.CLAMP,
     );
     return {
