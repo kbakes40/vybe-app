@@ -1124,11 +1124,11 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                     onPress={() => {
                       if (isLiked) {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        toggleLike(currentTrack.id);
+                        toggleLike(currentTrack.id, currentTrack);
                         return;
                       }
                       runLikeRewardAnimation();
-                      toggleLike(currentTrack.id);
+                      toggleLike(currentTrack.id, currentTrack);
                     }}
                     className="p-2"
                     accessibilityRole="button"

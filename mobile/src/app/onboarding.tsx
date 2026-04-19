@@ -17,6 +17,10 @@ import Animated, {
   useSharedValue,
   withSpring,
   interpolateColor,
+  withTiming,
+  withSequence,
+  Easing,
+  runOnJS,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -24,6 +28,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '@/lib/api/api';
 import { vybe } from '@/theme/vybeTokens';
 import { useFireMixStore } from '@/stores/fireMixStore';
+
+const NEON_CYAN = '#00FFFF';
+const BABY_BLUE_FLASH = 'rgba(159, 217, 255, 0.72)';
+const OLED_BLACK = '#000000';
 
 const VIBE_PREFS_KEY = '@vybe/onboarding_vibes';
 
@@ -89,27 +97,45 @@ const VYBE_STYLES: VybeStyle[] = [
 function StyleCard({
   item,
   selected,
+  flashNonce,
   onToggle,
 }: {
   item: VybeStyle;
   selected: boolean;
+  flashNonce: number;
   onToggle: () => void;
 }) {
   const pressed = useSharedValue(selected ? 1 : 0);
+  const flashOverlay = useSharedValue(0);
 
   useEffect(() => {
     pressed.value = withSpring(selected ? 1 : 0, { damping: 17, stiffness: 280 });
   }, [selected, pressed]);
 
+  useEffect(() => {
+    if (!flashNonce || !selected) return;
+    flashOverlay.value = 0;
+    flashOverlay.value = withSequence(
+      withTiming(1, { duration: 100, easing: Easing.out(Easing.quad) }),
+      withTiming(0, { duration: 260, easing: Easing.in(Easing.quad) }),
+    );
+  }, [flashNonce, selected, flashOverlay]);
+
   const animStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: 1 + 0.05 * pressed.value }],
+    transform: [{ scale: 1 + 0.04 * pressed.value }],
     borderColor: interpolateColor(
       pressed.value,
       [0, 1],
-      ['rgba(255,255,255,0.1)', 'rgba(251,191,36,0.85)'],
+      ['rgba(255,255,255,0.1)', NEON_CYAN],
     ),
-    shadowOpacity: 0.14 + 0.52 * pressed.value,
-    shadowRadius: 5 + 18 * pressed.value,
+    borderWidth: 1 + pressed.value,
+    shadowOpacity: 0.08 + 0.5 * pressed.value,
+    shadowRadius: 4 + 16 * pressed.value,
+    shadowColor: interpolateColor(pressed.value, [0, 1], ['#000000', NEON_CYAN]),
+  }));
+
+  const flashStyle = useAnimatedStyle(() => ({
+    opacity: flashOverlay.value,
   }));
 
   return (
@@ -121,9 +147,7 @@ function StyleCard({
       style={[
         styles.cardOuter,
         { width: CARD_W },
-        Platform.OS === 'ios'
-          ? { shadowColor: selected ? '#DC2626' : '#000000' }
-          : { elevation: selected ? 14 : 5 },
+        Platform.OS === 'ios' ? {} : { elevation: selected ? 12 : 5 },
         animStyle,
       ]}
     >
@@ -132,9 +156,13 @@ function StyleCard({
           colors={['rgba(0,0,0,0.1)', 'rgba(0,0,0,0.55)', 'rgba(0,0,0,0.92)']}
           style={StyleSheet.absoluteFill}
         />
+        <Animated.View
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, styles.tileFlashLayer, flashStyle]}
+        />
         <View style={styles.cardText}>
           <Text style={styles.cardLabel}>{item.label}</Text>
-          <Text style={styles.cardSub}>{item.sub}</Text>
+          <Text style={[styles.cardSub, selected && styles.cardSubActive]}>{item.sub}</Text>
         </View>
       </ImageBackground>
     </AnimatedPressable>
@@ -146,6 +174,10 @@ export default function OnboardingScreen() {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
+  const [flashNonce, setFlashNonce] = useState(0);
+
+  const exitScale = useSharedValue(1);
+  const exitOpacity = useSharedValue(1);
 
   const toggle = useCallback((id: string) => {
     setSelected((prev) => {
@@ -158,11 +190,8 @@ export default function OnboardingScreen() {
 
   const canContinue = selected.size >= 1;
 
-  const handleEnter = async () => {
-    if (!canContinue || loading) return;
-    setLoading(true);
+  const persistAndGoHome = useCallback(async () => {
     const genres = VYBE_STYLES.filter((s) => selected.has(s.id)).map((s) => s.label);
-    /** Fire Mix builds in the store while we persist prefs — Home reads the same store. */
     useFireMixStore.getState().buildFromGenres(genres);
     try {
       await AsyncStorage.setItem(VIBE_PREFS_KEY, JSON.stringify({ genres, savedAt: Date.now() }));
@@ -182,59 +211,92 @@ export default function OnboardingScreen() {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setLoading(false);
     router.replace('/(app)/(tabs)/index' as never);
-  };
+  }, [router, selected]);
+
+  const screenExitStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: exitScale.value }],
+    opacity: exitOpacity.value,
+  }));
+
+  const handleNext = useCallback(() => {
+    if (!canContinue || loading) return;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setFlashNonce((n) => n + 1);
+    setLoading(true);
+
+    const runExit = () => {
+      exitScale.value = withTiming(1.07, { duration: 340, easing: Easing.out(Easing.cubic) });
+      exitOpacity.value = withTiming(
+        0,
+        { duration: 420, easing: Easing.in(Easing.cubic) },
+        (finished) => {
+          if (finished) {
+            runOnJS(() => {
+              void persistAndGoHome();
+            })();
+          }
+        },
+      );
+    };
+
+    setTimeout(runExit, 220);
+  }, [canContinue, loading, exitScale, exitOpacity, persistAndGoHome]);
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <View style={styles.header}>
-        <Text style={styles.kicker}>Choose your Vybe</Text>
-        <Text style={styles.title}>What moves you</Text>
-        <Text style={styles.lede}>
-          Tap one or more. This steers your feed — no cartoon icons, just the loop you want in the room.
-        </Text>
-      </View>
-
-      <ScrollView
-        contentContainerStyle={{
-          paddingHorizontal: 20,
-          paddingBottom: insets.bottom + 120,
-        }}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.grid}>
-          {VYBE_STYLES.map((item) => (
-            <StyleCard
-              key={item.id}
-              item={item}
-              selected={selected.has(item.id)}
-              onToggle={() => toggle(item.id)}
-            />
-          ))}
+      <Animated.View style={[styles.screenContent, screenExitStyle]}>
+        <View style={styles.header}>
+          <Text style={styles.kicker}>Choose your Vybe</Text>
+          <Text style={styles.title}>What moves you</Text>
+          <Text style={styles.lede}>
+            Tap one or more. This steers your feed — no cartoon icons, just the loop you want in the room.
+          </Text>
         </View>
-      </ScrollView>
+
+        <ScrollView
+          contentContainerStyle={{
+            paddingHorizontal: 20,
+            paddingBottom: insets.bottom + 108,
+          }}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.grid}>
+            {VYBE_STYLES.map((item) => (
+              <StyleCard
+                key={item.id}
+                item={item}
+                selected={selected.has(item.id)}
+                flashNonce={flashNonce}
+                onToggle={() => toggle(item.id)}
+              />
+            ))}
+          </View>
+        </ScrollView>
+      </Animated.View>
 
       <View
+        pointerEvents="box-none"
         style={[
           styles.sticky,
           {
-            paddingBottom: insets.bottom + 16,
-            borderTopColor: vybe.border.subtle,
+            paddingBottom: Math.max(insets.bottom, 12) + 8,
+            borderTopColor: 'rgba(255,255,255,0.08)',
           },
         ]}
       >
         <Pressable
-          onPress={handleEnter}
+          onPress={handleNext}
           disabled={!canContinue || loading}
           style={({ pressed }) => [
-            styles.cta,
-            !canContinue && styles.ctaDisabled,
-            pressed && canContinue && styles.ctaPressed,
+            styles.nextBtn,
+            canContinue ? styles.nextBtnActive : styles.nextBtnGhost,
+            pressed && canContinue && styles.nextBtnPressed,
           ]}
         >
           {loading ? (
-            <ActivityIndicator color="#0A0A0A" />
+            <ActivityIndicator color={NEON_CYAN} />
           ) : (
-            <Text style={styles.ctaText}>Enter the Loop</Text>
+            <Text style={[styles.nextBtnText, canContinue && styles.nextBtnTextActive]}>Next</Text>
           )}
         </Pressable>
       </View>
@@ -245,7 +307,10 @@ export default function OnboardingScreen() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: OLED_BLACK,
+  },
+  screenContent: {
+    flex: 1,
   },
   header: {
     paddingHorizontal: 20,
@@ -282,7 +347,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: 'rgba(255,255,255,0.1)',
     height: CARD_W * 1.22,
     marginBottom: CARD_GAP,
     backgroundColor: vybe.bg.card,
@@ -319,43 +384,64 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     letterSpacing: 0.2,
   },
+  cardSubActive: {
+    color: 'rgba(230, 255, 255, 0.95)',
+    textShadowColor: 'rgba(0, 255, 255, 0.55)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 8,
+  },
+  tileFlashLayer: {
+    backgroundColor: BABY_BLUE_FLASH,
+    zIndex: 2,
+  },
   sticky: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
     paddingHorizontal: 20,
-    paddingTop: 14,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    backgroundColor: 'rgba(0,0,0,0.94)',
+    paddingTop: 12,
+    borderTopWidth: 1,
+    backgroundColor: 'rgba(0,0,0,0.96)',
   },
-  cta: {
-    backgroundColor: '#F59E0B',
-    paddingVertical: 17,
-    borderRadius: 4,
+  nextBtn: {
+    paddingVertical: 16,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
+    minHeight: 52,
+  },
+  nextBtnGhost: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  nextBtnActive: {
+    backgroundColor: OLED_BLACK,
+    borderWidth: 1.5,
+    borderColor: NEON_CYAN,
     ...Platform.select({
       ios: {
-        shadowColor: '#EA580C',
+        shadowColor: NEON_CYAN,
         shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.45,
+        shadowOpacity: 0.55,
         shadowRadius: 14,
       },
-      android: { elevation: 8 },
+      android: { elevation: 10 },
     }),
   },
-  ctaDisabled: {
-    opacity: 0.35,
+  nextBtnPressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.98 }],
   },
-  ctaPressed: {
-    opacity: 0.92,
-  },
-  ctaText: {
-    color: '#0A0A0A',
+  nextBtnText: {
+    color: 'rgba(255,255,255,0.38)',
     fontSize: 15,
     fontWeight: '800',
-    letterSpacing: 1.2,
+    letterSpacing: 2,
     textTransform: 'uppercase',
+  },
+  nextBtnTextActive: {
+    color: '#FFFFFF',
   },
 });

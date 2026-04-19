@@ -5,10 +5,11 @@
 
 import type { Track } from '@/types/music';
 import {
-  resolveYoutubeUrlForPlayback,
-  resolveYoutubeUrlForPlaybackWithBudget,
+  resolveYoutubeEnvelopeForPlaybackWithBudget,
   invalidateYoutubeResolveCache,
+  preResolveYoutubeVideoId,
 } from '@/lib/youtubeResolvePreloadCache';
+import type { YoutubeHealMeta } from '@/lib/youtubeResolvePreloadCache';
 
 /** Budget (ms) to wait for direct CDN URL before falling back to proxy. */
 const RESOLVE_BUDGET_MS = 2_800;
@@ -74,6 +75,9 @@ export type YoutubeStreamResolution = {
   playUri: string;
   /** True when using cached /resolve CDN URL */
   fromCdn: boolean;
+  /** Server substituted a SoundCloud stream for a failed vault resolve. */
+  healedMeta?: YoutubeHealMeta | null;
+  xHealed?: boolean;
 };
 
 /**
@@ -98,14 +102,24 @@ export async function resolveYoutubeStreamForVideoId(
     return { playUri: proxyUrl, fromCdn: false };
   }
 
-  const tryDirect = async (): Promise<string | null> => {
-    void resolveYoutubeUrlForPlayback(videoId);
-    return resolveYoutubeUrlForPlaybackWithBudget(videoId, RESOLVE_BUDGET_MS);
+  const tryDirect = async () => {
+    preResolveYoutubeVideoId(videoId);
+    return resolveYoutubeEnvelopeForPlaybackWithBudget(videoId, RESOLVE_BUDGET_MS, {
+      fresh: options?.forceRefresh ?? false,
+    });
   };
 
   const direct = await tryDirect();
-  if (direct) {
-    return { playUri: direct, fromCdn: true };
+  if (direct?.healedMeta) {
+    return {
+      playUri: direct.url,
+      fromCdn: true,
+      healedMeta: direct.healedMeta,
+      xHealed: direct.xHealed,
+    };
+  }
+  if (direct?.url) {
+    return { playUri: direct.url, fromCdn: true };
   }
 
   if (!backendBaseNoSlash) {

@@ -62,6 +62,7 @@ function seedTail(): (PlaylistShareItem | SocialInteractionItem)[] {
       playlistName: 'Acoustic Soul',
       subtitle: 'The Woods added 3 new tracks',
       timeLabel: '1h ago',
+      streamPrimary: 'soundcloud',
     },
     {
       kind: 'playlist_share',
@@ -69,6 +70,7 @@ function seedTail(): (PlaylistShareItem | SocialInteractionItem)[] {
       playlistName: 'Deep House Focus',
       subtitle: 'Liked by 12 others',
       timeLabel: '2h ago',
+      streamPrimary: 'soundcloud',
     },
     {
       kind: 'playlist_share',
@@ -76,6 +78,7 @@ function seedTail(): (PlaylistShareItem | SocialInteractionItem)[] {
       playlistName: 'Indie Anthems',
       subtitle: 'Got liked by 21 others',
       timeLabel: '4h ago',
+      streamPrimary: 'vault',
     },
     {
       kind: 'social_interaction',

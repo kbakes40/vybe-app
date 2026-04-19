@@ -34,6 +34,8 @@ export type PlaylistShareItem = {
   playlistName: string;
   subtitle: string;
   timeLabel: string;
+  /** When set, row uses SoundCloud cloud affordance instead of vault “Join Playlist”. */
+  streamPrimary?: 'soundcloud' | 'vault';
 };
 
 export type SocialInteractionItem = {

@@ -1166,7 +1166,7 @@ soundcloudRouter.get("/search", async (c) => {
   }
 });
 
-async function searchSoundCloud(query: string, maxResults: number): Promise<Array<{
+export async function searchSoundCloud(query: string, maxResults: number): Promise<Array<{
   trackId: string;
   title: string;
   artist: string;
@@ -1224,6 +1224,52 @@ async function searchSoundCloud(query: string, maxResults: number): Promise<Arra
 }
 
 /**
+ * Resolve a SoundCloud track page to a direct CDN/HLS URL (shared cache with GET /stream-url).
+ */
+export async function resolveSoundcloudPageStreamUrl(pageUrl: string): Promise<string> {
+  if (!SC_URL_RE.test(pageUrl)) {
+    throw new Error("Invalid SoundCloud URL");
+  }
+  const cacheKey = `sc:${pageUrl}`;
+  const hit = scStreamUrlCache.get(cacheKey);
+  if (hit) return hit;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 28_000);
+  try {
+    const output = await ytDlp.execPromise(
+      [
+        pageUrl,
+        "-f",
+        "ba[protocol^=m3u8]/ba[ext=m3u8]/bestaudio[protocol=https][ext=mp3]/bestaudio[protocol=http][ext=mp3]/bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio",
+        "--get-url",
+        "--no-playlist",
+        "--no-warnings",
+        "--quiet",
+      ],
+      {},
+      controller.signal,
+    );
+    clearTimeout(timer);
+    const line =
+      output
+        .trim()
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .pop() ?? "";
+    if (!line.startsWith("http")) {
+      throw new Error("Could not resolve stream URL");
+    }
+    scStreamUrlCache.set(cacheKey, line);
+    return line;
+  } catch (e) {
+    clearTimeout(timer);
+    throw e instanceof Error ? e : new Error(String(e));
+  }
+}
+
+/**
  * GET /api/soundcloud/stream-url?url=
  * Resolve a playable CDN/HLS URL via yt-dlp --get-url (cached ~4h).
  * Mobile should prefer this for AVPlayer; fall back to /audio?quality=low on failure.
@@ -1233,36 +1279,10 @@ soundcloudRouter.get("/stream-url", async (c) => {
   if (!url || !SC_URL_RE.test(url)) {
     return c.json({ error: { message: "Missing or invalid SoundCloud URL", code: "INVALID_URL" } }, 400);
   }
-  const cacheKey = `sc:${url}`;
-  const hit = scStreamUrlCache.get(cacheKey);
-  if (hit) return c.json({ data: { url: hit } });
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 28_000);
   try {
-    const output = await ytDlp.execPromise([
-      url,
-      "-f",
-      "ba[protocol^=m3u8]/ba[ext=m3u8]/bestaudio[protocol=https][ext=mp3]/bestaudio[protocol=http][ext=mp3]/bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio",
-      "--get-url",
-      "--no-playlist",
-      "--no-warnings",
-      "--quiet",
-    ], {}, controller.signal);
-    clearTimeout(timer);
-    const line = output
-      .trim()
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .pop() ?? "";
-    if (!line.startsWith("http")) {
-      return c.json({ error: { message: "Could not resolve stream URL", code: "RESOLVE_FAILED" } }, 502);
-    }
-    scStreamUrlCache.set(cacheKey, line);
+    const line = await resolveSoundcloudPageStreamUrl(url);
     return c.json({ data: { url: line } });
   } catch (e) {
-    clearTimeout(timer);
     const msg = e instanceof Error ? e.message : "resolve failed";
     console.error("[SoundCloud] stream-url:", msg);
     return c.json({ error: { message: msg, code: "RESOLVE_FAILED" } }, 502);

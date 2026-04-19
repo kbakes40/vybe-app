@@ -8,6 +8,10 @@ import { create } from "zustand";
  * `successAt` and renders a Shadow Cyan checkmark for ~2s when it changes.
  */
 interface DynamicIslandSignalState {
+  /** True while server may be auto-healing a failed YouTube vault (baby blue pulse). */
+  healingStreamActive: boolean;
+  setHealingStreamActive: (active: boolean) => void;
+
   /** Monotonically updated timestamp; bump to trigger a SUCCESS flash. */
   successAt: number;
   /** Optional one-line label rendered next to the checkmark. */
@@ -27,6 +31,9 @@ interface DynamicIslandSignalState {
 }
 
 export const useDynamicIslandSignal = create<DynamicIslandSignalState>((set) => ({
+  healingStreamActive: false,
+  setHealingStreamActive: (active) => set({ healingStreamActive: active }),
+
   successAt: 0,
   successLabel: null,
   flashSuccess: (label?: string) =>

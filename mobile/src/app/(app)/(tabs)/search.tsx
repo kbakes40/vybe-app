@@ -58,6 +58,14 @@ interface TypedSearchDiskEntry {
   sc: Track[];
 }
 
+interface GlobalSearchApiRow {
+  soundcloudTop: SCTrack[];
+  soundcloudRest: SCTrack[];
+  vaultTracks: Array<
+    PlaylistTrack & { vaultLabel?: string; recoveryHint?: string }
+  >;
+}
+
 interface SpotifyPlaylistTrack {
   videoId: string;
   title: string;
@@ -161,18 +169,21 @@ export default function SearchScreen() {
     let cancelled = false;
     setLiveSearchFetching(true);
     const handle = setTimeout(() => {
-      const scP = withTimeout(
-        api.get<SCTrack[]>(`/api/soundcloud/search?q=${encodeURIComponent(q)}&maxResults=35`),
-        18000,
-      ).catch(() => [] as SCTrack[]);
-      const ytP = withTimeout(
-        api.get<PlaylistTrack[]>(`/api/youtube/search?q=${encodeURIComponent(`${q} music`)}&maxResults=18`),
-        18000,
-      ).catch(() => [] as PlaylistTrack[]);
-      Promise.all([scP, ytP])
-        .then(([scRes, ytRes]) => {
+      const globalP = withTimeout(
+        api.get<GlobalSearchApiRow>(`/api/search/global?q=${encodeURIComponent(q)}`),
+        24000,
+      ).catch(() => null);
+
+      globalP
+        .then((payload) => {
           if (cancelled) return;
-          const scMapped: Track[] = (scRes ?? []).map((t) => ({
+          if (!payload) {
+            setLiveSoundCloudTracks([]);
+            setLiveYtMusicTracks([]);
+            return;
+          }
+          const scRows = [...(payload.soundcloudTop ?? []), ...(payload.soundcloudRest ?? [])];
+          const scMapped: Track[] = scRows.map((t) => ({
             id: `sc-${t.trackId}`,
             title: t.title,
             artist: t.artist,
@@ -187,7 +198,7 @@ export default function SearchScreen() {
             albumId: '',
           }));
           const ytMapped: Track[] = filterDeadYoutubeQueueTracks(
-            (ytRes ?? []).map((t) => ({
+            (payload.vaultTracks ?? []).map((t) => ({
               id: `ytm-${t.videoId}`,
               title: t.title,
               artist: t.channelName,
@@ -210,10 +221,10 @@ export default function SearchScreen() {
             const id = tr.youtubeMusicId ?? tr.youtubeId;
             if (id) preResolveYoutubeVideoId(id);
           });
-          scMapped.slice(0, 3).forEach((tr) => {
+          scMapped.slice(0, 10).forEach((tr) => {
             if (tr.soundcloudUrl) preResolveSoundcloudStreamUrl(tr.soundcloudUrl);
           });
-          [...ytMapped, ...scMapped].slice(0, 10).forEach((tr) => {
+          scMapped.slice(0, 10).forEach((tr) => {
             if (tr.artwork) void Image.prefetch(tr.artwork);
           });
         })
@@ -470,32 +481,12 @@ export default function SearchScreen() {
                   </View>
                 ) : null}
 
-                {liveYtMusicTracks.length > 0 || (liveSearchFetching && liveYtMusicTracks.length === 0 && liveSoundCloudTracks.length === 0) ? (
-                  <View style={{ marginTop: 8 }}>
-                    <NeonVybeSearchSectionHeader variant="music" subtitle="Vault results" />
-                    {liveYtMusicTracks.length === 0 && liveSearchFetching ? (
-                      <View style={{ paddingHorizontal: 20, gap: 12 }}>
-                        {[0, 1, 2].map((i) => (
-                          <View key={i} style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <View style={{ width: 56, height: 56, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }} />
-                            <View style={{ flex: 1, marginLeft: 12, gap: 8 }}>
-                              <View style={{ height: 14, width: '70%', borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.06)' }} />
-                              <View style={{ height: 12, width: '45%', borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.04)' }} />
-                            </View>
-                          </View>
-                        ))}
-                      </View>
-                    ) : (
-                      liveYtMusicTracks.map((track) => (
-                        <TrackCard key={track.id} track={track} queue={liveYtMusicTracks} rowVariant="search" />
-                      ))
-                    )}
-                  </View>
-                ) : null}
-
                 {liveSoundCloudTracks.length > 0 || (liveSearchFetching && liveSoundCloudTracks.length === 0 && liveYtMusicTracks.length === 0) ? (
-                  <View style={{ marginTop: 28 }}>
-                    <NeonVybeSearchSectionHeader variant="waves" subtitle="SoundCloud discovery" />
+                  <View style={{ marginTop: 8 }}>
+                    <NeonVybeSearchSectionHeader
+                      variant="waves"
+                      subtitle="SoundCloud · instant streams (top picks first)"
+                    />
                     {liveSoundCloudTracks.length === 0 && liveSearchFetching ? (
                       <View style={{ paddingHorizontal: 20, gap: 12 }}>
                         {[0, 1, 2].map((i) => (
@@ -511,6 +502,32 @@ export default function SearchScreen() {
                     ) : (
                       liveSoundCloudTracks.map((track) => (
                         <TrackCard key={track.id} track={track} queue={liveSoundCloudTracks} rowVariant="search" />
+                      ))
+                    )}
+                  </View>
+                ) : null}
+
+                {liveYtMusicTracks.length > 0 || (liveSearchFetching && liveYtMusicTracks.length === 0 && liveSoundCloudTracks.length === 0) ? (
+                  <View style={{ marginTop: 28 }}>
+                    <NeonVybeSearchSectionHeader
+                      variant="music"
+                      subtitle="Vault Tracks · may need longer Machined Recovery (YouTube)"
+                    />
+                    {liveYtMusicTracks.length === 0 && liveSearchFetching ? (
+                      <View style={{ paddingHorizontal: 20, gap: 12 }}>
+                        {[0, 1, 2].map((i) => (
+                          <View key={i} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <View style={{ width: 56, height: 56, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }} />
+                            <View style={{ flex: 1, marginLeft: 12, gap: 8 }}>
+                              <View style={{ height: 14, width: '70%', borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.06)' }} />
+                              <View style={{ height: 12, width: '45%', borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.04)' }} />
+                            </View>
+                          </View>
+                        ))}
+                      </View>
+                    ) : (
+                      liveYtMusicTracks.map((track) => (
+                        <TrackCard key={track.id} track={track} queue={liveYtMusicTracks} rowVariant="search" />
                       ))
                     )}
                   </View>

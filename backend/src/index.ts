@@ -40,6 +40,7 @@ import { appleMusicRouter } from "./routes/appleMusic";
 import { vipRouter } from "./routes/vip";
 import { libraryRouter } from "./routes/library";
 import { socialRouter } from "./routes/social";
+import { searchRouter } from "./routes/search";
 import { logger } from "hono/logger";
 
 // Type the Hono app with user/session variables
@@ -161,6 +162,7 @@ app.route("/api/apple-music", appleMusicRouter);
 app.route("/api/vip", vipRouter);
 app.route("/api/library", libraryRouter);
 app.route("/api/social", socialRouter);
+app.route("/api/search", searchRouter);
 
 // Build marker — bumped to force Railway to pick up new commits.
 // If you see this in Railway logs, the new code IS deployed.

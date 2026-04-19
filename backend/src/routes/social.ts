@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { auth } from "../auth";
 
 /**
  * Social feed routes — v1 (mock-data backbone).
@@ -28,7 +29,21 @@ interface SocialPost {
   createdAt: string;
 }
 
-export const socialRouter = new Hono();
+/** Vybe Activity tail — mirrors mobile `SocialInteractionItem`. */
+type SocialInteractionItem = {
+  kind: "social_interaction";
+  id: string;
+  actor: string;
+  action: string;
+  timeLabel: string;
+};
+
+export const socialRouter = new Hono<{
+  Variables: {
+    user: typeof auth.$Infer.Session.user | null;
+    session: typeof auth.$Infer.Session.session | null;
+  };
+}>();
 
 const MOCK_POSTS: SocialPost[] = [
   {
@@ -150,6 +165,15 @@ const MOCK_POSTS: SocialPost[] = [
 /** Extra ephemeral posts created in this process via POST /post (mock store). */
 const sessionPosts: SocialPost[] = [];
 
+/** Session-scoped “fired” SoundCloud likes → Vybe Activity (in-memory until DB). */
+const sessionSoundcloudActivities: SocialInteractionItem[] = [];
+
+function displayActorName(user: { id?: string; name?: string; email?: string }): string {
+  const raw = (user.name ?? user.email ?? "You").trim();
+  const first = raw.split(/\s+/)[0] ?? raw;
+  return first.length > 0 ? first.slice(0, 24) : "You";
+}
+
 socialRouter.get("/feed", (c) => {
   const user = c.get("user") as { id?: string; name?: string; email?: string } | null;
   if (!user) {
@@ -158,6 +182,61 @@ socialRouter.get("/feed", (c) => {
   // Newest-first: session posts on top, then the curated mock set.
   const data: SocialPost[] = [...sessionPosts, ...MOCK_POSTS];
   return c.json({ data });
+});
+
+/** Global Vybe Activity interactions (SoundCloud fires, etc.) for this server session. */
+socialRouter.get("/activity", (c) => {
+  const user = c.get("user") as { id?: string; name?: string; email?: string } | null;
+  if (!user) {
+    return c.json({ error: { code: "UNAUTHORIZED", message: "Sign in required" } }, 401);
+  }
+  return c.json({ data: [...sessionSoundcloudActivities] });
+});
+
+socialRouter.post("/activity/soundcloud-fire", async (c) => {
+  const user = c.get("user") as { id?: string; name?: string; email?: string } | null;
+  if (!user) {
+    return c.json({ error: { code: "UNAUTHORIZED", message: "Sign in required" } }, 401);
+  }
+
+  let body: {
+    trackId?: unknown;
+    trackTitle?: unknown;
+    trackArtist?: unknown;
+    trackArtwork?: unknown;
+    soundcloudUrl?: unknown;
+  } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: { code: "BAD_JSON", message: "Invalid JSON body" } }, 400);
+  }
+
+  const trackTitle =
+    typeof body.trackTitle === "string" ? body.trackTitle.trim().slice(0, 200) : "";
+  const trackArtist =
+    typeof body.trackArtist === "string" ? body.trackArtist.trim().slice(0, 200) : "";
+  if (!trackTitle || !trackArtist) {
+    return c.json(
+      { error: { code: "BAD_INPUT", message: "trackTitle and trackArtist required" } },
+      400,
+    );
+  }
+
+  const actor = displayActorName(user);
+  const titleArtist = `"${trackTitle}" · ${trackArtist}`;
+  const item: SocialInteractionItem = {
+    kind: "social_interaction",
+    id: `sc_fire_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+    actor,
+    action: `fired ${titleArtist} on SoundCloud.`,
+    timeLabel: "Just now",
+  };
+
+  sessionSoundcloudActivities.unshift(item);
+  if (sessionSoundcloudActivities.length > 120) sessionSoundcloudActivities.length = 120;
+
+  return c.json({ data: item }, 201);
 });
 
 socialRouter.post("/post", async (c) => {

@@ -1,11 +1,28 @@
 /**
  * Client-side cache for GET /api/youtube/resolve/:videoId (direct CDN URL).
  * Mobile-only: avoids waiting on resolve on tap when pre-resolve already ran.
+ * Supports vault auto-heal payloads (`healed` + SoundCloud metadata) — never cached.
  */
 
 const TTL_MS = 15 * 60 * 1000;
 const cache = new Map<string, { url: string; expires: number }>();
-const inflight = new Map<string, Promise<string | null>>();
+const inflight = new Map<string, Promise<YoutubeResolveEnvelope | null>>();
+
+export type YoutubeHealMeta = {
+  soundcloudUrl: string;
+  scTrackId: string;
+  title: string;
+  artist: string;
+  artwork: string;
+  duration: number;
+};
+
+export type YoutubeResolveEnvelope = {
+  url: string;
+  healedMeta?: YoutubeHealMeta;
+  /** True when server used SoundCloud substitution for this resolve. */
+  xHealed?: boolean;
+};
 
 function backendBase(): string {
   return (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
@@ -34,7 +51,9 @@ function isRetriableResolveFetchError(e: unknown): boolean {
 export function invalidateYoutubeResolveCache(videoId: string): void {
   if (!videoId) return;
   cache.delete(videoId);
-  inflight.delete(videoId);
+  for (const key of [...inflight.keys()]) {
+    if (key.startsWith(`${videoId}\t`)) inflight.delete(key);
+  }
 }
 
 /** Dev / recovery: drop all in-memory YouTube resolve entries. */
@@ -57,27 +76,74 @@ export function setCachedYoutubeResolveUrl(videoId: string, url: string): void {
   cache.set(videoId, { url, expires: Date.now() + TTL_MS });
 }
 
-async function fetchResolveUrl(videoId: string, attempt = 0): Promise<string | null> {
+function parseResolveJson(
+  j: unknown,
+  headerHealed: boolean,
+): YoutubeResolveEnvelope | null {
+  const root = j as {
+    data?: {
+      url?: string;
+      healed?: boolean;
+      soundcloudUrl?: string;
+      scTrackId?: string;
+      title?: string;
+      artist?: string;
+      artwork?: string;
+      duration?: number;
+    };
+  };
+  const data = root.data;
+  const url = typeof data?.url === 'string' ? data.url.trim() : '';
+  if (!url.startsWith('http')) return null;
+
+  const healed =
+    !!data?.healed &&
+    typeof data.soundcloudUrl === 'string' &&
+    typeof data.scTrackId === 'string';
+  if (healed) {
+    return {
+      url,
+      xHealed: headerHealed || !!data.healed,
+      healedMeta: {
+        soundcloudUrl: data.soundcloudUrl!,
+        scTrackId: data.scTrackId!,
+        title: typeof data.title === 'string' ? data.title : '',
+        artist: typeof data.artist === 'string' ? data.artist : '',
+        artwork: typeof data.artwork === 'string' ? data.artwork : '',
+        duration: typeof data.duration === 'number' ? data.duration : 0,
+      },
+    };
+  }
+  return { url, xHealed: headerHealed };
+}
+
+async function fetchResolveEnvelope(
+  videoId: string,
+  fresh: boolean,
+  attempt = 0,
+): Promise<YoutubeResolveEnvelope | null> {
   const base = backendBase();
   if (!base || !videoId) return null;
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), 25_000);
   try {
-    const res = await fetch(`${base}/api/youtube/resolve/${videoId}`, {
+    const qs = fresh ? '?fresh=1' : '';
+    const res = await fetch(`${base}/api/youtube/resolve/${videoId}${qs}`, {
       signal: ac.signal,
       headers: YOUTUBE_RESOLVE_FETCH_HEADERS,
     });
     if (!res.ok) return null;
-    const j = (await res.json()) as { data?: { url?: string } };
-    const url = j.data?.url;
-    if (url && url.startsWith('http')) {
-      setCachedYoutubeResolveUrl(videoId, url);
-      return url;
+    const headerHealed = res.headers.get('X-Healed') === 'true';
+    const j = await res.json();
+    const env = parseResolveJson(j, headerHealed);
+    if (env && !env.healedMeta) {
+      setCachedYoutubeResolveUrl(videoId, env.url);
     }
+    return env;
   } catch (e) {
     if (attempt < 1 && isRetriableResolveFetchError(e)) {
       await new Promise((r) => setTimeout(r, 350));
-      return fetchResolveUrl(videoId, attempt + 1);
+      return fetchResolveEnvelope(videoId, fresh, attempt + 1);
     }
   } finally {
     clearTimeout(t);
@@ -85,21 +151,35 @@ async function fetchResolveUrl(videoId: string, attempt = 0): Promise<string | n
   return null;
 }
 
-/**
- * Single in-flight resolve per videoId (shared by preload + await-on-play).
- */
-function startResolveFetch(videoId: string): Promise<string | null> {
-  const hit = getCachedYoutubeResolveUrl(videoId);
-  if (hit) return Promise.resolve(hit);
+function inflightKey(videoId: string, fresh: boolean): string {
+  return `${videoId}\t${fresh ? '1' : '0'}`;
+}
 
-  let p = inflight.get(videoId);
+function startResolveFetchEnvelope(videoId: string, fresh: boolean): Promise<YoutubeResolveEnvelope | null> {
+  if (!fresh) {
+    const hit = getCachedYoutubeResolveUrl(videoId);
+    if (hit) return Promise.resolve({ url: hit });
+  }
+
+  const k = inflightKey(videoId, fresh);
+  let p = inflight.get(k);
   if (p) return p;
 
-  p = fetchResolveUrl(videoId).finally(() => {
-    if (inflight.get(videoId) === p) inflight.delete(videoId);
+  p = fetchResolveEnvelope(videoId, fresh).finally(() => {
+    if (inflight.get(k) === p) inflight.delete(k);
   });
-  inflight.set(videoId, p);
+  inflight.set(k, p);
   return p;
+}
+
+/**
+ * Fresh resolve (cache-busted) — used after vault playback errors to pick up server-side heal.
+ */
+export async function fetchYoutubeHealResolveEnvelope(
+  videoId: string,
+): Promise<YoutubeResolveEnvelope | null> {
+  invalidateYoutubeResolveCache(videoId);
+  return startResolveFetchEnvelope(videoId, true);
 }
 
 /**
@@ -109,7 +189,7 @@ export function preResolveYoutubeVideoId(videoId: string): void {
   const base = backendBase();
   if (!base || !videoId) return;
   if (getCachedYoutubeResolveUrl(videoId)) return;
-  void startResolveFetch(videoId);
+  void startResolveFetchEnvelope(videoId, false);
 }
 
 /**
@@ -119,7 +199,8 @@ export function preResolveYoutubeVideoId(videoId: string): void {
 export async function resolveYoutubeUrlForPlayback(videoId: string): Promise<string | null> {
   const base = backendBase();
   if (!base || !videoId) return null;
-  return startResolveFetch(videoId);
+  const env = await startResolveFetchEnvelope(videoId, false);
+  return env?.url ?? null;
 }
 
 /**
@@ -129,14 +210,41 @@ export async function resolveYoutubeUrlForPlayback(videoId: string): Promise<str
 export async function resolveYoutubeUrlForPlaybackWithBudget(
   videoId: string,
   budgetMs: number,
+  opts?: { fresh?: boolean },
 ): Promise<string | null> {
   const base = backendBase();
   if (!base || !videoId) return null;
-  const hit = getCachedYoutubeResolveUrl(videoId);
-  if (hit) return hit;
+  const fresh = opts?.fresh ?? false;
+  if (!fresh) {
+    const hit = getCachedYoutubeResolveUrl(videoId);
+    if (hit) return hit;
+  }
   return Promise.race([
-    startResolveFetch(videoId),
-    new Promise<null>((resolve) => {
+    startResolveFetchEnvelope(videoId, fresh),
+    new Promise<YoutubeResolveEnvelope | null>((resolve) => {
+      setTimeout(() => resolve(null), budgetMs);
+    }),
+  ]).then((e) => e?.url ?? null);
+}
+
+/**
+ * Full resolve envelope within budget (includes heal metadata when server healed).
+ */
+export async function resolveYoutubeEnvelopeForPlaybackWithBudget(
+  videoId: string,
+  budgetMs: number,
+  opts?: { fresh?: boolean },
+): Promise<YoutubeResolveEnvelope | null> {
+  const base = backendBase();
+  if (!base || !videoId) return null;
+  const fresh = opts?.fresh ?? false;
+  if (!fresh) {
+    const hit = getCachedYoutubeResolveUrl(videoId);
+    if (hit) return { url: hit };
+  }
+  return Promise.race([
+    startResolveFetchEnvelope(videoId, fresh),
+    new Promise<YoutubeResolveEnvelope | null>((resolve) => {
       setTimeout(() => resolve(null), budgetMs);
     }),
   ]);

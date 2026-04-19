@@ -41,6 +41,8 @@ import { VIBRANT_BLUE } from '@/constants/machinedTheme';
 const NEON_MAGENTA = '#FF00D4';
 const NEON_AMBER = '#FFB020';
 const NEON_RED = '#FF3355';
+/** Baby blue pulse while the backend auto-heals a failed YouTube vault (SHADOW_HEALING). */
+const BABY_BLUE = '#9FD9FF';
 const OLED = '#000000';
 
 const SPRING = { stiffness: 200, damping: 20, mass: 0.7 } as const;
@@ -83,6 +85,7 @@ export function DynamicIsland() {
   const expandSheet = useNowPlayingSheetStore((s) => s.expand);
   const currentSource = usePlaybackController((s) => s.currentSource);
   const playbackError = usePlaybackController((s) => s.error);
+  const healingStreamActive = useDynamicIslandSignal((s) => s.healingStreamActive);
 
   const isPlaying = playbackState === 'playing' && !!currentTrack;
   const isStreamResolving =
@@ -423,8 +426,19 @@ export function DynamicIsland() {
                 <Text numberOfLines={1} style={styles.metaArtist}>
                   {currentTrack?.artist ?? ''}
                 </Text>
+                {healingStreamActive && isStreamResolving ? (
+                  <Text numberOfLines={1} style={styles.healingLine}>
+                    SHADOW_HEALING
+                  </Text>
+                ) : null}
               </View>
-              <Animated.View style={[styles.heartbeat, magentaDotStyle]} />
+              <Animated.View
+                style={[
+                  styles.heartbeat,
+                  healingStreamActive && isStreamResolving ? styles.heartbeatHeal : null,
+                  magentaDotStyle,
+                ]}
+              />
             </Animated.View>
 
             {/* ── EXPANDED mini-controller ───────────────────────────────── */}
@@ -507,9 +521,11 @@ export function DynamicIsland() {
                 <Text style={styles.recoverySub} numberOfLines={1}>
                   {recoveryLabelOverride === 'TOKEN_REFRESH'
                     ? 'Minting fresh PO token…'
-                    : playbackError
-                      ? playbackError.replace(/^Failed to play:\s*/i, '').slice(0, 42)
-                      : 'Re-routing stream'}
+                    : recoveryLabelOverride === 'SHADOW_HEALING'
+                      ? 'SoundCloud auto-heal…'
+                      : playbackError
+                        ? playbackError.replace(/^Failed to play:\s*/i, '').slice(0, 42)
+                        : 'Re-routing stream'}
                 </Text>
               </View>
             </Animated.View>
@@ -601,6 +617,13 @@ const styles = StyleSheet.create({
     marginTop: 1,
     letterSpacing: 0.15,
   },
+  healingLine: {
+    marginTop: 3,
+    color: BABY_BLUE,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1.4,
+  },
   heartbeat: {
     width: 8,
     height: 8,
@@ -610,6 +633,11 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
     shadowRadius: 6,
+  },
+  heartbeatHeal: {
+    backgroundColor: BABY_BLUE,
+    shadowColor: BABY_BLUE,
+    shadowOpacity: 0.95,
   },
   expandedRoot: {
     flexDirection: 'row',

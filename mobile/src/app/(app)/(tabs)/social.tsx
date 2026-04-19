@@ -24,7 +24,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { Check, Plus } from 'lucide-react-native';
+import { Check, Cloud, Plus } from 'lucide-react-native';
 import {
   useSocialActivityStore,
 } from '@/stores/socialActivityStore';
@@ -33,14 +33,42 @@ import { VybeStoryRing } from '@/components/social/VybeStoryRing';
 import { ActivePost } from '@/components/social/ActivePost';
 import { PostComposer } from '@/components/social/PostComposer';
 import { FeedPostRow } from '@/components/social/FeedPostRow';
-import type { PlaylistShareItem, SocialInteractionItem } from '@/types/socialActivity';
+import type {
+  PlaylistShareItem,
+  SocialFeedItem,
+  SocialInteractionItem,
+} from '@/types/socialActivity';
 import { MachinedGradientText } from '@/components/MachinedGradientText';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
-import { getSocialFeed, type SocialPost } from '@/lib/api/social';
+import { getSocialActivityFeed, getSocialFeed, type SocialPost } from '@/lib/api/social';
 import { VIBRANT_BLUE } from '@/constants/machinedTheme';
 
 /** Set true to show Active Posts above the compose row again. */
 const SHOW_ACTIVE_POSTS_SECTION = false;
+
+const BRAND_FEED_ITEMS = [
+  {
+    id: 'brand-davinci',
+    brand: 'DaVinci Dynamics',
+    headline: 'Machined Blue 2.1',
+    detail: 'Tighter token refresh windows · calmer vault handoffs.',
+    timeLabel: '2h ago',
+  },
+  {
+    id: 'brand-krak',
+    brand: 'Krak Coffee',
+    headline: 'Winter roast',
+    detail: 'Earth-tone cupping notes · partner taps in Vybe Alerts.',
+    timeLabel: '5h ago',
+  },
+  {
+    id: 'brand-stak',
+    brand: 'STAK',
+    headline: 'Stacked plates pop-up',
+    detail: 'RSVP live — limited seating this weekend.',
+    timeLabel: '1d ago',
+  },
+] as const;
 
 function SectionHeader({
   title,
@@ -66,7 +94,31 @@ function SectionHeader({
   );
 }
 
+function BrandFeedRow({
+  brand,
+  headline,
+  detail,
+  timeLabel,
+}: {
+  brand: string;
+  headline: string;
+  detail: string;
+  timeLabel: string;
+}) {
+  return (
+    <View style={styles.brandCard}>
+      <Text style={styles.brandName}>{brand}</Text>
+      <Text style={styles.brandHeadline}>{headline}</Text>
+      <Text style={styles.brandDetail} numberOfLines={2}>
+        {detail}
+      </Text>
+      <Text style={styles.brandTime}>{timeLabel}</Text>
+    </View>
+  );
+}
+
 function PlaylistShareRow({ item, onJoin }: { item: PlaylistShareItem; onJoin: () => void }) {
+  const scPrimary = item.streamPrimary === 'soundcloud';
   return (
     <View style={styles.playlistCard}>
       <View style={{ flex: 1, minWidth: 0, paddingRight: 12 }}>
@@ -76,14 +128,22 @@ function PlaylistShareRow({ item, onJoin }: { item: PlaylistShareItem; onJoin: (
         </Text>
         <Text style={styles.playlistTime}>{item.timeLabel}</Text>
       </View>
-      <BlurView intensity={32} tint="dark" style={styles.joinBlur}>
+      {scPrimary ? (
         <Pressable
           onPress={onJoin}
-          style={styles.joinInner}
+          style={({ pressed }) => [styles.scCloudBtn, pressed && { opacity: 0.82 }]}
+          accessibilityRole="button"
+          accessibilityLabel="SoundCloud stream"
         >
-          <Text style={styles.joinText}>Join Playlist</Text>
+          <Cloud size={26} color={VIBRANT_BLUE} strokeWidth={2.35} />
         </Pressable>
-      </BlurView>
+      ) : (
+        <BlurView intensity={32} tint="dark" style={styles.joinBlur}>
+          <Pressable onPress={onJoin} style={styles.joinInner}>
+            <Text style={styles.joinText}>Join Playlist</Text>
+          </Pressable>
+        </BlurView>
+      )}
     </View>
   );
 }
@@ -161,6 +221,19 @@ export default function SocialScreen() {
     queryFn: getSocialFeed,
     staleTime: 30_000,
   });
+
+  const activityQuery = useQuery({
+    queryKey: ['social', 'activity'],
+    queryFn: getSocialActivityFeed,
+    staleTime: 30_000,
+    retry: false,
+  });
+
+  useEffect(() => {
+    const rows = activityQuery.data;
+    if (!rows?.length) return;
+    useSocialActivityStore.getState().mergeRemoteFeed(rows as SocialFeedItem[]);
+  }, [activityQuery.data]);
 
   useEffect(() => {
     if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -246,14 +319,36 @@ export default function SocialScreen() {
         automaticallyAdjustContentInsets={false}
         refreshControl={
           <RefreshControl
-            refreshing={feedQuery.isRefetching}
-            onRefresh={() => void feedQuery.refetch()}
+            refreshing={feedQuery.isRefetching || activityQuery.isRefetching}
+            onRefresh={() => {
+              void feedQuery.refetch();
+              void activityQuery.refetch();
+            }}
             tintColor={VIBRANT_BLUE}
             colors={[VIBRANT_BLUE]}
             progressBackgroundColor="#111111"
           />
         }
       >
+        <SectionHeader title="Brand Feed" subtitle="DaVinci Dynamics · Krak Coffee · STAK" />
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.brandRow}
+        >
+          {BRAND_FEED_ITEMS.map((b) => (
+            <BrandFeedRow
+              key={b.id}
+              brand={b.brand}
+              headline={b.headline}
+              detail={b.detail}
+              timeLabel={b.timeLabel}
+            />
+          ))}
+        </ScrollView>
+
+        <View style={styles.divider} />
+
         <SectionHeader title="Vybe Alerts" subtitle="New & Noteworthy" />
         <ScrollView
           horizontal
@@ -338,7 +433,10 @@ export default function SocialScreen() {
 
         <View style={styles.divider} />
 
-        <SectionHeader title="Shared Playlists" subtitle="Activity feed" />
+        <SectionHeader
+          title="Shared Playlists"
+          subtitle="Shadow cyan cloud = instant SoundCloud · Join = vault playlist"
+        />
         {playlistItems.map((item) => (
           <PlaylistShareRow
             key={item.id}
@@ -419,9 +517,76 @@ const styles = StyleSheet.create({
   },
   screenTitle: {
     color: '#fff',
-    fontSize: 24,
+    fontSize: 26,
+    fontWeight: '900',
+    letterSpacing: -0.85,
+    fontFamily: Platform.select({
+      ios: 'Georgia',
+      android: 'serif',
+      default: 'serif',
+    }),
+  },
+  brandRow: {
+    paddingLeft: 20,
+    paddingRight: 8,
+    paddingBottom: 4,
+    gap: 12,
+  },
+  brandCard: {
+    width: 260,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(0,229,255,0.22)',
+    shadowColor: VIBRANT_BLUE,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  brandName: {
+    color: VIBRANT_BLUE,
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+  },
+  brandHeadline: {
+    marginTop: 8,
+    color: '#FFFFFF',
+    fontSize: 17,
     fontWeight: '800',
-    letterSpacing: -0.4,
+    letterSpacing: -0.35,
+  },
+  brandDetail: {
+    marginTop: 6,
+    color: 'rgba(255,255,255,0.52)',
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  brandTime: {
+    marginTop: 10,
+    color: 'rgba(255,255,255,0.35)',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  scCloudBtn: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,229,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(0,229,255,0.55)',
+    shadowColor: VIBRANT_BLUE,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    elevation: 10,
   },
   screenHint: {
     marginTop: 6,

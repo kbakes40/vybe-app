@@ -15,7 +15,12 @@ import { openNowPlayingSheet } from '@/lib/openNowPlayingSheet';
 import { VYBE_TRACK_PLAYER_BUFFER_CONFIG } from '@/constants/playbackBuffer';
 import { useShadowPlaybackToastStore } from '@/stores/shadowPlaybackToastStore';
 import { useDynamicIslandSignal } from '@/stores/dynamicIslandStore';
-import { getCachedYoutubeResolveUrl, preResolveYoutubeVideoId } from '@/lib/youtubeResolvePreloadCache';
+import {
+  fetchYoutubeHealResolveEnvelope,
+  getCachedYoutubeResolveUrl,
+  preResolveYoutubeVideoId,
+} from '@/lib/youtubeResolvePreloadCache';
+import type { YoutubeHealMeta } from '@/lib/youtubeResolvePreloadCache';
 import {
   createYoutubeAvPlaybackSource,
   extractYoutubeVideoId,
@@ -29,9 +34,32 @@ import {
   resolveSoundcloudStreamUrlWithBudget,
 } from '@/lib/soundcloudStreamPreloadCache';
 import { filterDeadYoutubeQueueTracks, isDeadYoutubeQueueTitle } from '@/lib/queueSanitize';
+import {
+  fetchSoundcloudMatchForYoutubeTrack,
+  isYoutubeHardStreamFailure,
+} from '@/lib/soundcloudYoutubeBridge';
+import { recordSoundcloudFireActivity } from '@/lib/api/social';
+import { useSocialActivityStore } from '@/stores/socialActivityStore';
 // Lazy-cached refs to avoid circular dependency + dynamic require overhead
 let _subStore: any = null;
 function getSubStore() { return _subStore ?? (_subStore = require('./subscriptionStore').useSubscriptionStore); }
+
+function trackFromYoutubeHealMeta(meta: YoutubeHealMeta, prev: Track): Track {
+  return {
+    id: meta.scTrackId,
+    title: meta.title || prev.title,
+    artist: meta.artist || prev.artist,
+    artwork: meta.artwork || prev.artwork,
+    duration: meta.duration > 0 ? meta.duration : prev.duration || 0,
+    isLiked: prev.isLiked,
+    source: 'soundcloud',
+    soundcloudUrl: meta.soundcloudUrl,
+    audioUrl: '',
+    artistId: prev.artistId ?? '',
+    album: prev.album ?? '',
+    albumId: prev.albumId ?? '',
+  };
+}
 
 /** iOS NSURLError / AVPlayer -1008 (resource unavailable) and similar transient vault failures */
 function isYoutubeVaultReconnectError(err: unknown): boolean {
@@ -512,7 +540,7 @@ interface PlaybackControllerState {
   toggleShuffle: () => void;
   toggleRepeat: () => void;
   setVolume: (value: number) => void;
-  toggleLike: (trackId: string) => void;
+  toggleLike: (trackId: string, likedTrackContext?: Track | null) => void;
   isLiked: (trackId: string) => boolean;
 
   // State updates (called by adapters)
@@ -648,6 +676,25 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       return;
     }
     const source = track.source || 'vybe';
+
+    // SoundCloud-first: if a streamable SC match exists, play it immediately (skip YouTube PO/CDN path).
+    if (
+      (source === 'youtube' || source === 'youtube_music') &&
+      extractYoutubeVideoId(track) &&
+      isStillCurrent()
+    ) {
+      const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
+      if (backendBase) {
+        const scAlt = await fetchSoundcloudMatchForYoutubeTrack(track);
+        if (scAlt?.soundcloudUrl && isStillCurrent()) {
+          if (__DEV__) {
+            console.log('[PlaybackController] SoundCloud-first preempt:', track.title, '→', scAlt.title);
+          }
+          const mergedQueue = newQueue.map((t) => (t.id === track.id ? scAlt : t));
+          return get().playTrack(scAlt, mergedQueue, options);
+        }
+      }
+    }
 
     console.log('[PlaybackController] Playing track:', track.title, 'source:', source);
 
@@ -836,6 +883,8 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       set({ playbackState: 'playing' });
       startGhostProgressForTrack(track.id, track.duration || 0);
       preResolveYoutubeVideoId(ytVideoId);
+      useDynamicIslandSignal.getState().setRecoveryLabel(null);
+      useDynamicIslandSignal.getState().setHealingStreamActive(true);
 
       const q0 = get().queue;
       const qi0 = get().queueIndex;
@@ -845,7 +894,21 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         if (nid) preResolveYoutubeVideoId(nid);
       }
 
-      let { playUri, fromCdn } = await resolveYoutubeStreamForVideoId(ytVideoId, backendBase);
+      let ytResolution: Awaited<ReturnType<typeof resolveYoutubeStreamForVideoId>>;
+      try {
+        ytResolution = await resolveYoutubeStreamForVideoId(ytVideoId, backendBase);
+      } finally {
+        useDynamicIslandSignal.getState().setHealingStreamActive(false);
+      }
+
+      if (ytResolution.healedMeta) {
+        useDynamicIslandSignal.getState().flashSuccess('SC_RECOVERED');
+        const healedTrack = trackFromYoutubeHealMeta(ytResolution.healedMeta, track);
+        const mergedQueue = newQueue.map((t) => (t.id === track.id ? healedTrack : t));
+        return get().playTrack(healedTrack, mergedQueue, options);
+      }
+
+      let { playUri, fromCdn } = ytResolution;
       let trackForPlayer = { ...track, audioUrl: playUri };
       set({ currentTrack: trackForPlayer });
 
@@ -981,6 +1044,36 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
               if (isYoutubeVaultReconnectError(errStr)) {
                 useShadowPlaybackToastStore.getState().showReconnectingVault();
               }
+              const ctSnap = get().currentTrack;
+              const yErrId = ctSnap ? extractYoutubeVideoId(ctSnap) : null;
+              const ytSrc =
+                ctSnap?.source === 'youtube' || ctSnap?.source === 'youtube_music';
+              if (yErrId && ytSrc && isStillCurrent()) {
+                void (async () => {
+                  useDynamicIslandSignal.getState().setHealingStreamActive(true);
+                  try {
+                    const env = await fetchYoutubeHealResolveEnvelope(yErrId);
+                    if (!env?.healedMeta || !isStillCurrent()) return;
+                    if (get().currentTrack?.id !== ctSnap.id) return;
+                    try {
+                      await sound.unloadAsync();
+                    } catch {
+                      /* noop */
+                    }
+                    if (vybeSound === sound) vybeSound = null;
+                    useDynamicIslandSignal.getState().flashSuccess('SC_RECOVERED');
+                    const healedTrack = trackFromYoutubeHealMeta(env.healedMeta, ctSnap);
+                    const q = get().queue;
+                    const mergedQueue = q.some((t) => t.id === ctSnap.id)
+                      ? q.map((t) => (t.id === ctSnap.id ? healedTrack : t))
+                      : [healedTrack, ...q];
+                    await get().playTrack(healedTrack, mergedQueue, { expandNowPlaying: false });
+                  } finally {
+                    useDynamicIslandSignal.getState().setHealingStreamActive(false);
+                  }
+                })();
+                return;
+              }
               set({ playbackState: 'error', error: 'Playback failed' });
             }
           });
@@ -1044,16 +1137,53 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
             }
             vybeSound = null;
           }
+
+          useDynamicIslandSignal.getState().setHealingStreamActive(true);
+          try {
+            const healEnv = await fetchYoutubeHealResolveEnvelope(ytVideoId);
+            if (healEnv?.healedMeta && isStillCurrent()) {
+              useDynamicIslandSignal.getState().flashSuccess('SC_RECOVERED');
+              const healedTrack = trackFromYoutubeHealMeta(healEnv.healedMeta, track);
+              const q = get().queue;
+              const mergedQueue = q.some((t) => t.id === track.id)
+                ? q.map((t) => (t.id === track.id ? healedTrack : t))
+                : [healedTrack, ...q];
+              await get().playTrack(healedTrack, mergedQueue, { expandNowPlaying: false });
+              return;
+            }
+          } finally {
+            useDynamicIslandSignal.getState().setHealingStreamActive(false);
+          }
+
           const msg = error instanceof Error ? error.message : 'Unknown error';
           console.error('[PlaybackController] YouTube proxy error:', msg);
           set({ playbackState: 'error', error: `Failed to play: ${msg}` });
+
+          if (isYoutubeHardStreamFailure(msg)) {
+            void (async () => {
+              const alt = await fetchSoundcloudMatchForYoutubeTrack(track);
+              if (!alt?.soundcloudUrl) return;
+              const stillSame = get().currentTrack?.id === track.id;
+              const stillErr = get().playbackState === 'error';
+              if (!stillSame || !stillErr) return;
+              const q = get().queue;
+              const mergedQueue = q.some((t) => t.id === track.id)
+                ? q.map((t) => (t.id === track.id ? alt : t))
+                : [alt];
+              if (__DEV__) {
+                console.log('[PlaybackController] SoundCloud fallback after vault hard failure:', alt.title);
+              }
+              await get().playTrack(alt, mergedQueue, { expandNowPlaying: false });
+            })();
+          }
+
           // Auto-skip: a 502/CDN reject on this video means YouTube's bot
           // wall is blocking our token. The next track in the queue might
           // be old enough to bypass it. Better UX than sitting on a dead
           // pause button waiting for the user to tap skip.
           const queueState = get();
           const queueLen = queueState.queue.length;
-          if (queueLen > 1 && queueState.currentIndex < queueLen - 1) {
+          if (queueLen > 1 && queueState.queueIndex < queueLen - 1) {
             setTimeout(() => {
               const stillSameTrack = get().currentTrack?.id === track.id;
               const stillErrored = get().playbackState === 'error';
@@ -1061,7 +1191,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
                 console.log('[PlaybackController] Auto-skipping unplayable YouTube track');
                 get().next();
               }
-            }, 1200);
+            }, 2200);
           }
           return;
         }
@@ -1518,7 +1648,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     }
   },
 
-  toggleLike: (trackId: string) => {
+  toggleLike: (trackId: string, likedTrackContext?: Track | null) => {
     // Guard against event objects being passed as trackId
     if (!isValidId(trackId)) {
       if (__DEV__) {
@@ -1541,6 +1671,14 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     });
     if (addedLike) {
       queueMicrotask(() => useRecommendationSignalStore.getState().bumpLikeRefresh());
+      const resolved =
+        likedTrackContext ??
+        (get().currentTrack?.id === trackId ? get().currentTrack : null);
+      if (resolved?.source === 'soundcloud') {
+        void recordSoundcloudFireActivity(resolved).then((row) => {
+          if (row) useSocialActivityStore.getState().mergeRemoteFeed([row]);
+        });
+      }
     }
   },
 
