@@ -8,6 +8,7 @@
 
 import YTDlpWrap from 'yt-dlp-wrap';
 import type { DiscoverItem } from '../types/discover';
+import { cookieArgsForYtdlp } from '../lib/youtubeCookies';
 
 const ytDlp = new YTDlpWrap();
 
@@ -31,6 +32,7 @@ async function runYtDlpSearch(prefix: string, query: string, maxResults: number)
         '--flat-playlist',
         '--quiet',
         '--no-warnings',
+        ...cookieArgsForYtdlp(),
       ],
       {},
       controller.signal

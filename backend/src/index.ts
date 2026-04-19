@@ -23,6 +23,9 @@ addExcludedDomains([
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import "./env";
+import { ensureYoutubeCookiesFile } from "./lib/youtubeCookies";
+
+ensureYoutubeCookiesFile();
 import { auth } from "./auth";
 import { sampleRouter } from "./routes/sample";
 import { userRouter } from "./routes/user";
@@ -36,6 +39,7 @@ import { spotifyRouter } from "./routes/spotify";
 import { appleMusicRouter } from "./routes/appleMusic";
 import { vipRouter } from "./routes/vip";
 import { libraryRouter } from "./routes/library";
+import { socialRouter } from "./routes/social";
 import { logger } from "hono/logger";
 
 // Type the Hono app with user/session variables
@@ -54,12 +58,17 @@ const allowed = [
   /^https:\/\/[a-z0-9-]+\.vibecode\.run$/,
   /^https:\/\/[a-z0-9-]+\.vibecodeapp\.com$/,
   /^https:\/\/[a-z0-9-]+\.up\.railway\.app$/,
+  /** Expo dev / LAN — RN often omits Origin; when present it is `exp://…`. */
+  /^exp:\/\/.+$/,
 ];
 
 app.use(
   "*",
   cors({
-    origin: (origin) => (origin && allowed.some((re) => re.test(origin)) ? origin : null),
+    origin: (origin) => {
+      if (!origin) return null;
+      return allowed.some((re) => re.test(origin)) ? origin : null;
+    },
     credentials: true,
   })
 );
@@ -151,6 +160,7 @@ app.route("/api/spotify", spotifyRouter);
 app.route("/api/apple-music", appleMusicRouter);
 app.route("/api/vip", vipRouter);
 app.route("/api/library", libraryRouter);
+app.route("/api/social", socialRouter);
 
 const port = Number(process.env.PORT) || 3000;
 

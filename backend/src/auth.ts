@@ -1,7 +1,7 @@
 import { betterAuth } from "better-auth";
 import { expo } from "@better-auth/expo";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { emailOTP } from "better-auth/plugins";
+import { bearer, emailOTP } from "better-auth/plugins";
 import { prisma } from "./prisma";
 import { env } from "./env";
 
@@ -59,6 +59,7 @@ export const auth = betterAuth({
 
   plugins: [
     expo(),
+    bearer(),
     emailOTP({
       async sendVerificationOTP({ email, otp, type }) {
         if (type !== "sign-in") return;

@@ -3,6 +3,11 @@ import YTDlpWrap from "yt-dlp-wrap";
 import path from "path";
 import os from "os";
 import {
+  cookieArgsForYtdlp,
+  buildYoutubeUpstreamFetchHeaders,
+  ensureYoutubeCookiesFile,
+} from "../lib/youtubeCookies";
+import {
   getQuotaStats,
   getSearchCacheSize,
   purgeExpiredSearchCache,
@@ -19,7 +24,29 @@ const youtubeRouter = new Hono();
 const VIDEO_ID_RE = /^[a-zA-Z0-9_-]{6,32}$/;
 const YTDLP_BINARY_PATH = path.join(os.tmpdir(), "yt-dlp");
 const ytDlp = new YTDlpWrap(YTDLP_BINARY_PATH);
-const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), "youtube-cookies.txt");
+
+/**
+ * Browser User-Agent injected into every yt-dlp call.
+ *
+ * YouTube's anti-bot system fingerprints requests using UA + cookies + the
+ * player_client. When we present the cookies of a real signed-in `web`
+ * browser session, YouTube also expects a matching desktop Chrome UA. Sending
+ * yt-dlp's default UA here is what triggers many of the
+ * "Sign in to confirm you're not a bot" / "Requested format is not available"
+ * failures we hit on the Railway egress IP.
+ */
+const YTDLP_BROWSER_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+/** Common yt-dlp args for every call: browser UA + cert relaxation + cookies. */
+function commonYtdlpArgs(): string[] {
+  return [
+    "--user-agent",
+    YTDLP_BROWSER_UA,
+    "--no-check-certificate",
+    ...cookieArgsForYtdlp(),
+  ];
+}
 
 // Download the standalone yt-dlp binary on startup.
 // yt-dlp_linux is self-contained — no python3 required at runtime.
@@ -37,25 +64,10 @@ const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), "youtube-cookies.txt");
       fs.writeFileSync(YTDLP_BINARY_PATH, Buffer.from(buf), { mode: 0o755 });
       console.log("[yt-dlp] binary downloaded to", YTDLP_BINARY_PATH);
     }
-    const cookiesB64 = process.env.YOUTUBE_COOKIES;
-    if (cookiesB64) {
-      fs.writeFileSync(YTDLP_COOKIES_PATH, Buffer.from(cookiesB64, "base64").toString("utf-8"));
-      console.log("[yt-dlp] cookies written to", YTDLP_COOKIES_PATH);
-    } else {
-      console.warn("[yt-dlp] YOUTUBE_COOKIES not set — YouTube may block requests");
-    }
   } catch (e: any) {
     console.error("[yt-dlp] startup error:", e.message);
   }
 })();
-
-// Returns cookie args if the cookie file was written, otherwise empty array
-function cookieArgs(): string[] {
-  try {
-    const fs = require("fs");
-    return fs.existsSync(YTDLP_COOKIES_PATH) ? ["--cookies", YTDLP_COOKIES_PATH] : [];
-  } catch { return []; }
-}
 
 // Cache resolved CDN URLs so repeated range requests don't re-run yt-dlp
 // YouTube CDN URLs expire after ~6 hours, so cache for 4 hours to be safe
@@ -76,8 +88,27 @@ function setCachedUrl(videoId: string, url: string): void {
 /** Match download route — YouTube blocks datacenter IPs on some clients only.
  *  Fast tier races in parallel (fastest wins, losers aborted).
  *  Slow tier is a sequential fallback if every fast client fails. */
-const YTDLP_RESOLVE_FAST_CLIENTS = ["tv_embedded", "ios", "android"] as const;
-const YTDLP_RESOLVE_SLOW_CLIENTS = ["web", "mweb"] as const;
+/**
+ * Player client racing tiers.
+ *
+ * When cookies are configured (`YOUTUBE_COOKIES`) the `web` client is the most
+ * authentic — browser cookies were extracted from a `web` session, so YouTube's
+ * bot-detection treats `web` as the signed-in surface. We promote `web` to the
+ * fast tier in that case. Without cookies we keep the original mobile-first
+ * order which is more resilient to anonymous bot blocks.
+ */
+function getFastClients(): readonly string[] {
+  const hasCookies = cookieArgsForYtdlp().length > 0;
+  return hasCookies
+    ? (["web", "ios", "tv_embedded"] as const)
+    : (["tv_embedded", "ios", "android"] as const);
+}
+function getSlowClients(): readonly string[] {
+  const hasCookies = cookieArgsForYtdlp().length > 0;
+  return hasCookies
+    ? (["mweb", "android"] as const)
+    : (["web", "mweb"] as const);
+}
 const YTDLP_RESOLVE_FAST_TIMEOUT_MS = 10_000;
 const YTDLP_RESOLVE_SLOW_TIMEOUT_MS = 15_000;
 
@@ -100,19 +131,20 @@ function tryResolveWithClient(
       [
         `https://www.youtube.com/watch?v=${videoId}`,
         "-f",
-        "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio/best",
+        // Bias to iOS-native m4a/aac first; keep loose fallbacks so we don't
+        // hit "Requested format is not available" on weirder uploads.
+        "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio/best/bestaudio*/best*",
         "--get-url",
         "--no-playlist",
         "--no-warnings",
         "--quiet",
-        "--no-check-certificate",
         "--socket-timeout",
         "8",
         "--extractor-args",
         `youtube:player_client=${client}`,
         "--js-runtimes",
         "node",
-        ...cookieArgs(),
+        ...commonYtdlpArgs(),
       ],
       {},
       controller.signal,
@@ -138,7 +170,10 @@ function tryResolveWithClient(
  * Phase 2: if every fast client fails, fall back to web/mweb sequentially.
  */
 async function resolveAudioUrl(videoId: string): Promise<string> {
-  const attempts = YTDLP_RESOLVE_FAST_CLIENTS.map((client) => {
+  const fastClients = getFastClients();
+  const slowClients = getSlowClients();
+
+  const attempts = fastClients.map((client) => {
     const { promise, abort } = tryResolveWithClient(
       videoId,
       client,
@@ -156,7 +191,7 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
     for (const a of attempts) {
       if (a.client !== winner.client) a.abort();
     }
-    if (winner.client !== YTDLP_RESOLVE_FAST_CLIENTS[0]) {
+    if (winner.client !== fastClients[0]) {
       console.log(`[yt-dlp] resolve ${videoId}: fast-race won by player_client=${winner.client}`);
     }
     return winner.url;
@@ -168,7 +203,7 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
   }
 
   let lastMsg = "";
-  for (const client of YTDLP_RESOLVE_SLOW_CLIENTS) {
+  for (const client of slowClients) {
     try {
       const { promise } = tryResolveWithClient(
         videoId,
@@ -227,44 +262,65 @@ youtubeRouter.get("/audio/:videoId", async (c) => {
     return c.json({ error: "Invalid YouTube video ID" }, 400);
   }
 
-  let directUrl: string;
-  try {
-    directUrl = await getAudioUrl(videoId);
-  } catch (e) {
-    console.error("[YouTube] Failed to resolve CDN URL:", e);
-    return c.json({ error: "Failed to resolve audio URL" }, 502);
-  }
-
   const rangeHeader = c.req.header("Range");
-  const upstreamHeaders: Record<string, string> = {
-    "User-Agent": "Mozilla/5.0 (compatible; VybeApp/1.0)",
-  };
-  if (rangeHeader) {
-    upstreamHeaders["Range"] = rangeHeader;
-  }
+  const MAX_AUDIO_PROXY_ATTEMPTS = 3;
+  let upstream: Response | null = null;
+  let lastDirectUrl = "";
+  let lastError: string | null = null;
 
-  const cdnAbort = new AbortController();
-  const cdnTimeout = setTimeout(() => cdnAbort.abort(), 90_000);
+  for (let attempt = 0; attempt < MAX_AUDIO_PROXY_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      urlCache.delete(videoId);
+      ensureYoutubeCookiesFile();
+      console.warn(`[YouTube] audio proxy retry ${attempt}/${MAX_AUDIO_PROXY_ATTEMPTS - 1} for ${videoId}`);
+    }
 
-  let upstream: Response;
-  try {
-    upstream = await fetch(directUrl, { headers: upstreamHeaders, signal: cdnAbort.signal });
-  } catch (e) {
-    clearTimeout(cdnTimeout);
-    console.error("[YouTube] CDN fetch failed:", e);
-    return c.json({ error: "Failed to fetch audio from CDN" }, 502);
-  }
-  clearTimeout(cdnTimeout);
-
-  // If the CDN URL expired (403/404), clear cache and retry once
-  if (upstream.status === 403 || upstream.status === 404) {
-    urlCache.delete(videoId);
+    let directUrl: string;
     try {
       directUrl = await getAudioUrl(videoId);
-      upstream = await fetch(directUrl, { headers: upstreamHeaders });
-    } catch (e) {
-      return c.json({ error: "Audio URL expired and refresh failed" }, 502);
+      lastDirectUrl = directUrl;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      lastError = msg;
+      console.error("[YouTube] Failed to resolve CDN URL:", e);
+      continue;
     }
+
+    const upstreamHeaders = buildYoutubeUpstreamFetchHeaders(directUrl, { rangeHeader });
+    const cdnAbort = new AbortController();
+    const cdnTimeout = setTimeout(() => cdnAbort.abort(), 45_000);
+    let res: Response;
+    try {
+      res = await fetch(directUrl, { headers: upstreamHeaders, signal: cdnAbort.signal });
+    } catch (e: unknown) {
+      clearTimeout(cdnTimeout);
+      const msg = e instanceof Error ? e.message : String(e);
+      lastError = msg;
+      console.error("[YouTube] CDN fetch failed:", e);
+      continue;
+    }
+    clearTimeout(cdnTimeout);
+
+    upstream = res;
+    if (res.ok) break;
+
+    const retryable =
+      res.status === 403 ||
+      res.status === 404 ||
+      res.status === 429 ||
+      res.status === 502 ||
+      res.status === 503;
+    lastError = `HTTP ${res.status}`;
+    if (!retryable) break;
+  }
+
+  if (!upstream || !upstream.ok) {
+    console.error("[YouTube] audio proxy exhausted retries", {
+      videoId,
+      lastDirectUrl: lastDirectUrl ? `${lastDirectUrl.slice(0, 64)}…` : "",
+      lastError,
+    });
+    return c.json({ error: lastError ?? "Failed to fetch audio from CDN" }, 502);
   }
 
   const contentType = upstream.headers.get("Content-Type") ?? "audio/mp4";
@@ -329,7 +385,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
     try {
       const output = await ytDlp.execPromise([
         `https://www.youtube.com/watch?v=${videoId}`,
-        "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio",
+        "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio/best/bestaudio*/best*",
         "--no-playlist",
         "-o", tmpTemplate,
         "--no-warnings",
@@ -337,7 +393,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
         "--print", "after_move:filepath",
         "--extractor-args", `youtube:player_client=${client}`,
         "--js-runtimes", "node",
-        ...cookieArgs(),
+        ...commonYtdlpArgs(),
       ], {}, controller.signal);
       clearTimeout(timer);
       const finalPath = output.trim().split("\n").pop()?.trim() ?? "";
@@ -552,7 +608,7 @@ async function searchYouTubeYtDlp(query: string, maxResults: number): Promise<Ar
           `youtube:player_client=${client}`,
           "--js-runtimes",
           "node",
-          ...cookieArgs(),
+          ...commonYtdlpArgs(),
         ],
         {},
         controller.signal,
@@ -634,6 +690,7 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
       const output = await ytDlp.execPromise([
         ...baseArgs,
         "--extractor-args", `youtube:player_client=${client}`,
+        ...commonYtdlpArgs(),
       ]);
       const lines = output.trim().split("\n");
       if (lines.length < 3) throw new Error(`yt-dlp info returned insufficient output`);
@@ -716,6 +773,7 @@ async function getPlaylistTracks(listId: string): Promise<Array<{ videoId: strin
       "--dump-json",
       "--no-warnings",
       "--quiet",
+      ...commonYtdlpArgs(),
     ], {}, controller.signal);
     clearTimeout(timer);
   } catch (e: any) {

@@ -12,6 +12,7 @@ import type {
 } from '../types/discover';
 import path from 'path';
 import os from 'os';
+import { cookieArgsForYtdlp } from '../lib/youtubeCookies';
 
 const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3';
 
@@ -548,15 +549,6 @@ function resolveYtdlpBinForService(): string {
   return 'yt-dlp';
 }
 
-const YTDLP_COOKIES_PATH = path.join(os.tmpdir(), 'youtube-cookies.txt');
-
-function cookieArgs(): string[] {
-  try {
-    const fs = require('fs');
-    return fs.existsSync(YTDLP_COOKIES_PATH) ? ['--cookies', YTDLP_COOKIES_PATH] : [];
-  } catch { return []; }
-}
-
 function playlistTrackInfoToPlaylistTracks(items: PlaylistTrackInfo[]): PlaylistTrack[] {
   return items.map((t) => ({
     videoId: t.videoId,
@@ -630,7 +622,7 @@ function fetchPlaylistTracksViaYTDLP(playlistId: string): Promise<PlaylistTrack[
     const proc = spawn(bin, [
       url, '--flat-playlist', '--dump-json', '--no-warnings', '--quiet',
       '--extractor-args', 'youtube:player_client=ios',
-      ...cookieArgs(),
+      ...cookieArgsForYtdlp(),
     ]);
     const timeout = setTimeout(() => { proc.kill('SIGKILL'); resolve([]); }, 30_000);
     let out = '';
