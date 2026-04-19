@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { MMKV } from 'react-native-mmkv';
-import { AppState, AppStateStatus, NativeEventEmitter, NativeModules, Platform } from 'react-native';
+import { AppState, AppStateStatus, InteractionManager, NativeEventEmitter, NativeModules, Platform } from 'react-native';
 /** expo-av → native AVPlayer/ExoPlayer (RN invokes the module over the Turbo/JSI bridge when enabled). */
 import { Audio, AVPlaybackStatus, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
 import { Track, TrackSource, RepeatMode } from '@/types/music';
@@ -761,12 +761,10 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       openNowPlayingSheet();
     }
 
-    // YouTube / YouTube Music / SoundCloud: show Play→Pause immediately while buffers fill.
-    if (
-      source === 'youtube' ||
-      source === 'youtube_music' ||
-      (source === 'soundcloud' && !!(track as Track & { soundcloudUrl?: string }).soundcloudUrl)
-    ) {
+    // SoundCloud: show Play→Pause immediately while native buffers fill.
+    // YouTube / YT Music stay on `loading` until resolve + loadAsync complete
+    // so Now Playing / Dynamic Island can show buffering / vault-timeout hints.
+    if (source === 'soundcloud' && !!(track as Track & { soundcloudUrl?: string }).soundcloudUrl) {
       set({ playbackState: 'playing' });
     }
 
@@ -904,7 +902,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
       const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
 
-      set({ playbackState: 'playing' });
+      set({ playbackState: 'buffering' });
       startGhostProgressForTrack(track.id, track.duration || 0);
       preResolveYoutubeVideoId(
         ytVideoId,
@@ -912,6 +910,22 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         track.soundcloudId,
       );
       useDynamicIslandSignal.getState().setRecoveryLabel(null);
+
+      let streamHandshakeComplete = false;
+      let vaultSlowTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+        if (!isStillCurrent() || streamHandshakeComplete) return;
+        useDynamicIslandSignal.getState().setRecoveryLabel('VAULT_TIMEOUT');
+      }, 3000);
+      const clearVaultSlowHint = () => {
+        streamHandshakeComplete = true;
+        if (vaultSlowTimer) {
+          clearTimeout(vaultSlowTimer);
+          vaultSlowTimer = null;
+        }
+        if (useDynamicIslandSignal.getState().recoveryLabel === 'VAULT_TIMEOUT') {
+          useDynamicIslandSignal.getState().setRecoveryLabel(null);
+        }
+      };
 
       const q0 = get().queue;
       const qi0 = get().queueIndex;
@@ -933,6 +947,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       });
 
       if (ytResolution.healedMeta) {
+        clearVaultSlowHint();
         useDynamicIslandSignal.getState().flashSuccess('SC_RECOVERED');
         const healedTrack = trackFromYoutubeHealMeta(ytResolution.healedMeta, track);
         const mergedQueue = newQueue.map((t) => (t.id === track.id ? healedTrack : t));
@@ -971,6 +986,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         .catch(() => {});
 
       if (!isStillCurrent()) {
+        clearVaultSlowHint();
         await stopVybeAudio();
         return;
       }
@@ -994,11 +1010,16 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         try {
           const sound = new Audio.Sound();
           vybeSound = sound;
+          let firstYtNativeReadyForSound = false;
 
           sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
             const { currentTrack } = get();
             if (currentTrack?.id !== track.id) return;
             if (status.isLoaded) {
+              if (!firstYtNativeReadyForSound) {
+                firstYtNativeReadyForSound = true;
+                clearVaultSlowHint();
+              }
               if (
                 !ghostCleared &&
                 (status.isPlaying || (status.positionMillis ?? 0) > 40)
@@ -1096,6 +1117,11 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
             }
           });
 
+          await new Promise<void>((resolve) => {
+            InteractionManager.runAfterInteractions(() => {
+              setTimeout(resolve, 0);
+            });
+          });
           await sound.loadAsync(
             createYoutubeAvPlaybackSource(playUri),
             {
@@ -1106,6 +1132,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
             ytDownloadFirst,
           );
           if (!isStillCurrent()) {
+            clearVaultSlowHint();
             sound.stopAsync().catch(() => {});
             sound.unloadAsync().catch(() => {});
             if (vybeSound === sound) vybeSound = null;
@@ -1115,6 +1142,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
           await sound.playAsync();
           set({ playbackState: 'playing' });
           youtubeLoadSucceeded = true;
+          clearVaultSlowHint();
           useShadowPlaybackToastStore.getState().hide();
           useDynamicIslandSignal.getState().setRecoveryLabel(null);
         } catch (error) {
@@ -1146,6 +1174,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
             vybeSound = null;
             continue;
           }
+          clearVaultSlowHint();
           clearGhostProgress();
           useShadowPlaybackToastStore.getState().hide();
           useDynamicIslandSignal.getState().setRecoveryLabel(null);
@@ -1226,6 +1255,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
           return;
         }
       }
+      clearVaultSlowHint();
       return;
     }
 

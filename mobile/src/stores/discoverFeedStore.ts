@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '@/lib/api/api';
+import { isDiscoverBackendFailure, raceWithDiscoverTimeout } from '@/lib/discoverRace';
 
 // Types for the discover feature
 export interface DiscoverItem {
@@ -113,10 +114,14 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
           return;
         }
 
+        const cachedSectionsSnapshot = state.sections;
+
         set({ isLoadingFeed: true, feedError: null });
 
         try {
-          const response = await api.get<{ sections: DiscoverSection[] }>('/api/discover/feed');
+          const response = await raceWithDiscoverTimeout(
+            api.get<{ sections: DiscoverSection[] }>('/api/discover/feed'),
+          );
 
           if (response?.sections) {
             set({
@@ -143,7 +148,16 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
           } else {
             console.warn('[DiscoverFeed] Feed fetch failed:', msg);
           }
-          set({ isLoadingFeed: false });
+          if (isDiscoverBackendFailure(error) && cachedSectionsSnapshot.length > 0) {
+            console.warn('[DiscoverFeed] Restoring cached sections after server/timeout failure');
+            set({
+              sections: cachedSectionsSnapshot,
+              isLoadingFeed: false,
+              feedError: null,
+            });
+          } else {
+            set({ isLoadingFeed: false });
+          }
         }
       },
 
@@ -155,17 +169,20 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
 
       // Fetch user preferences
       fetchPreferences: async () => {
+        const prefsSnapshot = get().preferences;
         set({ isLoadingPreferences: true, preferencesError: null });
 
         try {
           // Backend returns onboardingDone, we map to onboardingComplete
-          const response = await api.get<{
-            genres: string[];
-            moods: string[];
-            favoriteArtists: string[];
-            onboardingDone: boolean;
-            eraPreference: string | null;
-          }>('/api/discover/preferences');
+          const response = await raceWithDiscoverTimeout(
+            api.get<{
+              genres: string[];
+              moods: string[];
+              favoriteArtists: string[];
+              onboardingDone: boolean;
+              eraPreference: string | null;
+            }>('/api/discover/preferences'),
+          );
 
           if (response) {
             set({
@@ -191,7 +208,11 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
           } else {
             console.warn('[DiscoverFeed] Preferences fetch failed:', msg);
           }
-          set({ isLoadingPreferences: false });
+          if (isDiscoverBackendFailure(error)) {
+            set({ preferences: prefsSnapshot, isLoadingPreferences: false, preferencesError: null });
+          } else {
+            set({ isLoadingPreferences: false });
+          }
         }
       },
 
@@ -234,6 +255,8 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
           favoriteArtists: prefs.favoriteArtists,
         });
 
+        const sectionsSnapshot = get().sections;
+
         // Persist locally first so the UI can proceed even if the backend is
         // unreachable or the user is unauthenticated.
         set({
@@ -251,11 +274,13 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
         });
 
         try {
-          const response = await api.post<{ sections: DiscoverSection[] }>('/api/discover/instant-onboarding', {
-            genres: prefs.genres,
-            moods: prefs.moods,
-            favoriteArtists: prefs.favoriteArtists,
-          });
+          const response = await raceWithDiscoverTimeout(
+            api.post<{ sections: DiscoverSection[] }>('/api/discover/instant-onboarding', {
+              genres: prefs.genres,
+              moods: prefs.moods,
+              favoriteArtists: prefs.favoriteArtists,
+            }),
+          );
 
           console.log('[DiscoverFeed] Instant onboarding response:', {
             hasSections: !!response?.sections,
@@ -297,7 +322,16 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
           return true;
         } catch (error) {
           console.warn('[DiscoverFeed] Instant feed failed; local prefs kept:', error);
-          set({ isSavingPreferences: false, isLoadingFeed: false });
+          if (isDiscoverBackendFailure(error) && sectionsSnapshot.length > 0) {
+            set({
+              sections: sectionsSnapshot,
+              isSavingPreferences: false,
+              isLoadingFeed: false,
+              feedError: null,
+            });
+          } else {
+            set({ isSavingPreferences: false, isLoadingFeed: false });
+          }
           return true;
         }
       },
@@ -347,3 +381,8 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
     }
   )
 );
+
+/** Alias for engine wiring / logs — same as `useDiscoverFeedStore.getState().fetchFeed`. */
+export function fetchSections(): Promise<void> {
+  return useDiscoverFeedStore.getState().fetchFeed();
+}

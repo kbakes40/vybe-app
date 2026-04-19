@@ -3,6 +3,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Track, RelatedTrack } from '@/types/music';
 import { api } from '@/lib/api/api';
+import { raceWithDiscoverTimeout, isDiscoverBackendFailure } from '@/lib/discoverRace';
 
 export interface SeedTrack {
   id: string;
@@ -190,6 +191,8 @@ export const useDiscoveryStore = create<DiscoveryState>()(
         if (state.isRefreshing) return;
         if (state.seedTracks.length === 0) return;
 
+        const discoveredSnapshot = state.discoveredTracks;
+
         set({ isRefreshing: true });
 
         try {
@@ -210,12 +213,14 @@ export const useDiscoveryStore = create<DiscoveryState>()(
           ];
 
           // Fetch new discoveries
-          const response = await api.post<DiscoverResponse>('/api/soundcloud/discover', {
-            seedTrackIds: topSeeds.map(s => s.id),
-            tags: allTags,
-            excludeIds,
-            limit: 20,
-          });
+          const response = await raceWithDiscoverTimeout(
+            api.post<DiscoverResponse>('/api/soundcloud/discover', {
+              seedTrackIds: topSeeds.map(s => s.id),
+              tags: allTags,
+              excludeIds,
+              limit: 20,
+            }),
+          );
 
           if (response?.tracks && response.tracks.length > 0) {
             const discovered: DiscoveredTrack[] = response.tracks.map(t => ({
@@ -231,6 +236,9 @@ export const useDiscoveryStore = create<DiscoveryState>()(
           set({ lastRefreshAt: Date.now() });
         } catch (error) {
           console.error('Discovery refresh failed:', error);
+          if (isDiscoverBackendFailure(error) && discoveredSnapshot.length > 0) {
+            set({ discoveredTracks: discoveredSnapshot });
+          }
         } finally {
           set({ isRefreshing: false });
         }
@@ -283,3 +291,16 @@ export const useDiscoveryStore = create<DiscoveryState>()(
     }
   )
 );
+
+/** Discover tab feed sections — 5s race + cached fallback live in `discoverFeedStore`. */
+export { fetchSections } from './discoverFeedStore';
+
+/**
+ * Runs the home “mix rails” pipeline under a 5s cap. Caller supplies the async
+ * body (Home tab); on timeout/reject the caller should re-hydrate from MMKV.
+ */
+export async function fetchMixes(runPipeline: () => Promise<void>): Promise<void> {
+  await raceWithDiscoverTimeout(runPipeline());
+}
+
+export { isDiscoverBackendFailure, raceWithDiscoverTimeout } from '@/lib/discoverRace';

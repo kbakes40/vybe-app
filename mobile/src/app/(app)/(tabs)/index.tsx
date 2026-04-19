@@ -71,7 +71,9 @@ import {
   tracks,
 } from '@/data/mockData';
 import { usePlaybackController } from '@/stores/playbackController';
-import { useDiscoveryStore, DiscoveredTrack } from '@/stores/discoveryStore';
+import { useDiscoveryStore, DiscoveredTrack, fetchMixes as fetchMixesWithRace, isDiscoverBackendFailure } from '@/stores/discoveryStore';
+import { DiscoveryRailSection } from '@/components/Discovery/Section';
+import { logUiTap } from '@/lib/uiTapLog';
 import { useRecentsStore } from '@/stores/recentsStore';
 import { useDownloadsStore, type DownloadedTrack } from '@/stores/downloadsStore';
 import { api } from '@/lib/api/api';
@@ -426,7 +428,13 @@ function SectionHeader({ title, onSeeAll }: SectionHeaderProps) {
           {title}
         </MachinedGradientText>
         {onSeeAll ? (
-          <Pressable onPress={onSeeAll} style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Pressable
+            onPress={() => {
+              logUiTap(title, 'see_all');
+              onSeeAll();
+            }}
+            style={{ flexDirection: 'row', alignItems: 'center' }}
+          >
             <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 13, marginRight: 4 }}>See all</Text>
             <ChevronRight size={16} color="rgba(255,255,255,0.55)" />
           </Pressable>
@@ -822,6 +830,7 @@ function HomePulseFeedBlock({
       <View style={{ marginTop: SECTION_GAP }}>
         <SectionHeader title="Pulse Feed" />
         <Text className="text-white/50 text-sm px-5 mb-4">Live network shares</Text>
+        <DiscoveryRailSection sectionTitle="Pulse Feed" actionType="horizontal_rail">
         <ScrollView
           horizontal
           nestedScrollEnabled
@@ -833,6 +842,7 @@ function HomePulseFeedBlock({
             <Pressable
               key={post.id}
               onPress={() => {
+                logUiTap('Pulse Feed', 'playTrack');
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 playTrack(track, queue);
               }}
@@ -885,6 +895,7 @@ function HomePulseFeedBlock({
             </Pressable>
           ))}
         </ScrollView>
+        </DiscoveryRailSection>
       </View>
     );
   }
@@ -926,6 +937,7 @@ function HomeDownloadSleekRail({
       <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, paddingHorizontal: 20, marginBottom: 12 }}>
         Night calm and focus pulse in one horizontal glide
       </Text>
+      <DiscoveryRailSection sectionTitle="Sleek Archives" actionType="horizontal_rail">
       <ScrollView
         horizontal
         decelerationRate="fast"
@@ -937,6 +949,7 @@ function HomeDownloadSleekRail({
           <Pressable
             key={track.id}
             onPress={() => {
+              logUiTap('Sleek Archives', 'playTrack');
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
               playTrack(track, queue);
             }}
@@ -979,6 +992,7 @@ function HomeDownloadSleekRail({
           </Pressable>
         ))}
       </ScrollView>
+      </DiscoveryRailSection>
     </View>
   );
 }
@@ -1013,6 +1027,7 @@ function HomeVybeVideoRail({
     <View style={{ marginTop: SECTION_GAP }}>
       <SectionHeader title="Vybe Video" />
       <Text className="text-white/50 text-sm px-5 mb-4">Top music videos</Text>
+      <DiscoveryRailSection sectionTitle="Vybe Video" actionType="horizontal_rail">
       <ScrollView
         horizontal
         nestedScrollEnabled
@@ -1026,6 +1041,7 @@ function HomeVybeVideoRail({
             <Pressable
               key={t.videoId}
               onPress={() => {
+                logUiTap('Vybe Video', 'playTrack');
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 playTrack(track, queue);
               }}
@@ -1074,6 +1090,7 @@ function HomeVybeVideoRail({
           );
         })}
       </ScrollView>
+      </DiscoveryRailSection>
     </View>
   );
 }
@@ -1155,6 +1172,33 @@ export default function HomeScreen() {
   });
   const [isLoadingMixes, setIsLoadingMixes] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const rehydrateHomeRailsFromMmkv = useCallback(() => {
+    try {
+      const mixHit = homeMMKV.get<MixDefinition[]>(HOME_KEYS.mixes, TTL.CURATED);
+      if (mixHit?.value?.length) setMixes(mixHit.value);
+      const plHit = homeMMKV.get<CuratedPlaylist[]>(HOME_KEYS.curatedPlaylists, TTL.CURATED);
+      if (plHit?.value?.length) setCuratedPlaylists(plHit.value);
+      const spHit = homeMMKV.get<SpotifyPlaylist[]>(HOME_KEYS.spotifyPlaylists, TTL.CURATED);
+      if (spHit?.value?.length) setSpotifyPlaylists(spHit.value);
+      const dgHit = homeMMKV.get<(PlaylistTrack & { genre: string })[]>(HOME_KEYS.discoverGenreTracks, TTL.GENRE);
+      if (dgHit?.value?.length) setDiscoverGenreTracks(dgHit.value);
+      const dglHit = homeMMKV.get<string>(HOME_KEYS.discoverGenreLabel, TTL.GENRE);
+      if (dglHit?.value) setDiscoverGenreLabel(dglHit.value);
+      const ytHit = homeMMKV.get<PlaylistTrack[]>(HOME_KEYS.ytTrendingTracks, TTL.GENRE);
+      if (ytHit?.value?.length) setYtTrendingTracks(ytHit.value);
+      const scHit = homeMMKV.get<SCApiTrack[]>(HOME_KEYS.scTrendingTracks, TTL.GENRE);
+      if (scHit?.value?.length) setScTrendingTracks(scHit.value);
+      const scpHit = homeMMKV.get<SoundcloudCuratedPlaylist[]>(HOME_KEYS.scCuratedPlaylists, TTL.CURATED);
+      if (scpHit?.value?.length) setScCuratedPlaylists(scpHit.value);
+      const ytmHit = homeMMKV.get<PlaylistTrack[]>(HOME_KEYS.ytmTopVideos, TTL.GENRE);
+      if (ytmHit?.value?.length) setYtmTopVideos(ytmHit.value);
+      const eraHit = homeMMKV.get<Record<string, string>>(HOME_KEYS.eraArtwork, TTL.CURATED);
+      if (eraHit?.value && Object.keys(eraHit.value).length > 0) setPlaylistThumbOverrides(eraHit.value);
+    } catch {
+      /* noop */
+    }
+  }, []);
 
   const { data: session } = authClient.useSession();
   const firstName = useMemo(() => {
@@ -1256,21 +1300,6 @@ export default function HomeScreen() {
     return absent.sort(() => Math.random() - 0.5);
   };
 
-  // Fetch curated mixes and trigger discovery refresh on mount.
-  // Safety: even if something inside fetchMixes hangs (e.g. one of the
-  // sequential awaits stalls behind a degraded Railway endpoint), force the
-  // Machined-Blue skeleton to clear after 12s so the rails never sit in a
-  // permanent loading state. The fallback rail (scTrendingTracks) will pick
-  // up rendering responsibility once isLoadingMixes flips false.
-  useEffect(() => {
-    fetchMixes();
-    const skeletonSafetyTimer = setTimeout(() => setIsLoadingMixes(false), 12000);
-    if (autoRefreshEnabled) {
-      refreshDiscovery();
-    }
-    return () => clearTimeout(skeletonSafetyTimer);
-  }, []);
-
   // Era Hits artwork — independent effect so blank cards don't wait on the
   // big fetchMixes await chain. Uses the first track's videoId to build a
   // CANONICAL unsigned YT thumbnail URL. The `thumbnail` field returned by
@@ -1310,7 +1339,7 @@ export default function HomeScreen() {
     return () => { cancelled = true; };
   }, []);
 
-  const fetchMixes = async () => {
+  const loadHomeMixRails = useCallback(async () => {
     setIsLoadingMixes(true);
 
     // FAST PATH — SC New & Hot / Trending rails. Fire immediately and set
@@ -1349,6 +1378,8 @@ export default function HomeScreen() {
     });
 
     try {
+      await fetchMixesWithRace(async () => {
+        try {
       // Fire each independent fetch in parallel and never let one bad
       // endpoint (e.g. backend 502 on /api/soundcloud/mixes) short-circuit
       // the rest of the home pipeline. Previously the awaited mixes call
@@ -1577,12 +1608,34 @@ export default function HomeScreen() {
       }
 
       // SoundCloud tracks no longer use embedded playback - they open externally via search handoff
-    } catch (error) {
-      console.log('Could not fetch mixes:', error);
+        } catch (error) {
+          console.log('Could not fetch mixes:', error);
+        }
+      });
+    } catch (e) {
+      if (isDiscoverBackendFailure(e)) {
+        console.warn('[home] mix pipeline timeout / server error — restoring MMKV rails');
+        rehydrateHomeRailsFromMmkv();
+      }
     } finally {
       setIsLoadingMixes(false);
     }
-  };
+  }, [recentTracks, discoveredTracks, allDownloads, rehydrateHomeRailsFromMmkv]);
+
+  // Fetch curated mixes and trigger discovery refresh on mount.
+  // Safety: even if something inside fetchMixes hangs (e.g. one of the
+  // sequential awaits stalls behind a degraded Railway endpoint), force the
+  // Machined-Blue skeleton to clear after 12s so the rails never sit in a
+  // permanent loading state. The fallback rail (scTrendingTracks) will pick
+  // up rendering responsibility once isLoadingMixes flips false.
+  useEffect(() => {
+    void loadHomeMixRails();
+    const skeletonSafetyTimer = setTimeout(() => setIsLoadingMixes(false), 12000);
+    if (autoRefreshEnabled) {
+      void refreshDiscovery();
+    }
+    return () => clearTimeout(skeletonSafetyTimer);
+  }, [loadHomeMixRails, autoRefreshEnabled, refreshDiscovery]);
 
   // Pull to refresh handler
   const onRefresh = useCallback(async () => {
@@ -1590,18 +1643,19 @@ export default function HomeScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     await Promise.all([
-      fetchMixes(),
+      loadHomeMixRails(),
       refreshDiscovery(),
     ]);
 
     setIsRefreshing(false);
-  }, []);
+  }, [loadHomeMixRails, refreshDiscovery]);
 
   // Handle playing a fresh find
   const handlePlayFreshFind = (track: DiscoveredTrack) => {
+    logUiTap('Fresh Finds', 'playTrack');
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     markTrackAsSeen(track.id);
-    playTrack(track, freshFinds);
+    void playTrack(track, freshFinds);
   };
 
   // Get personalized data
@@ -1750,6 +1804,7 @@ export default function HomeScreen() {
             {fireMixStatus === 'loading' && fireMixTracks.length === 0 ? (
               <ActivityIndicator color="#F97316" style={{ marginLeft: 20, marginBottom: 8 }} />
             ) : (
+              <DiscoveryRailSection sectionTitle="Your Fire Mix" actionType="horizontal_rail">
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -1762,8 +1817,9 @@ export default function HomeScreen() {
                     <Pressable
                       key={track.id}
                       onPress={() => {
+                        logUiTap('Your Fire Mix', 'playTrack');
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                        playTrack(track, fireMixTracks);
+                        void playTrack(track, fireMixTracks);
                       }}
                       style={{ marginRight: 16, width: 136 }}
                     >
@@ -1811,6 +1867,7 @@ export default function HomeScreen() {
                   );
                 })}
               </ScrollView>
+              </DiscoveryRailSection>
             )}
           </View>
         )}
@@ -1826,6 +1883,7 @@ export default function HomeScreen() {
             <View style={{ marginTop: SECTION_GAP }}>
               <SectionHeader title="The Decades Vault" />
               <Text className="text-white/50 text-sm px-5 mb-4">Dial in a decade — one tap deep</Text>
+              <DiscoveryRailSection sectionTitle="The Decades Vault" actionType="horizontal_rail">
               <View style={{ height: 228, flexGrow: 0 }}>
                 <FlashList
                   data={DECADES_VAULT_CARDS}
@@ -1856,6 +1914,7 @@ export default function HomeScreen() {
                       fixedBorderColor={MACHINED_PL_BORDER}
                       isActivePlaylist={currentTrack?.albumId === `ytm-pl-${era.playlistId}`}
                       onPress={() => {
+                        logUiTap('The Decades Vault', 'navigate_playlist');
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                         router.push(`/(app)/playlist-detail?id=${era.playlistId}` as never);
                       }}
@@ -1864,6 +1923,7 @@ export default function HomeScreen() {
                 }}
                 />
               </View>
+              </DiscoveryRailSection>
             </View>
           );
         })()}
@@ -1909,7 +1969,10 @@ export default function HomeScreen() {
               }
               return pool;
             })()}
-            onPress={() => router.push('/(app)/vybe-mix')}
+            onPress={() => {
+              logUiTap('Vybe Mix', 'navigate_vybe_mix');
+              router.push('/(app)/vybe-mix');
+            }}
           />
         </View>
 
@@ -1956,7 +2019,7 @@ export default function HomeScreen() {
           const trending = trendingQueue.slice(half).length > 0
             ? trendingQueue.slice(half)
             : trendingQueue;
-          const renderTrackRail = (rows: Track[]) => (
+          const renderTrackRail = (rows: Track[], sectionTitle: string) => (
             <View style={{ height: 232, flexGrow: 0 }}>
               <FlashList
                 data={rows}
@@ -1968,6 +2031,7 @@ export default function HomeScreen() {
                 renderItem={({ item: t }) => (
                   <Pressable
                     onPress={() => {
+                      logUiTap(sectionTitle, 'playTrack');
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                       if (t.artwork) prefetchHeroColors(t.artwork);
                       void playTrack(t, trendingQueue);
@@ -2003,11 +2067,15 @@ export default function HomeScreen() {
             <>
               <View style={{ marginTop: SECTION_GAP }}>
                 <SectionHeader title="New & Hot" onSeeAll={() => router.push('/(app)/discover' as never)} />
-                {renderTrackRail(newHot)}
+                <DiscoveryRailSection sectionTitle="New & Hot" actionType="horizontal_rail">
+                  {renderTrackRail(newHot, 'New & Hot')}
+                </DiscoveryRailSection>
               </View>
               <View style={{ marginTop: SECTION_GAP }}>
                 <SectionHeader title="Trending" onSeeAll={() => router.push('/(app)/discover' as never)} />
-                {renderTrackRail(trending)}
+                <DiscoveryRailSection sectionTitle="Trending" actionType="horizontal_rail">
+                  {renderTrackRail(trending, 'Trending')}
+                </DiscoveryRailSection>
               </View>
             </>
           );
@@ -2021,7 +2089,7 @@ export default function HomeScreen() {
           const trending = scCuratedPlaylists.slice(half).length > 0
             ? scCuratedPlaylists.slice(half)
             : scCuratedPlaylists;
-          const renderRail = (rows: SoundcloudCuratedPlaylist[]) => (
+          const renderRail = (rows: SoundcloudCuratedPlaylist[], sectionTitle: string) => (
             <View style={{ height: 232, flexGrow: 0 }}>
               <FlashList
                 data={rows}
@@ -2038,6 +2106,7 @@ export default function HomeScreen() {
                 return (
                   <Pressable
                     onPress={() => {
+                      logUiTap(sectionTitle, 'navigate_playlist');
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                       if (art) prefetchHeroColors(art);
                       router.push({
@@ -2082,11 +2151,15 @@ export default function HomeScreen() {
             <>
               <View style={{ marginTop: SECTION_GAP }}>
                 <SectionHeader title="New & Hot" onSeeAll={() => router.push('/(app)/discover' as never)} />
-                {renderRail(newHot)}
+                <DiscoveryRailSection sectionTitle="New & Hot" actionType="horizontal_rail">
+                  {renderRail(newHot, 'New & Hot')}
+                </DiscoveryRailSection>
               </View>
               <View style={{ marginTop: SECTION_GAP }}>
                 <SectionHeader title="Trending" onSeeAll={() => router.push('/(app)/discover' as never)} />
-                {renderRail(trending)}
+                <DiscoveryRailSection sectionTitle="Trending" actionType="horizontal_rail">
+                  {renderRail(trending, 'Trending')}
+                </DiscoveryRailSection>
               </View>
             </>
           );
@@ -2108,6 +2181,7 @@ export default function HomeScreen() {
                 playlists={curatedPlaylists}
                 activeAlbumId={currentTrack?.albumId}
                 onOpen={(pl) => {
+                  logUiTap('Heavy Rotation', 'navigate_playlist');
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                   prefetchHeroColors(pl.thumbnailUrl);
                   router.push({ pathname: '/(app)/playlist-detail', params: { playlistId: pl.playlistId, playlistName: pl.name } } as never);
@@ -2125,6 +2199,7 @@ export default function HomeScreen() {
               No tracks yet — pull down to refresh
             </Text>
           ) : (
+            <DiscoveryRailSection sectionTitle="Quick picks" actionType="horizontal_rail">
             <ScrollView
               horizontal
               pagingEnabled
@@ -2137,13 +2212,18 @@ export default function HomeScreen() {
                     <QuickPickRow
                       key={track.id}
                       track={track}
-                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, quickPicks); }}
+                      onPress={() => {
+                        logUiTap('Quick picks', 'playTrack');
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                        void playTrack(track, quickPicks);
+                      }}
                       onMore={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setActionsTrack(track); }}
                     />
                   ))}
                 </View>
               ))}
             </ScrollView>
+            </DiscoveryRailSection>
           )}
           {quickPickPages.length > 1 && (
             <Text style={{ color: 'rgba(255,255,255,0.25)', fontSize: 11, textAlign: 'center', paddingTop: 6, paddingBottom: 2 }}>
@@ -2156,6 +2236,7 @@ export default function HomeScreen() {
         {spotifyPlaylists.length > 0 && (
           <View style={{ marginTop: SECTION_GAP }}>
             <SectionHeader title="New Releases" onSeeAll={() => router.push('/(app)/discover' as never)} />
+            <DiscoveryRailSection sectionTitle="New Releases" actionType="horizontal_rail">
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }}>
               {spotifyPlaylists.map(pl => (
                 <HeavyRotationCard
@@ -2173,6 +2254,7 @@ export default function HomeScreen() {
                   variant="shadowRail"
                   badgeSource="stream"
                   onPress={() => {
+                    logUiTap('New Releases', 'playTrack');
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                     const spTracks: Track[] = pl.tracks.map(t => ({
                       id: `sp-${t.videoId}`,
@@ -2188,11 +2270,12 @@ export default function HomeScreen() {
                       youtubeId: t.videoId,
                       youtubeMusicId: t.videoId,
                     }));
-                    if (spTracks.length > 0) playTrack(spTracks[0], spTracks);
+                    if (spTracks.length > 0) void playTrack(spTracks[0], spTracks);
                   }}
                 />
               ))}
             </ScrollView>
+            </DiscoveryRailSection>
           </View>
         )}
 
@@ -2204,7 +2287,11 @@ export default function HomeScreen() {
               <QuickPickRow
                 key={track.id}
                 track={track}
-                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, recentTracks); }}
+                onPress={() => {
+                  logUiTap('Continue Listening', 'playTrack');
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  void playTrack(track, recentTracks);
+                }}
                 onMore={() => setActionsTrack(track)}
               />
             ))}
@@ -2231,6 +2318,7 @@ export default function HomeScreen() {
             <Text className="text-white/50 text-sm px-5 mb-4">
               New picks based on what you played
             </Text>
+            <DiscoveryRailSection sectionTitle="Fresh Finds" actionType="horizontal_rail">
             <FlashList
               data={freshFinds}
               horizontal
@@ -2286,6 +2374,7 @@ export default function HomeScreen() {
                 </Pressable>
               )}
             />
+            </DiscoveryRailSection>
           </View>
         )}
 
@@ -2296,6 +2385,7 @@ export default function HomeScreen() {
             <Text className="text-white/50 text-sm px-5 mb-4">
               {discoverGenreLabel ? `Exploring ${discoverGenreLabel} — genres outside your library` : 'Genres outside your library'}
             </Text>
+            <DiscoveryRailSection sectionTitle="Discover Something Different" actionType="horizontal_rail">
             <FlashList
               data={discoverGenreTracks}
               horizontal
@@ -2321,8 +2411,9 @@ export default function HomeScreen() {
                 return (
                   <Pressable
                     onPress={() => {
+                      logUiTap('Discover Something Different', 'playTrack');
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                      playTrack(track, discoverGenreQueue);
+                      void playTrack(track, discoverGenreQueue);
                     }}
                     style={{ marginRight: 16 }}
                   >
@@ -2347,6 +2438,7 @@ export default function HomeScreen() {
                 );
               }}
             />
+            </DiscoveryRailSection>
           </View>
         )}
 
@@ -2354,6 +2446,7 @@ export default function HomeScreen() {
         {(recentTracks.length > 0 || importedTracks.length > 0) && (
           <View style={{ marginTop: SECTION_GAP }}>
             <SectionHeader title="Recently Played" />
+            <DiscoveryRailSection sectionTitle="Recently Played" actionType="horizontal_rail">
             <FlashList
               data={recentRailTracks}
               horizontal
@@ -2364,9 +2457,10 @@ export default function HomeScreen() {
               renderItem={({ item: track }) => (
                 <Pressable
                   onPress={() => {
+                    logUiTap('Recently Played', 'playTrack');
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                     addToRecents(track);
-                    playTrack(track, recentRailTracks);
+                    void playTrack(track, recentRailTracks);
                   }}
                   style={{ width: 140, marginRight: 16 }}
                 >
@@ -2430,6 +2524,7 @@ export default function HomeScreen() {
                 </Pressable>
               )}
             />
+            </DiscoveryRailSection>
           </View>
         )}
 
@@ -2437,6 +2532,7 @@ export default function HomeScreen() {
         {recentTracks.length === 0 && importedTracks.length === 0 && (
           <View className="mt-8">
             <SectionHeader title="Recently Played" />
+            <DiscoveryRailSection sectionTitle="Recently Played (albums)" actionType="horizontal_rail">
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -2447,11 +2543,15 @@ export default function HomeScreen() {
                 <AlbumCard
                   key={album.id}
                   album={album}
-                  onPress={() => router.push(`/(app)/album/${album.id}` as never)}
+                  onPress={() => {
+                    logUiTap('Recently Played (albums)', 'navigate_album');
+                    router.push(`/(app)/album/${album.id}` as never);
+                  }}
                   size="small"
                 />
               ))}
             </ScrollView>
+            </DiscoveryRailSection>
           </View>
         )}
 
@@ -2485,8 +2585,9 @@ export default function HomeScreen() {
                   {/* Header row with cover + info */}
                   <Pressable
                     onPress={() => {
+                      logUiTap('From Spotify', 'playTrack');
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                      if (playlistTracks.length > 0) playTrack(playlistTracks[0], playlistTracks);
+                      if (playlistTracks.length > 0) void playTrack(playlistTracks[0], playlistTracks);
                     }}
                     style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, marginBottom: 14 }}
                   >
@@ -2500,8 +2601,9 @@ export default function HomeScreen() {
                     <Pressable
                       onPress={(e) => {
                         (e as unknown as { stopPropagation?: () => void }).stopPropagation?.();
+                        logUiTap('From Spotify', 'playTrack');
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                        if (playlistTracks.length > 0) playTrack(playlistTracks[0], playlistTracks);
+                        if (playlistTracks.length > 0) void playTrack(playlistTracks[0], playlistTracks);
                       }}
                       style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#1DB954', alignItems: 'center', justifyContent: 'center' }}
                     >
@@ -2509,6 +2611,7 @@ export default function HomeScreen() {
                     </Pressable>
                   </Pressable>
                   {/* Horizontal track strip */}
+                  <DiscoveryRailSection sectionTitle="From Spotify" actionType="horizontal_rail">
                   <ScrollView
                     horizontal
                     showsHorizontalScrollIndicator={false}
@@ -2519,8 +2622,9 @@ export default function HomeScreen() {
                       <Pressable
                         key={track.id}
                         onPress={() => {
+                          logUiTap('From Spotify', 'playTrack');
                           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                          playTrack(track, playlistTracks);
+                          void playTrack(track, playlistTracks);
                         }}
                         style={{ width: 120, marginRight: 12 }}
                       >
@@ -2535,6 +2639,7 @@ export default function HomeScreen() {
                       </Pressable>
                     ))}
                   </ScrollView>
+                  </DiscoveryRailSection>
                 </View>
               );
             })}
@@ -2548,6 +2653,7 @@ export default function HomeScreen() {
             <Text className="text-white/50 text-sm px-5 mb-4">
               Music videos and more
             </Text>
+            <DiscoveryRailSection sectionTitle="From YouTube" actionType="horizontal_rail">
             <ScrollView
               horizontal
               nestedScrollEnabled
@@ -2590,8 +2696,9 @@ export default function HomeScreen() {
                   <Pressable
                     key={track.id}
                     onPress={() => {
+                      logUiTap('From YouTube', 'playTrack');
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                      playTrack(track, queueTracks);
+                      void playTrack(track, queueTracks);
                     }}
                     className="mr-4"
                   >
@@ -2639,6 +2746,7 @@ export default function HomeScreen() {
                 );
               })}
             </ScrollView>
+            </DiscoveryRailSection>
           </View>
         ) : null}
 
@@ -2653,6 +2761,7 @@ export default function HomeScreen() {
             <Text className="text-white/50 text-sm px-5 mb-4">
               Independent artists and remixes
             </Text>
+            <DiscoveryRailSection sectionTitle="From SoundCloud" actionType="horizontal_rail">
             <View style={{ height: 224, flexGrow: 0 }}>
               <FlashList
                 data={scTrendingTracks}
@@ -2696,8 +2805,9 @@ export default function HomeScreen() {
                 return (
                   <Pressable
                     onPress={() => {
+                      logUiTap('From SoundCloud', 'playTrack');
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                      playTrack(track, queueTracks);
+                      void playTrack(track, queueTracks);
                     }}
                     className="mr-4"
                   >
@@ -2732,6 +2842,7 @@ export default function HomeScreen() {
               }}
               />
             </View>
+            </DiscoveryRailSection>
           </View>
         ) : null}
 

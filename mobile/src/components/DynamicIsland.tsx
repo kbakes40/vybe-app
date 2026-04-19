@@ -139,6 +139,10 @@ export function DynamicIsland() {
   /** Premium fidelity badge — drives the HD pill chip rendered in the playing row. */
   const isPremium = useSubscriptionStore((s) => s.tier === 'plus');
 
+  const successAt = useDynamicIslandSignal((s) => s.successAt);
+  const successLabel = useDynamicIslandSignal((s) => s.successLabel);
+  const recoveryLabelOverride = useDynamicIslandSignal((s) => s.recoveryLabel);
+
   const isPlaying = playbackState === 'playing' && !!currentTrack;
   const isStreamResolving =
     !!currentTrack &&
@@ -146,7 +150,9 @@ export function DynamicIsland() {
     (playbackState === 'loading' || playbackState === 'buffering');
   /** Wide pill + metadata while the stream URL is still handshaking (CDN / proxy). */
   const showAsPlayingBar = isPlaying || isStreamResolving;
-  const isRecovering = playbackState === 'error' && !!currentTrack;
+  const showVaultTimeoutLane = recoveryLabelOverride === 'VAULT_TIMEOUT';
+  const isRecovering =
+    (playbackState === 'error' && !!currentTrack) || showVaultTimeoutLane;
   const eggActive = isEasterEggTrack(currentTrack?.artist);
 
   // Suppress on auth / onboarding — matches DynamicIslandChrome so nothing
@@ -183,13 +189,11 @@ export function DynamicIsland() {
   /** 0 → particles hidden; 1 → particles fully spread (radial fire burst). */
   const fireBurstSV = useSharedValue(0);
 
-  const successAt = useDynamicIslandSignal((s) => s.successAt);
-  const successLabel = useDynamicIslandSignal((s) => s.successLabel);
-  const recoveryLabelOverride = useDynamicIslandSignal((s) => s.recoveryLabel);
   /** Cyan-tinted recovery states (auto-heal / token refresh) vs red errors. */
   const isHealingLabel =
     recoveryLabelOverride === 'SHADOW_HEALING' ||
-    recoveryLabelOverride === 'TOKEN_REFRESH';
+    recoveryLabelOverride === 'TOKEN_REFRESH' ||
+    recoveryLabelOverride === 'VAULT_TIMEOUT';
 
   // Derive geometry targets from logical state.
   const applyState = useCallback(
@@ -279,6 +283,7 @@ export function DynamicIsland() {
       // state shouldn't be sticky on the pill if the user moves on.
       const t = setTimeout(() => {
         if (stateRef.current === 'recovery') {
+          if (useDynamicIslandSignal.getState().recoveryLabel === 'VAULT_TIMEOUT') return;
           applyState(showAsPlayingBar ? 'playing' : 'idle');
         }
       }, 4200);
@@ -697,9 +702,11 @@ export function DynamicIsland() {
                     ? 'Minting fresh PO token…'
                     : recoveryLabelOverride === 'SHADOW_HEALING'
                       ? 'SoundCloud auto-heal…'
-                      : playbackError
-                        ? playbackError.replace(/^Failed to play:\s*/i, '').slice(0, 42)
-                        : 'Re-routing stream'}
+                      : recoveryLabelOverride === 'VAULT_TIMEOUT'
+                        ? 'Vault still connecting — you can keep browsing'
+                        : playbackError
+                          ? playbackError.replace(/^Failed to play:\s*/i, '').slice(0, 42)
+                          : 'Re-routing stream'}
                 </Text>
               </Animated.View>
             </Animated.View>

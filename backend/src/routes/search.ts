@@ -89,16 +89,16 @@ searchRouter.get("/global/vault", async (c) => {
  */
 searchRouter.get("/sc-match", async (c) => {
   const q = c.req.query("q")?.trim();
-  if (!q || q.length < 2) return c.json({ data: null });
+  if (!q || q.length < 2) return c.json({ data: [] });
 
   try {
     const rows = await searchSoundCloud(q, 12);
     const ranked = rankSoundCloudForUi(rows, 5);
     const best = ranked[0] ?? null;
-    return c.json({ data: best });
+    return c.json({ data: best ? [best] : [] });
   } catch (e) {
     console.error("[search/sc-match]", e);
-    return c.json({ data: null });
+    return c.json({ data: [] });
   }
 });
 

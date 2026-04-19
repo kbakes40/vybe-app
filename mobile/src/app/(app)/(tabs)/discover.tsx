@@ -35,6 +35,9 @@ import { CRATE_TILE_TINT_GRADIENT, VIBRANT_BLUE } from '@/constants/machinedThem
 import { MachinedGradientText } from '@/components/MachinedGradientText';
 import { ShadowArtworkImage } from '@/components/ShadowArtworkImage';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
+import { DiscoveryRailSection } from '@/components/Discovery/Section';
+import { logUiTap } from '@/lib/uiTapLog';
+import { raceWithDiscoverTimeout, isDiscoverBackendFailure } from '@/lib/discoverRace';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -338,6 +341,7 @@ function DiscoverVaultCollectionsRow({
             <Pressable
               key={key}
               onPress={() => {
+                logUiTap('Discover collections', 'open_collection');
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 router.push(
                   `/(app)/playlist-detail?scSet=${encodeURIComponent(pl.soundcloudSetUrl)}` as never,
@@ -457,6 +461,7 @@ function DiscoverVaultExclusivesRail({
             <Pressable
               key={t.trackId}
               onPress={() => {
+                logUiTap('SoundCloud vault', 'playTrack');
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 void playTrack(self, queue);
               }}
@@ -622,6 +627,7 @@ function buildCrateTiles(args: {
       peekTrack: track,
       peekQueue: ytVideoQueue,
       onPress: () => {
+        logUiTap('Discover crates', 'play_youtube_track');
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         void playTrack(track, ytVideoQueue);
       },
@@ -642,6 +648,7 @@ function buildCrateTiles(args: {
       peekTrack: track,
       peekQueue: scQueue,
       onPress: () => {
+        logUiTap('Discover crates', 'navigate_sc_feed');
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         router.push('/(app)/track-feed?kind=sc' as never);
       },
@@ -679,6 +686,7 @@ function buildCrateTiles(args: {
       peekTrack: queue[0],
       peekQueue: queue,
       onPress: () => {
+        logUiTap('Discover crates', 'open_sc_playlist');
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         router.push(
           `/(app)/playlist-detail?scSet=${encodeURIComponent(pl.soundcloudSetUrl)}` as never,
@@ -702,6 +710,7 @@ function buildCrateTiles(args: {
       peekTrack: null,
       peekQueue: [],
       onPress: () => {
+        logUiTap('Discover crates', 'open_vybe_mix');
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         router.push(`/(app)/vybe-mix?mixId=${mix.id}` as never);
       },
@@ -722,6 +731,7 @@ function buildCrateTiles(args: {
       peekTrack: track,
       peekQueue: discoverTracks,
       onPress: () => {
+        logUiTap('Discover crates', 'play_feed_item');
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         void playTrack(track, discoverTracks);
       },
@@ -741,6 +751,7 @@ function buildCrateTiles(args: {
       peekTrack: d,
       peekQueue: downloads,
       onPress: () => {
+        logUiTap('Discover crates', 'play_download');
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         void playTrack(d, downloads);
       },
@@ -902,21 +913,43 @@ export default function DiscoverScreen() {
   // Fetch curated playlists + trending feeds from backend (cached, so hits are <100ms)
   useEffect(() => {
     (async () => {
-      const settled = await Promise.allSettled([
-        api.get<SoundcloudCuratedPlaylist[]>('/api/soundcloud/playlists').catch(() => null),
-        api.get<MixDefinition[]>('/api/soundcloud/mixes').catch(() => null),
-        api
-          .get<PlaylistTrack[]>(
-            `/api/youtube/search?q=${encodeURIComponent('popular music videos')}&maxResults=15`,
-          )
-          .catch(() => null),
-        getDiscover(50, getTasteSeedTracks()),
-        api
-          .get<SCSearchTrack[]>(
-            `/api/soundcloud/search?q=${encodeURIComponent('hidden gems')}&maxResults=15`,
-          )
-          .catch(() => null),
-      ]);
+      let settled: readonly [
+        PromiseSettledResult<SoundcloudCuratedPlaylist[] | null>,
+        PromiseSettledResult<MixDefinition[] | null>,
+        PromiseSettledResult<PlaylistTrack[] | null>,
+        PromiseSettledResult<YtmPlaylistTrack[]>,
+        PromiseSettledResult<SCSearchTrack[] | null>,
+      ];
+      try {
+        settled = (await raceWithDiscoverTimeout(
+          Promise.allSettled([
+            api.get<SoundcloudCuratedPlaylist[]>('/api/soundcloud/playlists').catch(() => null),
+            api.get<MixDefinition[]>('/api/soundcloud/mixes').catch(() => null),
+            api
+              .get<PlaylistTrack[]>(
+                `/api/youtube/search?q=${encodeURIComponent('popular music videos')}&maxResults=15`,
+              )
+              .catch(() => null),
+            getDiscover(50, getTasteSeedTracks()),
+            api
+              .get<SCSearchTrack[]>(
+                `/api/soundcloud/search?q=${encodeURIComponent('hidden gems')}&maxResults=15`,
+              )
+              .catch(() => null),
+          ]),
+        )) as readonly [
+          PromiseSettledResult<SoundcloudCuratedPlaylist[] | null>,
+          PromiseSettledResult<MixDefinition[] | null>,
+          PromiseSettledResult<PlaylistTrack[] | null>,
+          PromiseSettledResult<YtmPlaylistTrack[]>,
+          PromiseSettledResult<SCSearchTrack[] | null>,
+        ];
+      } catch (e) {
+        if (isDiscoverBackendFailure(e)) {
+          console.warn('[Discover] Vault feeds timeout / server error — keeping MMKV / last state');
+        }
+        return;
+      }
 
       const scPl = settled[0].status === 'fulfilled' ? settled[0].value : null;
       const sc = settled[1].status === 'fulfilled' ? settled[1].value : null;
@@ -1149,6 +1182,7 @@ export default function DiscoverScreen() {
         </Text>
       </View>
 
+      <DiscoveryRailSection sectionTitle="Vibe chips" actionType="horizontal_rail">
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -1156,18 +1190,20 @@ export default function DiscoverScreen() {
         style={styles.chipScroll}
       >
         {VIBE_CHIPS.map((chip) => (
-          <Pressable
-            key={chip.id}
-            onPress={() => {
-              void Haptics.selectionAsync();
-              setVibeChip(chip.id);
-            }}
+            <Pressable
+              key={chip.id}
+              onPress={() => {
+                logUiTap(`Vibe: ${chip.label}`, 'vibe_chip');
+                void Haptics.selectionAsync();
+                setVibeChip(chip.id);
+              }}
             style={[styles.chip, vibeChip === chip.id && styles.chipSelected]}
           >
             <Text style={[styles.chipLabel, vibeChip === chip.id && styles.chipLabelSelected]}>{chip.label}</Text>
           </Pressable>
         ))}
       </ScrollView>
+      </DiscoveryRailSection>
 
       {isLoadingFeed && sections.length === 0 ? (
         <Animated.View entering={FadeIn} style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 48 }}>
@@ -1201,11 +1237,16 @@ export default function DiscoverScreen() {
         }
         ListHeaderComponent={
           <>
-            <DiscoverVaultCollectionsRow playlists={scCuratedPlaylists} router={router} />
-            <DiscoverVaultExclusivesRail scTracks={scTracksFeed} playTrack={playTrack} />
+            <DiscoveryRailSection sectionTitle="Discover collections" actionType="horizontal_rail">
+              <DiscoverVaultCollectionsRow playlists={scCuratedPlaylists} router={router} />
+            </DiscoveryRailSection>
+            <DiscoveryRailSection sectionTitle="SoundCloud vault" actionType="horizontal_rail">
+              <DiscoverVaultExclusivesRail scTracks={scTracksFeed} playTrack={playTrack} />
+            </DiscoveryRailSection>
             {preferences?.onboardingComplete ? (
               <Pressable
                 onPress={() => {
+                  logUiTap('Vybe Beats', 'navigate_vybe_beats');
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                   router.push('/(app)/vybe-beats');
                 }}

@@ -38,9 +38,10 @@ export async function fetchSoundcloudMatchForYoutubeTrack(track: Track): Promise
     .trim();
   if (q.length < 3) return null;
   try {
-    const row = await api.get<SoundcloudSearchRow | null>(
+    const data = await api.get<SoundcloudSearchRow[] | SoundcloudSearchRow | null>(
       `/api/search/sc-match?q=${encodeURIComponent(q)}`,
     );
+    const row = Array.isArray(data) ? data[0] ?? null : data;
     if (!row?.soundcloudUrl) return null;
     return soundcloudRowToTrack(row);
   } catch {

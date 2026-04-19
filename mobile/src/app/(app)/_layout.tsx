@@ -473,8 +473,8 @@ export default function AppLayout() {
             right: 0,
             top: 0,
             bottom: 0,
-            zIndex: 1000,
-            elevation: 1000,
+            zIndex: 1001,
+            elevation: 1001,
           }}
         >
           <MiniPlayer bottomLift={miniPlayerBottom} />

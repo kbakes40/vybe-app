@@ -601,7 +601,10 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
   const addToQueue = usePlaybackController(s => s.addToQueue);
   const upNext = queue.slice(queueIndex + 1);
 
-  const isPlayButtonBusy = isLoading;
+  const isVaultStreamBusy =
+    (currentSource === 'youtube' || currentSource === 'youtube_music') &&
+    (playbackState === 'loading' || playbackState === 'buffering');
+  const isPlayButtonBusy = isVaultStreamBusy || isLoading;
 
   const pause = usePlaybackController(s => s.pause);
   const play = usePlaybackController(s => s.play);
@@ -714,6 +717,13 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
   // Use 16:9 for YouTube thumbnails (bars baked in); keep square for proper album art
   const ytmArtworkIsThumb = isYouTubeThumbnail(currentTrack?.artwork ?? '');
   const ytmArtworkHeight = ytmArtworkIsThumb ? VIDEO_HEIGHT : ARTWORK_SIZE;
+  const ytInlineVault =
+    !!(isYouTube && ytVideoId && !currentTrack?.audioUrl?.startsWith('file://'));
+  const artworkSlotHeight =
+    isYouTubeMusic && ytVideoId ? ytmArtworkHeight : ytInlineVault ? VIDEO_HEIGHT : ARTWORK_SIZE;
+  const showYoutubeStreamSkeleton =
+    (isYouTube || isYouTubeMusic) &&
+    (playbackState === 'buffering' || playbackState === 'loading');
   const scTrackUrl = currentTrack?.soundcloudUrl || null;
 
   const isTrackDownloaded = useDownloadsStore(s => s.isTrackDownloaded);
@@ -942,6 +952,14 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
 
             {/* Artwork / Video */}
             <View className="items-center justify-center flex-1 px-10">
+              <View
+                style={{
+                  position: 'relative',
+                  width: ARTWORK_SIZE,
+                  height: artworkSlotHeight,
+                  alignSelf: 'center',
+                }}
+              >
               {isYouTubeMusic && ytVideoId ? (
                 /* YouTube Music — 16:9 for thumbnails (crops letterbox), square for album art */
                 <Animated.View
@@ -981,7 +999,7 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                     </View>
                   </View>
                 </Animated.View>
-              ) : isYouTube && ytVideoId && !currentTrack?.audioUrl?.startsWith('file://') ? (
+              ) : ytInlineVault ? (
                 <Animated.View
                   style={[ARTWORK_STATIC_STYLE, {
                     shadowColor: MACHINED_BLUE,
@@ -1055,6 +1073,39 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                   />
                 </Animated.View>
               )}
+              {showYoutubeStreamSkeleton ? (
+                <View
+                  pointerEvents="none"
+                  style={[
+                    StyleSheet.absoluteFillObject,
+                    {
+                      borderRadius: ARTWORK_OUTER_RADIUS,
+                      backgroundColor: 'rgba(0,0,0,0.45)',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    },
+                  ]}
+                >
+                  <LoadingRing
+                    size={52}
+                    color="#FF0000"
+                    trackColor="rgba(255,255,255,0.12)"
+                    strokeWidth={3}
+                  />
+                  <Text
+                    style={{
+                      marginTop: 14,
+                      color: 'rgba(255,255,255,0.78)',
+                      fontSize: 13,
+                      fontWeight: '600',
+                      letterSpacing: 0.3,
+                    }}
+                  >
+                    Loading stream…
+                  </Text>
+                </View>
+              ) : null}
+              </View>
             </View>
 
             {/* Track Info */}

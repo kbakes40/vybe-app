@@ -1361,9 +1361,15 @@ export async function searchSoundCloud(query: string, maxResults: number): Promi
     clearTimeout(timer);
   } catch (e: any) {
     clearTimeout(timer);
-    // yt-dlp may exit non-zero even when some results were returned; use partial output if available
-    output = e.stderr ?? "";
-    if (!output) throw new Error(`yt-dlp search failed: ${e.message}`);
+    // yt-dlp may exit non-zero even when some results were returned; use partial stderr if present
+    const stderr =
+      typeof e?.stderr === "string"
+        ? e.stderr
+        : typeof e?.message === "string"
+          ? e.message
+          : "";
+    output = stderr;
+    if (!output.trim()) return [];
   }
   const tracks = output
     .trim()
@@ -1392,7 +1398,6 @@ export async function searchSoundCloud(query: string, maxResults: number): Promi
     })
     .filter((t): t is NonNullable<typeof t> => t !== null);
 
-  if (tracks.length === 0) throw new Error(`yt-dlp returned no results`);
   return tracks;
 }
 
