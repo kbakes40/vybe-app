@@ -103,6 +103,7 @@ struct VybeDownloadWidget: Widget {
             LockScreenView(context: context)
                 .activityBackgroundTint(Color.black.opacity(0.92))
                 .activitySystemActionForegroundColor(Color.white)
+                .containerBackground(.black, for: .widget)
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
@@ -134,18 +135,38 @@ struct VybeDownloadWidget: Widget {
                             .progressViewStyle(.linear)
                             .tint(MachinedPalette.cyan)
                     }
-                    .padding(.horizontal, 6)
+                    .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay(
+                        TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: false)) { timeline in
+                            // Triangle-wave breathe on a 1.3s cycle: opacity 0.8 ↔ 1.0.
+                            // No sin import needed; keeps the widget's math surface minimal.
+                            let t = timeline.date.timeIntervalSinceReferenceDate
+                            let cycle: Double = 1.3
+                            let phase = t.truncatingRemainder(dividingBy: cycle) / cycle
+                            let tri = phase < 0.5 ? phase * 2 : (1 - phase) * 2
+                            let breathe = 0.8 + 0.2 * tri
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(MachinedPalette.cyan, lineWidth: 1)
+                                .opacity(breathe)
+                                .drawingGroup()
+                        }
+                    )
                 }
             } compactLeading: {
                 CompactAlbumArt(
                     urlString: resolvedArtworkURL(context),
                     isComplete: context.state.isComplete
                 )
+                .padding(.top, 2)
             } compactTrailing: {
-                Text("V")
-                    .font(.system(size: 15, weight: .black, design: .rounded))
-                    .foregroundStyle(MachinedPalette.cyan)
+                VStack {
+                    Text("V")
+                        .font(.system(size: 15, weight: .black, design: .rounded))
+                        .foregroundStyle(MachinedPalette.cyan)
+                }
+                .frame(height: 24)
+                .padding(.top, 2)
             } minimal: {
                 Text("V")
                     .font(.system(size: 12, weight: .heavy, design: .rounded))
