@@ -836,6 +836,13 @@ youtubeRouter.get("/_test/:videoId", async (c) => {
   const fmt = c.req.query("fmt") ?? "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio/best/bestaudio*/best*";
   const listFormats = c.req.query("listFormats") === "1";
 
+  const noCookies = c.req.query("noCookies") === "1";
+  const baseArgs = noCookies ? [
+    "--user-agent",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "--no-check-certificate",
+  ] : commonYtdlpArgs();
+
   const args = [
     `https://www.youtube.com/watch?v=${videoId}`,
     "-f", fmt,
@@ -844,7 +851,7 @@ youtubeRouter.get("/_test/:videoId", async (c) => {
     "--no-warnings",
     "--socket-timeout", "8",
     "--extractor-args", `youtube:player_client=${client};formats=missing_pot`,
-    ...commonYtdlpArgs(),
+    ...baseArgs,
   ];
 
   const startedAt = Date.now();
@@ -868,7 +875,7 @@ youtubeRouter.get("/_test/:videoId", async (c) => {
     exitCode: proc.exitCode,
     stdout: stdout.slice(0, 6000),
     stderr: stderr.slice(0, 6000),
-    cookies: cookieArgsForYtdlp().length > 0 ? "applied" : "missing",
+    cookies: noCookies ? "skipped (noCookies=1)" : (cookieArgsForYtdlp().length > 0 ? "applied" : "missing"),
   });
 });
 
