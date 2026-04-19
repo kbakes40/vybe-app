@@ -40,6 +40,84 @@ const UNIQUE_API_KEYS = [...new Set(API_KEYS)];
 let activeKeyIndex = 0;
 let allKeysExhaustedAt = 0; // timestamp when we last ran out of keys
 
+/**
+ * Diagnostic snapshot of which YOUTUBE_API_KEY_* env vars are populated
+ * and what they look like. Never returns the raw key — only length and a
+ * masked preview ("AIza…XYZ4") so you can verify which slot has bad data.
+ */
+export function getYoutubeApiKeysDiagnostic() {
+  const slots = [
+    { env: 'YOUTUBE_API_KEY_1', value: process.env.YOUTUBE_API_KEY_1 },
+    { env: 'YOUTUBE_API_KEY_2', value: process.env.YOUTUBE_API_KEY_2 },
+    { env: 'YOUTUBE_API_KEY_3', value: process.env.YOUTUBE_API_KEY_3 },
+    { env: 'YOUTUBE_API_KEY_4', value: process.env.YOUTUBE_API_KEY_4 },
+    { env: 'YOUTUBE_API_KEY_5', value: process.env.YOUTUBE_API_KEY_5 },
+    { env: 'YOUTUBE_API_KEY', value: process.env.YOUTUBE_API_KEY },
+  ];
+  return {
+    activeKeyIndex,
+    uniqueLoaded: UNIQUE_API_KEYS.length,
+    slots: slots.map(({ env, value }) => {
+      const trimmed = value?.trim() ?? '';
+      const set = trimmed.length > 0;
+      const looksValid = /^AIza[0-9A-Za-z_-]{35}$/.test(trimmed);
+      return {
+        env,
+        set,
+        length: trimmed.length,
+        hasWhitespaceInRaw: !!value && value.trim().length !== value.length,
+        looksLikeGoogleApiKey: looksValid,
+        preview: set ? `${trimmed.slice(0, 6)}…${trimmed.slice(-4)}` : null,
+      };
+    }),
+  };
+}
+
+/**
+ * Live probe: hits a free, deterministic Google API endpoint with each
+ * loaded key and reports the HTTP status. Uses `videos.list` with a known
+ * public videoId — costs 1 quota unit per key. Reveals the *actual* failure
+ * (API_KEY_INVALID vs PERMISSION_DENIED vs IP/referrer restriction).
+ */
+export async function probeYoutubeApiKeys(): Promise<Array<{ slot: number; preview: string; status: number; ok: boolean; error?: string }>> {
+  const TEST_VIDEO_ID = 'dQw4w9WgXcQ';
+  const url = (key: string) =>
+    `https://www.googleapis.com/youtube/v3/videos?part=id&id=${TEST_VIDEO_ID}&key=${encodeURIComponent(key)}`;
+  const out: Array<{ slot: number; preview: string; status: number; ok: boolean; error?: string }> = [];
+  for (let i = 0; i < UNIQUE_API_KEYS.length; i++) {
+    const k = UNIQUE_API_KEYS[i]!;
+    try {
+      const res = await fetch(url(k), { signal: AbortSignal.timeout(5000) });
+      const ok = res.ok;
+      let errReason: string | undefined;
+      if (!ok) {
+        try {
+          const j = (await res.json()) as { error?: { errors?: Array<{ reason?: string }>; message?: string } };
+          errReason = j?.error?.errors?.[0]?.reason ?? j?.error?.message;
+        } catch {
+          /* noop */
+        }
+      }
+      out.push({
+        slot: i + 1,
+        preview: `${k.slice(0, 6)}…${k.slice(-4)}`,
+        status: res.status,
+        ok,
+        error: errReason,
+      });
+    } catch (e: any) {
+      out.push({
+        slot: i + 1,
+        preview: `${k.slice(0, 6)}…${k.slice(-4)}`,
+        status: 0,
+        ok: false,
+        error: e?.message ?? String(e),
+      });
+    }
+  }
+  return out;
+}
+
 function getActiveKey(): string | null {
   // Auto-reset: if all keys were exhausted and a new day has started
   // (YouTube quota resets at midnight PT), start back at key 1 so the

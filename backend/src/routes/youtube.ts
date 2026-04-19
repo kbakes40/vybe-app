@@ -24,6 +24,8 @@ import {
   getVideoInfoViaApi,
   getPlaylistTracksViaApi,
   isYouTubeApiAvailable,
+  getYoutubeApiKeysDiagnostic,
+  probeYoutubeApiKeys,
 } from "../services/youtubeService";
 
 const youtubeRouter = new Hono();
@@ -1124,6 +1126,34 @@ youtubeRouter.get("/_pot/:videoId", async (c) => {
     visitorDataLength: bundle.visitorData?.length ?? 0,
     expiresAt: new Date(bundle.expiresAt).toISOString(),
     status,
+  });
+});
+
+/**
+ * GET /api/youtube/_keys
+ * Diagnostic for YOUTUBE_API_KEY_* env vars. Shows which slots are populated,
+ * length, and a masked preview ("AIza…XYZ4"). Add `?probe=1` to actually call
+ * Google with each key (1 quota unit each) and report the real failure reason
+ * (API_KEY_INVALID / ipRefererBlocked / accessNotConfigured / etc).
+ */
+youtubeRouter.get("/_keys", async (c) => {
+  const diag = getYoutubeApiKeysDiagnostic();
+  const probe = c.req.query("probe") === "1";
+  const probeResults = probe ? await probeYoutubeApiKeys() : null;
+  return c.json({
+    diag,
+    probe: probeResults,
+    notes: {
+      whatLooksValid:
+        "A valid Google API key matches /^AIza[0-9A-Za-z_-]{35}$/ — exactly 39 chars starting with 'AIza'.",
+      commonCauses: [
+        "Key was copy-pasted with leading/trailing whitespace or a newline",
+        "Key belongs to a Google Cloud project that was deleted/suspended",
+        "YouTube Data API v3 is NOT enabled on the key's project (Console → APIs & Services → Library)",
+        "Key has 'HTTP referrer' restrictions — Railway server-side calls don't send a referrer, so it'll always reject",
+        "Key has 'IP address' restrictions and Railway's egress IP isn't allow-listed",
+      ],
+    },
   });
 });
 
