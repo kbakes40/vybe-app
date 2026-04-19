@@ -11,8 +11,15 @@ export type PillLockState = {
 };
 
 export const usePillLockStore = create<PillLockState>((set) => ({
-  /** Default false until `PillLockSync` confirms auth + route (avoids native pill on cold sign-in). */
-  allowIslandSurfaces: false,
+  /**
+   * Default TRUE. PillLockSync fires in a useLayoutEffect (before paint) and
+   * flips to false on the real sign-in / onboarding / verify-otp surfaces,
+   * so the "cold sign-in" flash is still prevented — but a default of `false`
+   * leaves the pill permanently invisible whenever session resolution hiccups
+   * (Better Auth token refresh can briefly drop `session.user`), which is the
+   * failure mode users actually report.
+   */
+  allowIslandSurfaces: true,
   setAllowIslandSurfaces: (v) => set({ allowIslandSurfaces: v }),
 }));
 
