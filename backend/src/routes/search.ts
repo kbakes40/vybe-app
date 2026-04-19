@@ -39,25 +39,39 @@ searchRouter.get("/global", async (c) => {
   if (!q) return c.json({ error: { message: "Missing q parameter", code: "MISSING_Q" } }, 400);
 
   const maxSc = Math.min(parseInt(c.req.query("maxSc") ?? "18", 10), 25);
-  const maxVault = Math.min(parseInt(c.req.query("maxVault") ?? "16", 10), 25);
 
-  const ytQuery = `${q} music`;
-
-  const [scRows, ytRows] = await Promise.all([
-    searchSoundCloud(q, maxSc).catch((e) => {
-      console.error("[search/global] SoundCloud:", e);
-      return [] as ScRow[];
-    }),
-    searchYouTube(ytQuery, maxVault).catch((e) => {
-      console.error("[search/global] YouTube:", e);
-      return [] as YouTubeDiscoverResult[];
-    }),
-  ]);
+  const scRows = await searchSoundCloud(q, maxSc).catch((e) => {
+    console.error("[search/global] SoundCloud:", e);
+    return [] as ScRow[];
+  });
 
   const soundcloudTop = rankSoundCloudForUi(scRows, 10);
   const soundcloudRest = scRows.filter(
     (r) => !soundcloudTop.some((t) => t.trackId === r.trackId && t.soundcloudUrl === r.soundcloudUrl),
   );
+
+  return c.json({
+    data: {
+      soundcloudTop,
+      soundcloudRest,
+      vaultTracks: [],
+      vaultDeferred: true,
+    },
+  });
+});
+
+/**
+ * GET /api/search/global/vault?q=…
+ * Lazy vault (YouTube Data API) results — call after /global so SoundCloud rows are not blocked.
+ */
+searchRouter.get("/global/vault", async (c) => {
+  const q = c.req.query("q")?.trim();
+  if (!q) return c.json({ error: { message: "Missing q parameter", code: "MISSING_Q" } }, 400);
+
+  const maxVault = Math.min(parseInt(c.req.query("maxVault") ?? "16", 10), 25);
+  const ytQuery = `${q} music`;
+
+  const ytRows = await searchYouTube(ytQuery, maxVault).catch(() => [] as YouTubeDiscoverResult[]);
 
   const vaultTracks = ytRows.map((v) => ({
     ...v,
@@ -66,13 +80,7 @@ searchRouter.get("/global", async (c) => {
     recoveryHint: "May use longer Machined Recovery (PO-token / CDN)",
   }));
 
-  return c.json({
-    data: {
-      soundcloudTop,
-      soundcloudRest,
-      vaultTracks,
-    },
-  });
+  return c.json({ data: { vaultTracks } });
 });
 
 /**

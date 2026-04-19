@@ -27,11 +27,42 @@ import {
   getYoutubeApiKeysDiagnostic,
   probeYoutubeApiKeys,
 } from "../services/youtubeService";
-import { isVaultFailureLike, tryHealYoutubeToSoundcloud } from "../lib/vaultHealingSoundcloud";
+import { isVaultFailureLike } from "../lib/vaultHealingSoundcloud";
+import { resolveSoundcloudPageStreamUrl, SC_URL_RE } from "./soundcloud";
 
 const youtubeRouter = new Hono();
 
 const VIDEO_ID_RE = /^[a-zA-Z0-9_-]{6,32}$/;
+
+/** When present, live playback uses SoundCloud only (no yt-dlp / vault for this request). */
+function soundcloudPageUrlFromQuery(c: { req: { query: (name: string) => string | undefined } }): string | null {
+  const raw =
+    (c.req.query("soundcloudUrl") ?? c.req.query("scUrl") ?? "").trim();
+  if (!raw || !SC_URL_RE.test(raw)) return null;
+  return raw;
+}
+
+async function soundcloudOEmbedMeta(pageUrl: string): Promise<{
+  title: string;
+  channel: string;
+  thumbnail: string;
+  duration: number;
+}> {
+  const endpoint = `https://soundcloud.com/oembed?format=json&url=${encodeURIComponent(pageUrl)}`;
+  const r = await fetch(endpoint);
+  if (!r.ok) throw new Error(`SoundCloud oEmbed HTTP ${r.status}`);
+  const j = (await r.json()) as {
+    title?: string;
+    author_name?: string;
+    thumbnail_url?: string;
+  };
+  return {
+    title: j.title ?? "Unknown",
+    channel: j.author_name ?? "Unknown",
+    thumbnail: j.thumbnail_url ?? "",
+    duration: 0,
+  };
+}
 const YTDLP_BINARY_PATH = path.join(os.tmpdir(), "yt-dlp");
 const ytDlp = new YTDlpWrap(YTDLP_BINARY_PATH);
 
@@ -330,7 +361,7 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
   }
 
   if (isVaultFailureLike(lastMsg)) {
-    console.log(`[Vault Failure] Triggering Auto-Heal for VideoID: ${videoId}`);
+    // Auto-heal during active playback is disabled — mobile uses SoundCloud-first + offline vault.
   }
   console.error("[yt-dlp] resolveAudioUrl exhausted all clients:", lastMsg.split("\n")[0]);
   throw new Error(`yt-dlp failed: ${lastMsg}`);
@@ -373,6 +404,51 @@ youtubeRouter.get("/audio/:videoId", async (c) => {
   }
 
   const rangeHeader = c.req.header("Range");
+  const scPageEarly = soundcloudPageUrlFromQuery(c);
+  if (scPageEarly) {
+    try {
+      const scStream = await resolveSoundcloudPageStreamUrl(scPageEarly);
+      const scAbort = new AbortController();
+      const scTimer = setTimeout(() => scAbort.abort(), 28_000);
+      try {
+        const scHeaders: Record<string, string> = { "User-Agent": YTDLP_BROWSER_UA };
+        if (rangeHeader) scHeaders["Range"] = rangeHeader;
+        const scRes = await fetch(scStream, { headers: scHeaders, signal: scAbort.signal });
+        clearTimeout(scTimer);
+        if (scRes.ok || scRes.status === 206) {
+          c.header("X-Soundcloud-First", "true");
+          const ct = scRes.headers.get("Content-Type") ?? "audio/mpeg";
+          const baseHdr: Record<string, string> = {
+            "Content-Type": ct,
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Expose-Headers": "X-Soundcloud-First",
+            "X-Soundcloud-First": "true",
+          };
+          if (!rangeHeader) {
+            const len = scRes.headers.get("Content-Length");
+            if (len) baseHdr["Content-Length"] = len;
+            baseHdr["Accept-Ranges"] = "bytes";
+            return new Response(scRes.body, { status: 200, headers: baseHdr });
+          }
+          const cl = scRes.headers.get("Content-Length");
+          const cr = scRes.headers.get("Content-Range");
+          const ar = scRes.headers.get("Accept-Ranges");
+          if (cl) baseHdr["Content-Length"] = cl;
+          if (cr) baseHdr["Content-Range"] = cr;
+          if (ar) baseHdr["Accept-Ranges"] = ar;
+          return new Response(scRes.body, { status: scRes.status, headers: baseHdr });
+        }
+      } catch (e) {
+        clearTimeout(scTimer);
+        console.warn("[YouTube] SC-first audio fetch failed:", e instanceof Error ? e.message : e);
+      }
+    } catch (e) {
+      console.warn("[YouTube] SC-first resolve failed:", e instanceof Error ? e.message : e);
+    }
+    return c.json({ error: "SoundCloud stream unavailable" }, 502);
+  }
+
   // Without a PO token provider, every retry hits the same CDN bot wall
   // and 403s identically — burning 4-5s per attempt for nothing. Single
   // attempt fails fast (~5s); mobile then auto-skips to the next track.
@@ -442,51 +518,6 @@ youtubeRouter.get("/audio/:videoId", async (c) => {
 
   if (!upstream || !upstream.ok) {
     const statusHint = lastCdnStatus ?? upstream?.status;
-    const vaultMsg = `${lastError ?? ""} ${statusHint ?? ""}`;
-    if (isVaultFailureLike(vaultMsg, statusHint)) {
-      console.log(`[Vault Failure] Triggering Auto-Heal for VideoID: ${videoId}`);
-      const healed = await tryHealYoutubeToSoundcloud(videoId);
-      if (healed?.streamUrl.startsWith("http")) {
-        const scAbort = new AbortController();
-        const scTimer = setTimeout(() => scAbort.abort(), 28_000);
-        try {
-          const scHeaders: Record<string, string> = { "User-Agent": YTDLP_BROWSER_UA };
-          if (rangeHeader) scHeaders["Range"] = rangeHeader;
-          const scRes = await fetch(healed.streamUrl, {
-            headers: scHeaders,
-            signal: scAbort.signal,
-          });
-          clearTimeout(scTimer);
-          if (scRes.ok || scRes.status === 206) {
-            c.header("X-Healed", "true");
-            const ct = scRes.headers.get("Content-Type") ?? "audio/mpeg";
-            const baseHdr: Record<string, string> = {
-              "Content-Type": ct,
-              "Cache-Control": "no-store",
-              "Access-Control-Allow-Origin": "*",
-              "Access-Control-Expose-Headers": "X-Healed",
-              "X-Healed": "true",
-            };
-            if (!rangeHeader) {
-              const len = scRes.headers.get("Content-Length");
-              if (len) baseHdr["Content-Length"] = len;
-              baseHdr["Accept-Ranges"] = "bytes";
-              return new Response(scRes.body, { status: 200, headers: baseHdr });
-            }
-            const cl = scRes.headers.get("Content-Length");
-            const cr = scRes.headers.get("Content-Range");
-            const ar = scRes.headers.get("Accept-Ranges");
-            if (cl) baseHdr["Content-Length"] = cl;
-            if (cr) baseHdr["Content-Range"] = cr;
-            if (ar) baseHdr["Accept-Ranges"] = ar;
-            return new Response(scRes.body, { status: scRes.status, headers: baseHdr });
-          }
-        } catch (e) {
-          clearTimeout(scTimer);
-          console.warn("[YouTube] heal SC fetch failed:", e instanceof Error ? e.message : e);
-        }
-      }
-    }
     console.error("[YouTube] audio proxy exhausted retries", {
       videoId,
       lastDirectUrl: lastDirectUrl ? `${lastDirectUrl.slice(0, 64)}…` : "",
@@ -676,32 +707,31 @@ youtubeRouter.get("/resolve/:videoId", async (c) => {
   if (c.req.query("fresh") === "1") {
     invalidateCachedUrl(videoId);
   }
+
+  const scPage = soundcloudPageUrlFromQuery(c);
+  if (scPage) {
+    try {
+      const url = await resolveSoundcloudPageStreamUrl(scPage);
+      const scTrackId = (c.req.query("soundcloudId") ?? "").trim();
+      c.header("X-Soundcloud-First", "true");
+      c.header("Access-Control-Expose-Headers", "X-Soundcloud-First");
+      return c.json({
+        data: {
+          url,
+          source: "soundcloud" as const,
+          soundcloudUrl: scPage,
+          ...(scTrackId ? { scTrackId } : {}),
+        },
+      });
+    } catch {
+      return c.json({ error: "SoundCloud resolve failed" }, 502);
+    }
+  }
+
   try {
     const url = await getAudioUrl(videoId);
     return c.json({ data: { url } });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (isVaultFailureLike(msg)) {
-      console.log(`[Vault Failure] Triggering Auto-Heal for VideoID: ${videoId}`);
-      const healed = await tryHealYoutubeToSoundcloud(videoId);
-      if (healed) {
-        c.header("X-Healed", "true");
-        c.header("Access-Control-Expose-Headers", "X-Healed");
-        return c.json({
-          data: {
-            url: healed.streamUrl,
-            healed: true,
-            source: "soundcloud",
-            soundcloudUrl: healed.soundcloudUrl,
-            scTrackId: healed.scTrackId,
-            title: healed.title,
-            artist: healed.artist,
-            artwork: healed.artwork,
-            duration: healed.duration,
-          },
-        });
-      }
-    }
+  } catch {
     return c.json({ error: "Failed to resolve audio URL" }, 502);
   }
 });
@@ -770,7 +800,7 @@ function parseYtsearchJsonLines(
         let videoId = typeof j.id === "string" ? j.id : "";
         if (!videoId && typeof j.url === "string") {
           const m = j.url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
-          if (m) videoId = m[1];
+          if (m?.[1]) videoId = m[1];
         }
         if (!videoId || !/^[a-zA-Z0-9_-]{6,32}$/.test(videoId)) return [];
         const duration = typeof j.duration === "number" ? j.duration : 0;
@@ -852,6 +882,27 @@ youtubeRouter.get("/info/:videoId", async (c) => {
     return c.json({ error: "Invalid YouTube video ID" }, 400);
   }
 
+  const scPageInfo = soundcloudPageUrlFromQuery(c);
+  if (scPageInfo) {
+    try {
+      const meta = await soundcloudOEmbedMeta(scPageInfo);
+      c.header("X-Soundcloud-First", "true");
+      c.header("Access-Control-Expose-Headers", "X-Soundcloud-First");
+      return c.json({
+        data: {
+          title: meta.title,
+          channel: meta.channel,
+          thumbnail: meta.thumbnail,
+          duration: meta.duration,
+          source: "soundcloud" as const,
+          soundcloudUrl: scPageInfo,
+        },
+      });
+    } catch {
+      return c.json({ error: "SoundCloud metadata failed" }, 502);
+    }
+  }
+
   // 1. Prefer the YouTube Data API — it's not subject to the bot-detection
   //    challenge that yt-dlp hits on datacenter IPs.
   if (isYouTubeApiAvailable()) {
@@ -868,27 +919,6 @@ youtubeRouter.get("/info/:videoId", async (c) => {
   } catch (e) {
     console.error("[YouTube] info error:", e);
     const msg = e instanceof Error ? e.message : "Failed to get video info";
-    if (isVaultFailureLike(msg)) {
-      console.log(`[Vault Failure] Triggering Auto-Heal for VideoID: ${videoId}`);
-      const healed = await tryHealYoutubeToSoundcloud(videoId);
-      if (healed) {
-        c.header("X-Healed", "true");
-        c.header("Access-Control-Expose-Headers", "X-Healed");
-        return c.json({
-          data: {
-            title: healed.title,
-            channel: healed.artist,
-            thumbnail: healed.artwork,
-            duration: healed.duration,
-            healed: true,
-            source: "soundcloud",
-            soundcloudUrl: healed.soundcloudUrl,
-            streamUrl: healed.streamUrl,
-            scTrackId: healed.scTrackId,
-          },
-        });
-      }
-    }
     return c.json({ error: msg }, 502);
   }
 });
@@ -1024,10 +1054,9 @@ async function getPlaylistTracks(listId: string): Promise<Array<{ videoId: strin
         const id: string = j.id ?? "";
         if (!id) return null;
         const thumbnails: Array<{ url: string }> = j.thumbnails ?? [];
+        const lastThumb = thumbnails.length > 0 ? thumbnails[thumbnails.length - 1] : undefined;
         const thumb =
-          thumbnails.length > 0
-            ? thumbnails[thumbnails.length - 1].url
-            : `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
+          lastThumb?.url ?? `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
         return {
           videoId: id,
           title: (j.title as string) ?? "Unknown",

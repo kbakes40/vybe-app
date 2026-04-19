@@ -383,6 +383,10 @@ export async function searchYouTube(
           if (!rotated) return getCachedSearch(query, maxResults) ?? [];
           continue; // retry with new key
         }
+        // Other HTTP 400 responses are intentionally silent (noisy on Railway + overhead in logs).
+        if (response.status === 400) {
+          return [];
+        }
         console.error(`[YouTube] Search failed: ${response.status} — query=${JSON.stringify(query)} body=${body.slice(0, 500)}`);
         return [];
       }
@@ -968,7 +972,9 @@ export async function getVideoInfoViaApi(videoId: string): Promise<VideoInfo | n
   try {
     const resp = await fetch(url);
     if (!resp.ok) {
-      console.warn('[YouTube API] videos.list HTTP', resp.status);
+      if (resp.status !== 400) {
+        console.warn('[YouTube API] videos.list HTTP', resp.status);
+      }
       return null;
     }
     const json = (await resp.json()) as {

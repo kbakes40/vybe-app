@@ -3,6 +3,7 @@ import {
   View,
   Text,
   ScrollView,
+  FlatList,
   Pressable,
   Keyboard,
   ActivityIndicator,
@@ -10,10 +11,17 @@ import {
   TextInput,
   StyleSheet,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Search as SearchIcon, X } from 'lucide-react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { VybeTextInput } from '@/components/VybeTextInput';
 import { useCancelPrefetchOnBlur } from '@/hooks/usePrefetch';
@@ -32,7 +40,11 @@ import { createMMKVCache } from '@/lib/mmkv-cache';
 import { lastSelectedGenre, setLastSelectedGenre } from '@/lib/genreSearchCache';
 import { preResolveYoutubeVideoId } from '@/lib/youtubeResolvePreloadCache';
 import { preResolveSoundcloudStreamUrl } from '@/lib/soundcloudStreamPreloadCache';
-import { tabScreenContentContainerPaddingBottom, SEARCH_BROWSE_GRID_PADDING_EXTRA } from '@/constants/Layout';
+import {
+  tabScreenContentContainerPaddingBottom,
+  BOTTOM_DOCK_HEIGHT,
+  SEARCH_BROWSE_GRID_PADDING_EXTRA,
+} from '@/constants/Layout';
 import { filterDeadYoutubeQueueTracks } from '@/lib/queueSanitize';
 import { NeonVybeSearchSectionHeader } from '@/components/SearchResults';
 import { VIBRANT_BLUE, SHADOW_BLUE_SOFT } from '@/constants/machinedTheme';
@@ -64,6 +76,7 @@ interface GlobalSearchApiRow {
   vaultTracks: Array<
     PlaylistTrack & { vaultLabel?: string; recoveryHint?: string }
   >;
+  vaultDeferred?: boolean;
 }
 
 interface SpotifyPlaylistTrack {
@@ -88,12 +101,16 @@ function extractSpotifyPlaylistId(input: string): string | null {
 
 const searchMMKV = createMMKVCache('vybe-search');
 
+const BROWSE_ROW_GAP = 8;
+const BROWSE_HORIZONTAL_PAD = 16;
+
 const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> =>
   Promise.race([promise, new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
 
 export default function SearchScreen() {
   useCancelPrefetchOnBlur();
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFocused, setSearchFocused] = useState(false);
@@ -173,9 +190,16 @@ export default function SearchScreen() {
         api.get<GlobalSearchApiRow>(`/api/search/global?q=${encodeURIComponent(q)}`),
         24000,
       ).catch(() => null);
+      const vaultP = withTimeout(
+        api.get<{ data: { vaultTracks: GlobalSearchApiRow['vaultTracks'] } }>(
+          `/api/search/global/vault?q=${encodeURIComponent(q)}`,
+        ),
+        24000,
+      ).catch(() => null);
 
-      globalP
-        .then((payload) => {
+      void (async () => {
+        try {
+          const payload = await globalP;
           if (cancelled) return;
           if (!payload) {
             setLiveSoundCloudTracks([]);
@@ -192,29 +216,43 @@ export default function SearchScreen() {
             isLiked: false,
             source: 'soundcloud' as const,
             soundcloudUrl: t.soundcloudUrl,
+            soundcloudId: t.trackId,
             audioUrl: '',
             artistId: '',
             album: '',
             albumId: '',
           }));
-          const ytMapped: Track[] = filterDeadYoutubeQueueTracks(
-            (payload.vaultTracks ?? []).map((t) => ({
-              id: `ytm-${t.videoId}`,
-              title: t.title,
-              artist: t.channelName,
-              artwork: t.thumbnailUrl,
-              source: 'youtube_music' as const,
-              youtubeMusicId: t.videoId,
-              audioUrl: '',
-              artistId: '',
-              album: '',
-              albumId: '',
-              isLiked: false,
-              duration: 0,
-            })),
-          );
           setLiveSoundCloudTracks(scMapped);
-          setLiveYtMusicTracks(ytMapped);
+
+          const mapVault = (rows: GlobalSearchApiRow['vaultTracks']) =>
+            filterDeadYoutubeQueueTracks(
+              (rows ?? []).map((t) => ({
+                id: `ytm-${t.videoId}`,
+                title: t.title,
+                artist: t.channelName,
+                artwork: t.thumbnailUrl,
+                source: 'youtube_music' as const,
+                youtubeMusicId: t.videoId,
+                audioUrl: '',
+                artistId: '',
+                album: '',
+                albumId: '',
+                isLiked: false,
+                duration: 0,
+              })),
+            );
+
+          let ytMapped: Track[] = mapVault(payload.vaultTracks);
+          if (ytMapped.length > 0) {
+            setLiveYtMusicTracks(ytMapped);
+          }
+
+          const vaultPayload = await vaultP;
+          if (!cancelled && vaultPayload?.data?.vaultTracks?.length) {
+            ytMapped = mapVault(vaultPayload.data.vaultTracks);
+            setLiveYtMusicTracks(ytMapped);
+          }
+
           searchMMKV.set(`typed:${q.toLowerCase()}`, { yt: ytMapped, sc: scMapped });
 
           ytMapped.slice(0, 3).forEach((tr) => {
@@ -227,13 +265,12 @@ export default function SearchScreen() {
           scMapped.slice(0, 10).forEach((tr) => {
             if (tr.artwork) void Image.prefetch(tr.artwork);
           });
-        })
-        .catch(() => {
+        } catch {
           /* keep stale rows */
-        })
-        .finally(() => {
+        } finally {
           if (!cancelled) setLiveSearchFetching(false);
-        });
+        }
+      })();
     }, 50);
     return () => {
       cancelled = true;
@@ -268,15 +305,49 @@ export default function SearchScreen() {
   const showGenreDiscover =
     !!selectedGenre && !spotifyPlaylistId && searchQuery.trim().length === 0;
 
+  const browseGridHRef = useRef(0);
+  const [browseGridVersion, setBrowseGridVersion] = useState(0);
+  const gridEnterScale = useSharedValue(1);
+  const gridEnterOpacity = useSharedValue(1);
+  const gridEnterStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: gridEnterScale.value }],
+    opacity: gridEnterOpacity.value,
+  }));
+
   useFocusEffect(
     useCallback(() => {
-      if (selectedGenre) return undefined;
-      const id = requestAnimationFrame(() => {
-        inputRef.current?.focus();
-      });
-      return () => cancelAnimationFrame(id);
-    }, [selectedGenre]),
+      if (selectedGenre || searchQuery.trim().length > 0 || spotifyPlaylistId) return undefined;
+      gridEnterScale.value = 0.96;
+      gridEnterOpacity.value = 0.75;
+      gridEnterScale.value = withSpring(1, { damping: 16, stiffness: 260 });
+      gridEnterOpacity.value = withTiming(1, { duration: 280 });
+      return undefined;
+    }, [selectedGenre, searchQuery, spotifyPlaylistId]),
   );
+
+  const rows = Math.ceil(categories.length / 2);
+  const browseDockPad = BOTTOM_DOCK_HEIGHT + Math.max(insets.bottom, 8) + 10;
+  const colW = (windowWidth - BROWSE_HORIZONTAL_PAD * 2) / 2;
+  const rawBrowseH = browseGridHRef.current;
+  const tileH =
+    rawBrowseH > 0
+      ? Math.max(
+          56,
+          Math.floor(
+            (rawBrowseH - BROWSE_ROW_GAP * Math.max(0, rows - 1)) / rows,
+          ),
+        )
+      : Math.max(
+          56,
+          Math.floor((420 - BROWSE_ROW_GAP * Math.max(0, rows - 1)) / rows),
+        );
+
+  const onBrowseGridLayout = useCallback((h: number) => {
+    if (h <= 0) return;
+    if (Math.abs(h - browseGridHRef.current) < 2) return;
+    browseGridHRef.current = h;
+    setBrowseGridVersion((v) => v + 1);
+  }, []);
 
   return (
     <KeyboardAvoidingView
@@ -348,6 +419,61 @@ export default function SearchScreen() {
       {showGenreDiscover ? (
         <View style={{ flex: 1 }}>
           <GenreDiscoverContent genre={selectedGenre!} onBack={handleBack} />
+        </View>
+      ) : !spotifyPlaylistId && searchQuery.trim() === '' ? (
+        <View
+          style={{
+            flex: 1,
+            minHeight: 0,
+            paddingHorizontal: BROWSE_HORIZONTAL_PAD,
+            paddingBottom: browseDockPad,
+          }}
+        >
+          <Text
+            style={{
+              color: '#fff',
+              fontSize: 18,
+              fontWeight: '800',
+              letterSpacing: -0.35,
+              paddingHorizontal: 4,
+              marginBottom: 12,
+            }}
+          >
+            Browse All
+          </Text>
+          <View
+            style={{ flex: 1, minHeight: 0 }}
+            onLayout={(e) => onBrowseGridLayout(e.nativeEvent.layout.height)}
+          >
+            <Animated.View style={[{ flex: 1, minHeight: 0 }, gridEnterStyle]}>
+              <FlatList
+                data={categories}
+                keyExtractor={(c) => c.id}
+                numColumns={2}
+                scrollEnabled={false}
+                extraData={`${browseGridVersion}-${tileH}-${colW}`}
+                renderItem={({ item, index }) => {
+                  const row = Math.floor(index / 2);
+                  const isLastRow = row === rows - 1;
+                  return (
+                    <View
+                      style={{
+                        width: colW,
+                        height: tileH,
+                        marginBottom: isLastRow ? 0 : BROWSE_ROW_GAP,
+                      }}
+                    >
+                      <CategoryCard
+                        category={item}
+                        onPress={() => handleGenrePress(item.name)}
+                        lockedTileHeight={tileH}
+                      />
+                    </View>
+                  );
+                }}
+              />
+            </Animated.View>
+          </View>
         </View>
       ) : (
       <ScrollView
@@ -540,29 +666,7 @@ export default function SearchScreen() {
               </View>
             )}
           </View>
-        ) : (
-          <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
-            <Text
-              style={{
-                color: '#fff',
-                fontSize: 18,
-                fontWeight: '800',
-                letterSpacing: -0.35,
-                paddingHorizontal: 4,
-                marginBottom: 12,
-              }}
-            >
-              Browse All
-            </Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-              {categories.map(category => (
-                <View key={category.id} style={{ width: '50%' }}>
-                  <CategoryCard category={category} onPress={() => handleGenrePress(category.name)} />
-                </View>
-              ))}
-            </View>
-          </View>
-        )}
+        ) : null}
       </ScrollView>
       )}
     </KeyboardAvoidingView>
@@ -575,12 +679,13 @@ const styles = StyleSheet.create({
     padding: 1,
     backgroundColor: 'rgba(8,145,178,0.12)',
     borderWidth: 1,
-    borderColor: 'rgba(8,145,178,0.35)',
+    borderColor: VIBRANT_BLUE,
   },
-  /** Focus: Shadow Blue ring + cyan neon bloom. */
+  /** Focus: cyan bloom — keep 1px border stable so the pill does not shift. */
   searchBarOuterFocused: {
     backgroundColor: SHADOW_BLUE_SOFT,
     borderColor: VIBRANT_BLUE,
+    borderWidth: 1,
     ...Platform.select({
       ios: {
         shadowColor: VIBRANT_BLUE,

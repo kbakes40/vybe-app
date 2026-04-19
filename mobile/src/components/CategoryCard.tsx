@@ -28,6 +28,7 @@ const PRESS_TIMING_OUT = { duration: 220 };
 
 /** Icon drawn ~12% smaller than before so neon shadow fits inside the card without clipping. */
 const GENRE_ICON_SIZE = 24;
+const GENRE_ICON_SIZE_COMPACT = 20;
 
 type GenreVisual = { Icon: IconComp; neon: string };
 
@@ -93,11 +94,14 @@ function GrainNoise({ layoutId }: { layoutId: string }) {
 interface CategoryCardProps {
   category: Category;
   onPress: () => void;
+  /** Fixed browse grid: outer cell height (fills cell minus margins). */
+  lockedTileHeight?: number;
 }
 
-export function CategoryCard({ category, onPress }: CategoryCardProps) {
+export function CategoryCard({ category, onPress, lockedTileHeight }: CategoryCardProps) {
   const pressed = useSharedValue(0);
   const { Icon, neon } = getGenreVisual(category);
+  const iconSize = lockedTileHeight ? GENRE_ICON_SIZE_COMPACT : GENRE_ICON_SIZE;
 
   const cardAnimatedStyle = useAnimatedStyle(() => {
     const borderColor = interpolateColor(pressed.value, [0, 1], [BORDER_COLOR, neon]);
@@ -125,9 +129,23 @@ export function CategoryCard({ category, onPress }: CategoryCardProps) {
       onPressOut={() => {
         pressed.value = withTiming(0, PRESS_TIMING_OUT);
       }}
-      style={styles.pressable}
+      style={[styles.pressable, lockedTileHeight ? { flex: 1, margin: 4 } : null]}
     >
-      <Animated.View style={[styles.card, cardAnimatedStyle]}>
+      <Animated.View
+        style={[
+          styles.card,
+          lockedTileHeight != null
+            ? {
+                height: Math.max(52, lockedTileHeight - 8),
+                paddingTop: 6,
+                paddingBottom: 8,
+                paddingLeft: 10,
+                paddingRight: 10,
+              }
+            : null,
+          cardAnimatedStyle,
+        ]}
+      >
         <LinearGradient
           colors={[...CATEGORY_TILE_GRADIENT]}
           start={{ x: 0, y: 0 }}
@@ -139,10 +157,10 @@ export function CategoryCard({ category, onPress }: CategoryCardProps) {
         </View>
         <View style={styles.iconArea}>
           <View style={[styles.iconGlowHost, { shadowColor: neon }]}>
-            <Icon size={GENRE_ICON_SIZE} color={neon} strokeWidth={1.65} />
+            <Icon size={iconSize} color={neon} strokeWidth={lockedTileHeight ? 1.5 : 1.65} />
           </View>
         </View>
-        <Text style={styles.genreTitle} numberOfLines={1}>
+        <Text style={[styles.genreTitle, lockedTileHeight != null ? styles.genreTitleCompact : null]} numberOfLines={1}>
           {category.name}
         </Text>
       </Animated.View>
@@ -203,5 +221,10 @@ const styles = StyleSheet.create({
     letterSpacing: -0.4,
     alignSelf: 'flex-start',
     marginTop: 2,
+  },
+  genreTitleCompact: {
+    fontSize: 13,
+    letterSpacing: -0.35,
+    marginTop: 0,
   },
 });

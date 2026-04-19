@@ -22,7 +22,8 @@ const scSearchCache = createCache<Array<{
 const scStreamUrlCache = createCache<string>(4 * 60 * 60 * 1000);
 const scMixesCache = createCache<unknown>(SC_ONE_DAY_MS);
 const SC_MIXES_CACHE_KEY = "soundcloud:mixes";
-const SC_URL_RE = /^https:\/\/(soundcloud\.com|on\.soundcloud\.com)\/.+/;
+/** Shared with `youtube` route for SoundCloud-first playback bypass. */
+export const SC_URL_RE = /^https:\/\/(soundcloud\.com|on\.soundcloud\.com)\/.+/;
 
 // SoundCloud oEmbed response type
 interface SoundCloudOEmbedResponse {

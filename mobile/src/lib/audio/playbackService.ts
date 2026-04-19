@@ -87,9 +87,20 @@ export type YoutubeStreamResolution = {
 export async function resolveYoutubeStreamForVideoId(
   videoId: string,
   backendBaseNoSlash: string,
-  options?: { forceRefresh?: boolean; skipDirect?: boolean },
+  options?: {
+    forceRefresh?: boolean;
+    skipDirect?: boolean;
+    soundcloudUrl?: string;
+    soundcloudId?: string;
+  },
 ): Promise<YoutubeStreamResolution> {
-  const proxyUrl = `${backendBaseNoSlash}/api/youtube/audio/${videoId}`;
+  const scQ = new URLSearchParams();
+  if (options?.soundcloudUrl?.trim()) scQ.set('soundcloudUrl', options.soundcloudUrl.trim());
+  if (options?.soundcloudId?.trim()) scQ.set('soundcloudId', options.soundcloudId.trim());
+  const scQs = scQ.toString();
+  const proxyUrl = scQs
+    ? `${backendBaseNoSlash}/api/youtube/audio/${videoId}?${scQs}`
+    : `${backendBaseNoSlash}/api/youtube/audio/${videoId}`;
 
   if (options?.forceRefresh) {
     invalidateYoutubeResolveCache(videoId);
@@ -103,9 +114,11 @@ export async function resolveYoutubeStreamForVideoId(
   }
 
   const tryDirect = async () => {
-    preResolveYoutubeVideoId(videoId);
+    preResolveYoutubeVideoId(videoId, options?.soundcloudUrl, options?.soundcloudId);
     return resolveYoutubeEnvelopeForPlaybackWithBudget(videoId, RESOLVE_BUDGET_MS, {
       fresh: options?.forceRefresh ?? false,
+      soundcloudUrl: options?.soundcloudUrl,
+      soundcloudId: options?.soundcloudId,
     });
   };
 

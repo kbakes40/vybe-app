@@ -15,7 +15,6 @@ import {
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { Image } from 'expo-image';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -75,6 +74,7 @@ import {
   VybeMusicNeonIcon,
   VybeWavesNeonIcon,
 } from '@/assets/icons/VybeNeonSourceIcons';
+import { AnimatedArtworkBackground } from '@/components/NowPlaying/Background';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const ARTWORK_SIZE = SCREEN_WIDTH - 56;
@@ -94,7 +94,8 @@ function isYouTubeThumbnail(url: string): boolean {
 }
 
 const MACHINED_BLUE = '#00E5FF';
-const NEON_MAGENTA = '#FF00E5';
+/** Scrubber fill — baby cyan (distinct from machined blue accents). */
+const TRACKING_CYAN = '#00FFFF';
 
 const nowPlayingTypography = StyleSheet.create({
   title: {
@@ -469,7 +470,7 @@ function NowPlayingScrubberRow() {
           <View style={{ height: 3, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 2, overflow: 'hidden' }}>
             <Animated.View
               style={[
-                { height: '100%', borderRadius: 2, overflow: 'hidden', backgroundColor: NEON_MAGENTA },
+                { height: '100%', borderRadius: 2, overflow: 'hidden', backgroundColor: TRACKING_CYAN },
                 scrubFillStyle,
               ]}
             />
@@ -865,68 +866,7 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
 
   const sheetBody = (
     <>
-        {/* True OLED base */}
-        <View
-          pointerEvents="none"
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000000' }}
-        />
-        {/* High-intensity backlit ambient — radial blur + chroma / luminance (+sat / +bright feel) */}
-        <View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            left: SCREEN_WIDTH * 0.5 - ARTWORK_SIZE * 0.88,
-            top: SCREEN_HEIGHT * 0.1,
-            width: ARTWORK_SIZE * 1.76,
-            height: ARTWORK_SIZE * 1.52,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          <Image
-            source={{ uri: currentTrack.artwork }}
-            style={{
-              position: 'absolute',
-              width: ARTWORK_SIZE * 1.48,
-              height: ARTWORK_SIZE * 1.48,
-              opacity: 1,
-            }}
-            contentFit="cover"
-            blurRadius={101}
-          />
-          {/* IMG_3643 radial stack — +40% intensity vs prior pass */}
-          <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(255, 0, 200, 0.62)' }]} />
-          <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0, 245, 255, 0.43)' }]} />
-          <LinearGradient
-            colors={['rgba(255,255,255,0.69)', 'rgba(255,255,255,0.14)', 'rgba(255,255,255,0.41)']}
-            locations={[0, 0.38, 1]}
-            style={StyleSheet.absoluteFillObject}
-          />
-          {/* Radial-style backlight (elliptical center lift) — brighter bloom */}
-          <View
-            style={{
-              position: 'absolute',
-              alignSelf: 'center',
-              top: ARTWORK_SIZE * 0.04,
-              width: ARTWORK_SIZE * 1.08,
-              height: ARTWORK_SIZE * 0.92,
-              borderRadius: ARTWORK_SIZE * 0.54,
-              backgroundColor: 'rgba(255, 255, 255, 0.25)',
-              shadowColor: '#FFFFFF',
-              shadowOffset: { width: 0, height: 0 },
-              shadowOpacity: 1,
-              shadowRadius: 73,
-            }}
-          />
-          <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.22)' }]} />
-        </View>
-        {/* Machined blue ground — anchors controls */}
-        <LinearGradient
-          pointerEvents="none"
-          colors={['transparent', 'rgba(0,229,255,0.1)', 'rgba(0,229,255,0.2)']}
-          locations={[0, 0.5, 1]}
-          style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 260 }}
-        />
+        <AnimatedArtworkBackground artworkUri={currentTrack.artwork} />
         <View style={{ flex: 1 }} pointerEvents="box-none">
           <View
             style={{

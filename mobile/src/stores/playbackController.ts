@@ -675,31 +675,34 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       }
       return;
     }
-    const source = track.source || 'vybe';
 
-    // SoundCloud-first: if a streamable SC match exists, play it immediately (skip YouTube PO/CDN path).
+    let source: TrackSource = track.source || 'vybe';
+    const scUrlCoerce = (track as Track & { soundcloudUrl?: string }).soundcloudUrl?.trim();
+    const inferredScId =
+      track.soundcloudId?.trim() ||
+      (track.id.startsWith('sc-') ? track.id.replace(/^sc-/, '') : '');
     if (
-      (source === 'youtube' || source === 'youtube_music') &&
-      extractYoutubeVideoId(track) &&
-      isStillCurrent()
+      scUrlCoerce &&
+      inferredScId &&
+      (source === 'youtube' || source === 'youtube_music')
     ) {
-      const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
-      if (backendBase) {
-        const scAlt = await fetchSoundcloudMatchForYoutubeTrack(track);
-        if (scAlt?.soundcloudUrl && isStillCurrent()) {
-          if (__DEV__) {
-            console.log('[PlaybackController] SoundCloud-first preempt:', track.title, '→', scAlt.title);
-          }
-          const mergedQueue = newQueue.map((t) => (t.id === track.id ? scAlt : t));
-          return get().playTrack(scAlt, mergedQueue, options);
-        }
-      }
+      track = {
+        ...track,
+        source: 'soundcloud',
+        soundcloudUrl: scUrlCoerce,
+        soundcloudId: inferredScId,
+      };
+      source = 'soundcloud';
     }
 
-    console.log('[PlaybackController] Playing track:', track.title, 'source:', source);
-
-    // Add to recents
-    useRecentsStore.getState().addToRecents(track);
+    const playTapAt = Date.now();
+    const preemptBackend = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
+    const scMatchPromise: Promise<Track | null> =
+      (source === 'youtube' || source === 'youtube_music') &&
+      extractYoutubeVideoId(track) &&
+      preemptBackend
+        ? fetchSoundcloudMatchForYoutubeTrack(track)
+        : Promise.resolve(null);
 
     // ONE PLAYER RULE: Stop all sources before starting new playback
     // (this may deactivate the iOS audio session)
@@ -713,6 +716,20 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
     // Bail again after async session init
     if (!isStillCurrent()) { await stopVybeAudio(); return; }
+
+    const scAlt = await scMatchPromise;
+    if (scAlt?.soundcloudUrl && isStillCurrent()) {
+      if (__DEV__) {
+        console.log('[PlaybackController] SoundCloud-first preempt:', track.title, '→', scAlt.title);
+      }
+      const mergedQueue = newQueue.map((t) => (t.id === track.id ? scAlt : t));
+      return get().playTrack(scAlt, mergedQueue, options);
+    }
+
+    console.log('[PlaybackController] Playing track:', track.title, 'source:', source);
+
+    // Add to recents
+    useRecentsStore.getState().addToRecents(track);
 
     // Update state immediately for instant UI feedback
     const trackIndex = index >= 0 ? index : 0;
@@ -870,7 +887,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     // YouTube tracks: stream via backend proxy and/or pre-resolved CDN URL (mobile-only warm cache).
     const ytVideoId = extractYoutubeVideoId(track);
     if ((source === 'youtube' || source === 'youtube_music') && ytVideoId) {
-      const playTapAt = Date.now();
       let ghostCleared = false;
       const clearGhostOnce = () => {
         if (ghostCleared) return;
@@ -882,24 +898,31 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
       set({ playbackState: 'playing' });
       startGhostProgressForTrack(track.id, track.duration || 0);
-      preResolveYoutubeVideoId(ytVideoId);
+      preResolveYoutubeVideoId(
+        ytVideoId,
+        (track as Track & { soundcloudUrl?: string }).soundcloudUrl,
+        track.soundcloudId,
+      );
       useDynamicIslandSignal.getState().setRecoveryLabel(null);
-      useDynamicIslandSignal.getState().setHealingStreamActive(true);
 
       const q0 = get().queue;
       const qi0 = get().queueIndex;
       for (let i = 1; i <= 2 && qi0 + i < q0.length; i++) {
         const n = normalizeYoutubeTrackForPlayback(q0[qi0 + i]);
         const nid = extractYoutubeVideoId(n);
-        if (nid) preResolveYoutubeVideoId(nid);
+        if (nid) {
+          preResolveYoutubeVideoId(
+            nid,
+            (n as Track & { soundcloudUrl?: string }).soundcloudUrl,
+            n.soundcloudId,
+          );
+        }
       }
 
-      let ytResolution: Awaited<ReturnType<typeof resolveYoutubeStreamForVideoId>>;
-      try {
-        ytResolution = await resolveYoutubeStreamForVideoId(ytVideoId, backendBase);
-      } finally {
-        useDynamicIslandSignal.getState().setHealingStreamActive(false);
-      }
+      const ytResolution = await resolveYoutubeStreamForVideoId(ytVideoId, backendBase, {
+        soundcloudUrl: (track as Track & { soundcloudUrl?: string }).soundcloudUrl,
+        soundcloudId: track.soundcloudId,
+      });
 
       if (ytResolution.healedMeta) {
         useDynamicIslandSignal.getState().flashSuccess('SC_RECOVERED');
@@ -1111,6 +1134,8 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
             const again = await resolveYoutubeStreamForVideoId(ytVideoId, backendBase, {
               forceRefresh: true,
               skipDirect: true,
+              soundcloudUrl: (track as Track & { soundcloudUrl?: string }).soundcloudUrl,
+              soundcloudId: track.soundcloudId,
             });
             playUri = again.playUri;
             fromCdn = again.fromCdn;
@@ -1254,6 +1279,9 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         }
         await sound.playAsync();
         set({ playbackState: 'playing' });
+        console.log(
+          `[SC_IGNITION] Track: ${track.title} - Stream Ready in ${Date.now() - playTapAt}ms`,
+        );
 
         // Background: download HQ version, then seamlessly switch to it
         (async () => {

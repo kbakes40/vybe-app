@@ -117,17 +117,28 @@ function parseResolveJson(
   return { url, xHealed: headerHealed };
 }
 
+function resolveQueryString(fresh: boolean, soundcloudUrl?: string, soundcloudId?: string): string {
+  const p = new URLSearchParams();
+  if (fresh) p.set("fresh", "1");
+  if (soundcloudUrl?.trim()) p.set("soundcloudUrl", soundcloudUrl.trim());
+  if (soundcloudId?.trim()) p.set("soundcloudId", soundcloudId.trim());
+  const s = p.toString();
+  return s ? `?${s}` : "";
+}
+
 async function fetchResolveEnvelope(
   videoId: string,
   fresh: boolean,
   attempt = 0,
+  soundcloudUrl?: string,
+  soundcloudId?: string,
 ): Promise<YoutubeResolveEnvelope | null> {
   const base = backendBase();
   if (!base || !videoId) return null;
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), 25_000);
   try {
-    const qs = fresh ? '?fresh=1' : '';
+    const qs = resolveQueryString(fresh, soundcloudUrl, soundcloudId);
     const res = await fetch(`${base}/api/youtube/resolve/${videoId}${qs}`, {
       signal: ac.signal,
       headers: YOUTUBE_RESOLVE_FETCH_HEADERS,
@@ -143,7 +154,7 @@ async function fetchResolveEnvelope(
   } catch (e) {
     if (attempt < 1 && isRetriableResolveFetchError(e)) {
       await new Promise((r) => setTimeout(r, 350));
-      return fetchResolveEnvelope(videoId, fresh, attempt + 1);
+      return fetchResolveEnvelope(videoId, fresh, attempt + 1, soundcloudUrl, soundcloudId);
     }
   } finally {
     clearTimeout(t);
@@ -151,21 +162,26 @@ async function fetchResolveEnvelope(
   return null;
 }
 
-function inflightKey(videoId: string, fresh: boolean): string {
-  return `${videoId}\t${fresh ? '1' : '0'}`;
+function inflightKey(videoId: string, fresh: boolean, soundcloudUrl?: string, soundcloudId?: string): string {
+  return `${videoId}\t${fresh ? '1' : '0'}\t${soundcloudUrl ?? ''}\t${soundcloudId ?? ''}`;
 }
 
-function startResolveFetchEnvelope(videoId: string, fresh: boolean): Promise<YoutubeResolveEnvelope | null> {
-  if (!fresh) {
+function startResolveFetchEnvelope(
+  videoId: string,
+  fresh: boolean,
+  soundcloudUrl?: string,
+  soundcloudId?: string,
+): Promise<YoutubeResolveEnvelope | null> {
+  if (!fresh && !soundcloudUrl?.trim()) {
     const hit = getCachedYoutubeResolveUrl(videoId);
     if (hit) return Promise.resolve({ url: hit });
   }
 
-  const k = inflightKey(videoId, fresh);
+  const k = inflightKey(videoId, fresh, soundcloudUrl, soundcloudId);
   let p = inflight.get(k);
   if (p) return p;
 
-  p = fetchResolveEnvelope(videoId, fresh).finally(() => {
+  p = fetchResolveEnvelope(videoId, fresh, 0, soundcloudUrl, soundcloudId).finally(() => {
     if (inflight.get(k) === p) inflight.delete(k);
   });
   inflight.set(k, p);
@@ -185,11 +201,15 @@ export async function fetchYoutubeHealResolveEnvelope(
 /**
  * Fire-and-forget: populate cache from existing Railway resolve endpoint.
  */
-export function preResolveYoutubeVideoId(videoId: string): void {
+export function preResolveYoutubeVideoId(
+  videoId: string,
+  soundcloudUrl?: string,
+  soundcloudId?: string,
+): void {
   const base = backendBase();
   if (!base || !videoId) return;
-  if (getCachedYoutubeResolveUrl(videoId)) return;
-  void startResolveFetchEnvelope(videoId, false);
+  if (!soundcloudUrl?.trim() && getCachedYoutubeResolveUrl(videoId)) return;
+  void startResolveFetchEnvelope(videoId, false, soundcloudUrl, soundcloudId);
 }
 
 /**
@@ -210,17 +230,19 @@ export async function resolveYoutubeUrlForPlayback(videoId: string): Promise<str
 export async function resolveYoutubeUrlForPlaybackWithBudget(
   videoId: string,
   budgetMs: number,
-  opts?: { fresh?: boolean },
+  opts?: { fresh?: boolean; soundcloudUrl?: string; soundcloudId?: string },
 ): Promise<string | null> {
   const base = backendBase();
   if (!base || !videoId) return null;
   const fresh = opts?.fresh ?? false;
-  if (!fresh) {
+  const scUrl = opts?.soundcloudUrl;
+  const scId = opts?.soundcloudId;
+  if (!fresh && !scUrl?.trim()) {
     const hit = getCachedYoutubeResolveUrl(videoId);
     if (hit) return hit;
   }
   return Promise.race([
-    startResolveFetchEnvelope(videoId, fresh),
+    startResolveFetchEnvelope(videoId, fresh, scUrl, scId),
     new Promise<YoutubeResolveEnvelope | null>((resolve) => {
       setTimeout(() => resolve(null), budgetMs);
     }),
@@ -233,17 +255,19 @@ export async function resolveYoutubeUrlForPlaybackWithBudget(
 export async function resolveYoutubeEnvelopeForPlaybackWithBudget(
   videoId: string,
   budgetMs: number,
-  opts?: { fresh?: boolean },
+  opts?: { fresh?: boolean; soundcloudUrl?: string; soundcloudId?: string },
 ): Promise<YoutubeResolveEnvelope | null> {
   const base = backendBase();
   if (!base || !videoId) return null;
   const fresh = opts?.fresh ?? false;
-  if (!fresh) {
+  const scUrl = opts?.soundcloudUrl;
+  const scId = opts?.soundcloudId;
+  if (!fresh && !scUrl?.trim()) {
     const hit = getCachedYoutubeResolveUrl(videoId);
     if (hit) return { url: hit };
   }
   return Promise.race([
-    startResolveFetchEnvelope(videoId, fresh),
+    startResolveFetchEnvelope(videoId, fresh, scUrl, scId),
     new Promise<YoutubeResolveEnvelope | null>((resolve) => {
       setTimeout(() => resolve(null), budgetMs);
     }),

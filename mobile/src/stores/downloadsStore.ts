@@ -354,6 +354,17 @@ export async function downloadYouTubeTrack(
 
   const base = backendBaseUrl.replace(/\/$/, '');
 
+  void fetch(`${base}/api/vault/save`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      videoId,
+      title: trackTitle,
+      artist: artistName,
+      soundcloudUrl: (track as Track & { soundcloudUrl?: string }).soundcloudUrl,
+    }),
+  }).catch(() => {});
+
   try {
     const dir = await getShadowSyncDir();
     onProgress?.(0.01);

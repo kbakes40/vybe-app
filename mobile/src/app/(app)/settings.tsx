@@ -64,6 +64,7 @@ import {
 import { authClient } from '@/lib/auth/auth-client';
 import { clearSessionBearerToken } from '@/lib/auth/sessionBearer';
 import { useDiscoveryStore } from '@/stores/discoveryStore';
+import { useDownloadsStore, formatFileSize } from '@/stores/downloadsStore';
 import { usePlaybackDebugStore } from '@/stores/playbackDebugStore';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useUserSettingsStore } from '@/stores/userSettingsStore';
@@ -345,6 +346,9 @@ export default function SettingsScreen() {
   const autoRefreshEnabled = useDiscoveryStore((s) => s.autoRefreshEnabled);
   const setAutoRefreshEnabled = useDiscoveryStore((s) => s.setAutoRefreshEnabled);
   const clearDiscoveryCache = useDiscoveryStore((s) => s.clearDiscoveryCache);
+  const downloads = useDownloadsStore((s) => s.downloads);
+  const clearAllDownloads = useDownloadsStore((s) => s.clearAllDownloads);
+  const totalDownloadBytes = downloads.reduce((sum, t) => sum + (t.fileSize ?? 0), 0);
   const seedTracksCount = useDiscoveryStore((s) => s.seedTracks.length);
   const discoveredTracksCount = useDiscoveryStore((s) => s.discoveredTracks.length);
 
@@ -843,6 +847,58 @@ export default function SettingsScreen() {
                         message: 'Discovery cache cleared. New tracks will appear on next refresh.',
                         type: 'success',
                       });
+                    },
+                  },
+                ],
+              });
+            }}
+          />
+          <SettingsItem
+            searchQuery={q}
+            icon={<CategoryIcon category="destructive"><Trash2 /></CategoryIcon>}
+            title="Wipe all downloads"
+            subtitle={
+              downloads.length === 0
+                ? 'No offline tracks stored.'
+                : `${downloads.length} track${downloads.length === 1 ? '' : 's'} · ${formatFileSize(totalDownloadBytes)}`
+            }
+            showChevron
+            isDestructive
+            onPress={() => {
+              if (downloads.length === 0) {
+                showVybePopup({
+                  title: 'Vault Empty',
+                  message: 'You have no downloaded tracks to clear.',
+                  type: 'info',
+                });
+                return;
+              }
+              showVybePopup({
+                title: 'Wipe All Downloads',
+                message: `Permanently delete ${downloads.length} offline track${downloads.length === 1 ? '' : 's'} (${formatFileSize(totalDownloadBytes)}) from this device?`,
+                type: 'warning',
+                actions: [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Wipe All',
+                    style: 'destructive',
+                    onPress: async () => {
+                      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                      try {
+                        await clearAllDownloads();
+                        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                        showVybePopup({
+                          title: 'Vault Wiped',
+                          message: 'All offline tracks removed from this device.',
+                          type: 'success',
+                        });
+                      } catch (e) {
+                        showVybePopup({
+                          title: 'Wipe Failed',
+                          message: e instanceof Error ? e.message : 'Could not delete all files.',
+                          type: 'error',
+                        });
+                      }
                     },
                   },
                 ],
