@@ -36,7 +36,8 @@ class VybeNowPlayingActivityModule: RCTEventEmitter {
     _ trackName: String,
     artistName: String,
     artworkUrl: String,
-    duration: Double
+    duration: Double,
+    albumTitle: String
   ) {
     isActive = true
     ensurePlaybackSession()
@@ -47,6 +48,12 @@ class VybeNowPlayingActivityModule: RCTEventEmitter {
     var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
     info[MPMediaItemPropertyTitle] = trackName
     info[MPMediaItemPropertyArtist] = artistName
+    let album = albumTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !album.isEmpty {
+      info[MPMediaItemPropertyAlbumTitle] = album
+    } else {
+      info.removeValue(forKey: MPMediaItemPropertyAlbumTitle)
+    }
     info[MPMediaItemPropertyPlaybackDuration] = duration
     info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
     info[MPNowPlayingInfoPropertyMediaType] = NSNumber(value: MPMediaType.music.rawValue)
@@ -66,12 +73,19 @@ class VybeNowPlayingActivityModule: RCTEventEmitter {
     elapsed: Double,
     total: Double,
     trackName: String,
-    artistName: String
+    artistName: String,
+    albumTitle: String
   ) {
     guard isActive else { return }
     var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
     info[MPMediaItemPropertyTitle] = trackName
     info[MPMediaItemPropertyArtist] = artistName
+    let album = albumTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !album.isEmpty {
+      info[MPMediaItemPropertyAlbumTitle] = album
+    } else {
+      info.removeValue(forKey: MPMediaItemPropertyAlbumTitle)
+    }
     info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
     info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
     if total > 0 { info[MPMediaItemPropertyPlaybackDuration] = total }
@@ -96,6 +110,21 @@ class VybeNowPlayingActivityModule: RCTEventEmitter {
     currentArtworkURL = ""
     MPNowPlayingInfoCenter.default().nowPlayingInfo = [:]
     NSLog("[VybeNowPlaying] terminateAllNowPlayingMetadata — MPNowPlaying cleared")
+  }
+
+  /// Persists the JS theme accent for native listeners / future chrome. System
+  /// Dynamic Island music UI is not user-tintable via Now Playing metadata.
+  @objc func updateAccentColor(_ hex: String) {
+    let trimmed = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+    UserDefaults.standard.set(trimmed, forKey: "vybe_accent_hex")
+    // Same value for any future native chrome (e.g. widget / extension progress tint).
+    UserDefaults.standard.set(trimmed, forKey: "vybe_accent_progress_hex")
+    NotificationCenter.default.post(
+      name: Notification.Name("VybeAccentColorChanged"),
+      object: nil,
+      userInfo: ["hex": trimmed]
+    )
+    NSLog("[VybeNowPlaying] updateAccentColor hex=\"\(trimmed)\"")
   }
 
   // MARK: – Private

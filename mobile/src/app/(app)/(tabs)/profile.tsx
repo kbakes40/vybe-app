@@ -16,7 +16,9 @@ import { Image } from 'expo-image';
 import { authClient } from '@/lib/auth/auth-client';
 import { clearSessionBearerToken } from '@/lib/auth/sessionBearer';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
-import { OLED_BLACK, MACHINED_CYAN, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
+import { OLED_BLACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
+import { useThemeStore } from '@/stores/themeStore';
+import { hexToRgba } from '@/lib/themeColorUtils';
 import { ListDisclosureMark } from '@/components/account/ListDisclosureMark';
 import { terminateAllPillNative } from '@/lib/NowPlayingActivityManager';
 
@@ -94,6 +96,7 @@ function MenuItem({
 export default function ProfileTabScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const accent = useThemeStore((s) => s.accentColor);
   const { data: session } = authClient.useSession();
   const avatarUrl = session?.user?.image ?? null;
   const displayName =
@@ -111,9 +114,13 @@ export default function ProfileTabScreen() {
         <View style={[styles.hero, { paddingTop: insets.top + 64 }]}>
           <Text style={styles.kicker}>ACCOUNT</Text>
           {avatarUrl ? (
-            <Image source={{ uri: avatarUrl }} style={styles.avatar} contentFit="cover" />
+            <Image
+              source={{ uri: avatarUrl }}
+              style={[styles.avatar, { borderColor: accent }]}
+              contentFit="cover"
+            />
           ) : (
-            <View style={[styles.avatar, styles.avatarPlaceholder]}>
+            <View style={[styles.avatar, styles.avatarPlaceholder, { borderColor: accent }]}>
               <Text style={styles.avatarGlyph}>V</Text>
             </View>
           )}
@@ -122,7 +129,7 @@ export default function ProfileTabScreen() {
           </Text>
         </View>
 
-        <View style={styles.menuCard}>
+        <View style={[styles.menuCard, { borderColor: hexToRgba(accent, 0.22) }]}>
           <MenuItem
             icon={<Crown size={20} color={NAV_BAR_PURPLE} strokeWidth={2} />}
             label="Your Plan"
@@ -198,7 +205,6 @@ const styles = StyleSheet.create({
     height: 92,
     borderRadius: 46,
     borderWidth: 2,
-    borderColor: MACHINED_CYAN,
   },
   avatarPlaceholder: {
     backgroundColor: 'rgba(255,255,255,0.06)',
@@ -222,7 +228,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(0,255,255,0.22)',
     overflow: 'hidden',
     backgroundColor: OLED_BLACK,
     alignSelf: 'stretch',

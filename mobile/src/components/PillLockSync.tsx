@@ -54,6 +54,7 @@ export function PillLockSync() {
           currentTrack.artist,
           currentTrack.artwork ?? '',
           currentTrack.duration || 0,
+          currentTrack.globalRadioIslandAlbum,
         );
       }
     }

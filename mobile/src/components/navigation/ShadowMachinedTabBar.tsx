@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, StyleSheet, LayoutChangeEvent } from 'react-native';
 import { BottomTabBar, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
-import { SHADOW_TAB_ACTIVE } from '@/components/navigation/ShadowTabBarIcons';
+import { useThemeStore } from '@/stores/themeStore';
 
 /** Slightly narrower so eight dock slots stay legible without crowding the cyan line. */
 const INDICATOR_W = 15;
@@ -15,6 +15,7 @@ const SPRING = { damping: 22, stiffness: 300, mass: 0.55 };
  */
 export function ShadowMachinedTabBar(props: BottomTabBarProps) {
   const { state, insets } = props;
+  const accentColor = useThemeStore((s) => s.accentColor);
   const [barWidth, setBarWidth] = useState(0);
   const indicatorX = useSharedValue(0);
   const prevBarWidth = useRef(0);
@@ -57,7 +58,7 @@ export function ShadowMachinedTabBar(props: BottomTabBarProps) {
         pointerEvents="none"
         style={[styles.indicatorHost, { bottom: bottomOffset }, lineStyle]}
       >
-        <View style={styles.line} />
+        <View style={[styles.line, { backgroundColor: accentColor, shadowColor: accentColor }]} />
       </Animated.View>
     </View>
   );
@@ -79,8 +80,6 @@ const styles = StyleSheet.create({
     width: INDICATOR_W,
     height: INDICATOR_H,
     borderRadius: 1,
-    backgroundColor: SHADOW_TAB_ACTIVE,
-    shadowColor: SHADOW_TAB_ACTIVE,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.85,
     shadowRadius: 4,

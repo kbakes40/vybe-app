@@ -7,6 +7,8 @@ const { VybeNowPlayingActivity, VybeDownloadActivity } = NativeModules as {
     updateNowPlaying: (...a: unknown[]) => void;
     endNowPlaying: () => void;
     terminateAllNowPlayingMetadata?: () => void;
+    /** Theme accent — persisted for native chrome / future Live Activity theming (not MPNowPlaying tint). */
+    updateAccentColor?: (hex: string) => void;
   };
   VybeDownloadActivity?: { terminateAllActivities?: () => Promise<void> };
 };
@@ -36,6 +38,7 @@ let pendingUpdate: {
   duration: number;
   trackName: string;
   artistName: string;
+  albumTitle: string;
 } | null = null;
 let throttleTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -56,6 +59,7 @@ function flushThrottledUpdate() {
       p.duration,
       p.trackName,
       p.artistName,
+      p.albumTitle,
     );
   } catch {}
 }
@@ -71,6 +75,7 @@ export async function startNowPlayingActivity(
   artistName: string,
   artworkURL: string,
   duration: number,
+  albumTitle?: string,
 ): Promise<void> {
   if (!isAvailable || !isIslandSurfaceAllowed()) return;
   try {
@@ -79,6 +84,7 @@ export async function startNowPlayingActivity(
       artistName,
       artworkURL ?? '',
       Math.max(0, duration),
+      albumTitle ?? '',
     );
   } catch {}
 }
@@ -94,6 +100,7 @@ export function updateNowPlayingActivity(
   duration: number,
   trackName: string,
   artistName: string,
+  albumTitle?: string,
 ): void {
   if (!isAvailable || !isIslandSurfaceAllowed()) return;
   pendingUpdate = {
@@ -103,6 +110,7 @@ export function updateNowPlayingActivity(
     duration: Math.max(0, duration),
     trackName,
     artistName,
+    albumTitle: albumTitle ?? '',
   };
   const now = Date.now();
   if (now - lastNativeUpdateAt >= NATIVE_UPDATE_MIN_MS) {
@@ -137,6 +145,20 @@ export function endNowPlayingActivity(): void {
  * PILL_LOCK_V2 — tear down native Now Playing metadata + ActivityKit download
  * Live Activities (sign out / auth surface / policy off).
  */
+/**
+ * Push the current UI accent to native. Apple does not expose Dynamic Island
+ * pill chrome tint via `MPNowPlayingInfoCenter`; this keeps the hex on the
+ * native side for consistency with in-app pill / future widgets.
+ */
+export function updateNativeThemeAccent(hex: string): void {
+  if (Platform.OS !== 'ios') return;
+  try {
+    VybeNowPlayingActivity?.updateAccentColor?.(hex);
+  } catch {
+    /* optional bridge on older builds */
+  }
+}
+
 export function terminateAllPillNative(): void {
   pendingUpdate = null;
   if (throttleTimer) {

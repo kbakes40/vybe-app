@@ -16,9 +16,9 @@ import {
   ShadowVaultWaveIcon,
   ShadowRadioTowerIcon,
   ShadowTabIconShell,
-  SHADOW_TAB_ACTIVE,
   SHADOW_TAB_INACTIVE,
 } from '@/components/navigation/ShadowTabBarIcons';
+import { useThemeStore } from '@/stores/themeStore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import type { BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
@@ -136,6 +136,7 @@ function LibraryTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?:
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const accentColor = useThemeStore((s) => s.accentColor);
   const keyboardVisible = useKeyboardChromeStore((s) => s.keyboardVisible);
   const [showViewMenu, setShowViewMenu] = useState(false);
   const [showSearchMenu, setShowSearchMenu] = useState(false);
@@ -314,7 +315,7 @@ export default function TabLayout() {
             justifyContent: 'center',
             ...tabBarChrome,
           },
-          tabBarActiveTintColor: SHADOW_TAB_ACTIVE,
+          tabBarActiveTintColor: accentColor,
           tabBarInactiveTintColor: SHADOW_TAB_INACTIVE,
           tabBarIconStyle: {
             width: ICON_SIZE,
@@ -332,7 +333,7 @@ export default function TabLayout() {
             tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="index" />,
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
-              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              const c = focused ? accentColor : SHADOW_TAB_INACTIVE;
               return (
                 <ShadowTabIconShell focused={focused} pressRoute="index">
                   <ShadowHomeIcon size={dim} color={c} />
@@ -354,7 +355,7 @@ export default function TabLayout() {
             ),
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
-              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              const c = focused ? accentColor : SHADOW_TAB_INACTIVE;
               return (
                 <ShadowTabIconShell focused={focused} pressRoute="search">
                   <ShadowSearchIcon size={dim} color={c} />
@@ -394,7 +395,7 @@ export default function TabLayout() {
             tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="social" />,
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
-              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              const c = focused ? accentColor : SHADOW_TAB_INACTIVE;
               return (
                 <ShadowTabIconShell focused={focused} pressRoute="social">
                   <ShadowVaultWaveIcon size={dim} color={c} />
@@ -410,7 +411,7 @@ export default function TabLayout() {
             tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="radio" />,
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
-              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              const c = focused ? accentColor : SHADOW_TAB_INACTIVE;
               return (
                 <ShadowTabIconShell focused={focused} pressRoute="radio">
                   <ShadowRadioTowerIcon size={dim} color={c} />
@@ -426,7 +427,7 @@ export default function TabLayout() {
             tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="plan" />,
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
-              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              const c = focused ? accentColor : SHADOW_TAB_INACTIVE;
               return (
                 <ShadowTabIconShell focused={focused} pressRoute="plan">
                   <ShadowPlanGridIcon size={dim} color={c} />
@@ -448,7 +449,7 @@ export default function TabLayout() {
             ),
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
-              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              const c = focused ? accentColor : SHADOW_TAB_INACTIVE;
               return (
                 <ShadowTabIconShell focused={focused} pressRoute="library">
                   <ShadowLibraryIcon size={dim} color={c} />

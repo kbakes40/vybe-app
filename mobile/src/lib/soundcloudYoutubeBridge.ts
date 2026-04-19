@@ -19,6 +19,7 @@ export function soundcloudRowToTrack(row: SoundcloudSearchRow): Track {
     duration: row.duration,
     isLiked: false,
     source: 'soundcloud',
+    soundcloudId: row.trackId,
     soundcloudUrl: row.soundcloudUrl,
     audioUrl: '',
     artistId: '',
@@ -29,7 +30,8 @@ export function soundcloudRowToTrack(row: SoundcloudSearchRow): Track {
 
 /**
  * Best-effort SoundCloud track for the same recording (title + artist).
- * Used before YouTube stream resolve and after hard vault failures (404/502, etc.).
+ * INSTANT_STEALTH: raced with a short budget in `playbackController` so YouTube
+ * resolve is not blocked for the full RTT; also used after hard vault failures.
  */
 export async function fetchSoundcloudMatchForYoutubeTrack(track: Track): Promise<Track | null> {
   const q = `${track.artist} ${track.title}`

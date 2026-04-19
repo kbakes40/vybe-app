@@ -78,6 +78,8 @@ import {
 } from '@/assets/icons/VybeNeonSourceIcons';
 import { AnimatedArtworkBackground } from '@/components/NowPlaying/Background';
 import { RadioParadiseSoulActions } from '@/components/radio/RadioParadiseSoulActions';
+import { useThemeStore } from '@/stores/themeStore';
+import { hexToRgba } from '@/lib/themeColorUtils';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const ARTWORK_SIZE = SCREEN_WIDTH - 56;
@@ -97,9 +99,6 @@ function isYouTubeThumbnail(url: string): boolean {
 }
 
 const MACHINED_BLUE = '#00E5FF';
-/** Scrubber fill — baby cyan (distinct from machined blue accents). */
-const TRACKING_CYAN = '#00FFFF';
-
 const nowPlayingTypography = StyleSheet.create({
   title: {
     color: '#FFFFFF',
@@ -399,6 +398,7 @@ const ARTWORK_EDGE = MACHINED_BLUE;
 
 /** Scrubber + time labels only — subscribes to progress so the rest of Now Playing does not re-render every tick. */
 function NowPlayingScrubberRow() {
+  const accent = useThemeStore((s) => s.accentColor);
   const progress = usePlaybackController(s => s.progress);
   const duration = usePlaybackController(s => s.duration);
   const seekTo = usePlaybackController(s => s.seekTo);
@@ -481,7 +481,7 @@ function NowPlayingScrubberRow() {
           <View style={{ height: 3, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 2, overflow: 'hidden' }}>
             <Animated.View
               style={[
-                { height: '100%', borderRadius: 2, overflow: 'hidden', backgroundColor: TRACKING_CYAN },
+                { height: '100%', borderRadius: 2, overflow: 'hidden', backgroundColor: accent },
                 scrubFillStyle,
               ]}
             />
@@ -491,8 +491,8 @@ function NowPlayingScrubberRow() {
               style={{
                 ...StyleSheet.absoluteFillObject,
                 borderRadius: 11,
-                backgroundColor: 'rgba(0,229,255,0.12)',
-                shadowColor: MACHINED_BLUE,
+                backgroundColor: hexToRgba(accent, 0.12),
+                shadowColor: accent,
                 shadowOpacity: 1,
                 shadowRadius: 14,
                 shadowOffset: { width: 0, height: 0 },

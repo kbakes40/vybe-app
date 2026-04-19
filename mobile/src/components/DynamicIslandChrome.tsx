@@ -150,8 +150,8 @@ export function DynamicIslandChrome() {
         StyleSheet.absoluteFill,
         {
           top: 0,
-          zIndex: 9998,
-          elevation: 9998,
+          zIndex: 9999,
+          elevation: 9999,
         },
       ]}
     >

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -25,7 +25,9 @@ import { authClient } from '@/lib/auth/auth-client';
 import { terminateAllPillNative } from '@/lib/NowPlayingActivityManager';
 import { clearSessionBearerToken } from '@/lib/auth/sessionBearer';
 import { useVybePopup } from '@/components/VybePopup';
-import { OLED_BLACK, MACHINED_CYAN, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
+import { OLED_BLACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
+import { useThemeStore } from '@/stores/themeStore';
+import { hexToRgba } from '@/lib/themeColorUtils';
 
 // Mock accounts data
 const MOCK_ACCOUNTS: Array<{ id: string; name: string; email: string; image: string; isCurrent: boolean }> = [];
@@ -207,6 +209,18 @@ export default function AccountsScreen() {
   const { showVybePopup } = useVybePopup();
   const [accounts, setAccounts] = useState(MOCK_ACCOUNTS);
   const [showAddOptions, setShowAddOptions] = useState(false);
+  const accent = useThemeStore((s) => s.accentColor);
+  const chrome = useMemo(
+    () => ({
+      cardBorder: hexToRgba(accent, 0.22),
+      panelBorder: hexToRgba(accent, 0.2),
+      panelOuter: hexToRgba(accent, 0.2),
+      badgeBorder: accent,
+      badgeBg: hexToRgba(accent, 0.14),
+      badgeText: accent,
+    }),
+    [accent],
+  );
 
   const handleSwitchAccount = (accountId: string) => {
     setAccounts(prev => prev.map(acc => ({
@@ -286,7 +300,7 @@ export default function AccountsScreen() {
       >
         <View style={{ marginTop: 16, paddingHorizontal: 16 }}>
           <Text style={acctStyles.sectionLabel}>CONNECTED DEVICES</Text>
-          <View style={acctStyles.connectedPanel}>
+          <View style={[acctStyles.connectedPanel, { borderColor: chrome.panelBorder }]}>
             <View style={acctStyles.deviceRow}>
               <Wifi size={18} color={NAV_BAR_PURPLE} strokeWidth={2} />
               <View style={{ flex: 1, marginLeft: 10 }}>
@@ -294,8 +308,13 @@ export default function AccountsScreen() {
                   Steve Jobs&apos; Left Toe (iPhone 15 Pro Max)
                 </Text>
               </View>
-              <View style={acctStyles.statusBadge}>
-                <Text style={acctStyles.statusBadgeText}>LOGIC ACTIVE</Text>
+              <View
+                style={[
+                  acctStyles.statusBadge,
+                  { borderColor: chrome.badgeBorder, backgroundColor: chrome.badgeBg },
+                ]}
+              >
+                <Text style={[acctStyles.statusBadgeText, { color: chrome.badgeText }]}>LOGIC ACTIVE</Text>
               </View>
             </View>
             <View style={acctStyles.deviceDivider} />
@@ -306,8 +325,13 @@ export default function AccountsScreen() {
                   {'Louis 🔐🔐🏴☠️ (iPhone 14 Pro Max)'}
                 </Text>
               </View>
-              <View style={acctStyles.statusBadge}>
-                <Text style={acctStyles.statusBadgeText}>NATIVE PILL ACTIVE</Text>
+              <View
+                style={[
+                  acctStyles.statusBadge,
+                  { borderColor: chrome.badgeBorder, backgroundColor: chrome.badgeBg },
+                ]}
+              >
+                <Text style={[acctStyles.statusBadgeText, { color: chrome.badgeText }]}>NATIVE PILL ACTIVE</Text>
               </View>
             </View>
           </View>
@@ -318,7 +342,7 @@ export default function AccountsScreen() {
           <Text className="text-white/50 text-xs uppercase tracking-wider px-5 mb-3 font-medium">
             Signed In Accounts
           </Text>
-          <View style={acctStyles.card}>
+          <View style={[acctStyles.card, { borderColor: chrome.cardBorder }]}>
             {accounts.map((account, index) => (
               <View key={account.id}>
                 <AccountItem
@@ -350,7 +374,7 @@ export default function AccountsScreen() {
               </Text>
             </Pressable>
           ) : (
-            <View style={acctStyles.addPanel}>
+            <View style={[acctStyles.addPanel, { borderColor: chrome.panelOuter }]}>
               <Text style={{ color: '#fff', fontWeight: '500', fontSize: 15, textAlign: 'center', paddingTop: 18, paddingBottom: 14 }}>
                 Add Another Account
               </Text>
@@ -442,7 +466,6 @@ const acctStyles = StyleSheet.create({
     borderRadius: 14,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(0,255,255,0.22)',
     backgroundColor: OLED_BLACK,
   },
   addPanel: {
@@ -450,7 +473,6 @@ const acctStyles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(0,255,255,0.2)',
   },
   sectionLabel: {
     color: 'rgba(255,255,255,0.55)',
@@ -462,7 +484,6 @@ const acctStyles = StyleSheet.create({
   connectedPanel: {
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(0,255,255,0.22)',
     backgroundColor: OLED_BLACK,
     overflow: 'hidden',
   },
@@ -485,15 +506,12 @@ const acctStyles = StyleSheet.create({
   },
   statusBadge: {
     borderWidth: 1,
-    borderColor: MACHINED_CYAN,
-    backgroundColor: 'rgba(0,255,255,0.14)',
     paddingHorizontal: 8,
     paddingVertical: 6,
     borderRadius: 6,
     maxWidth: 120,
   },
   statusBadgeText: {
-    color: MACHINED_CYAN,
     fontSize: 9,
     fontWeight: '900',
     letterSpacing: 0.4,

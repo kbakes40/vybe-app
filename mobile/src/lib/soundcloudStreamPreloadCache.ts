@@ -2,7 +2,8 @@
  * Client cache for GET /api/soundcloud/stream-url (direct HLS/progressive URL for AVPlayer).
  */
 
-const TTL_MS = 12 * 60 * 1000;
+/** INSTANT_STEALTH — successful stream URLs stay warm for replays within the hour. */
+const TTL_MS = 60 * 60 * 1000;
 const cache = new Map<string, { url: string; expires: number }>();
 const inflight = new Map<string, Promise<string | null>>();
 

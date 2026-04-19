@@ -70,7 +70,9 @@ import { useUserSettingsStore } from '@/stores/userSettingsStore';
 import { MINI_PLAYER_HEIGHT } from './_layout';
 import { useVybePopup } from '@/components/VybePopup';
 import { ShadowNeonSwitch } from '@/components/ShadowNeonSwitch';
-import { MACHINED_CYAN, OLED_BLACK, NAVY_TRACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
+import { OLED_BLACK, NAVY_TRACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
+import { useThemeStore, THEME_COLOR_PRESETS } from '@/stores/themeStore';
+import { accentHexToHue, hexToRgba, hsvHueToHex } from '@/lib/themeColorUtils';
 import { ListDisclosureMark } from '@/components/account/ListDisclosureMark';
 
 const STROKE = 1.5;
@@ -261,6 +263,7 @@ function ShadowSliderRow({
 }) {
   if (!rowMatchesSearch(title, subtitle, searchQuery)) return null;
   const bump = useThrottledSelection();
+  const trackAccent = useThemeStore((s) => s.accentColor);
 
   return (
     <View style={[styles.row, styles.sliderRow, styles.rowBorder]}>
@@ -277,19 +280,127 @@ function ShadowSliderRow({
             bump();
             onValueChange(v);
           }}
-          minimumTrackTintColor={MACHINED_CYAN}
+          minimumTrackTintColor={trackAccent}
           maximumTrackTintColor={NAVY_TRACK}
-          thumbTintColor={MACHINED_CYAN}
+          thumbTintColor={trackAccent}
         />
       </View>
     </View>
   );
 }
 
-function HqBadge({ label }: { label: string }) {
+function ColorEngineSection({ searchQuery }: { searchQuery: string }) {
+  if (
+    !rowMatchesSearch('Color Engine', 'App Preferences pill tabs chrome artwork.', searchQuery) &&
+    !rowMatchesSearch('Sync to Artwork', 'album art dominant color.', searchQuery) &&
+    !rowMatchesSearch('Hue ring', 'spectrum accent', searchQuery)
+  ) {
+    return null;
+  }
+  const accent = useThemeStore((s) => s.accentColor);
+  const setAccent = useThemeStore((s) => s.setAccentColor);
+  const syncToArtwork = useThemeStore((s) => s.syncToArtwork);
+  const setSyncToArtwork = useThemeStore((s) => s.setSyncToArtwork);
+  const [hue, setHue] = useState(() => accentHexToHue(accent));
+
+  useEffect(() => {
+    setHue(accentHexToHue(accent));
+  }, [accent]);
+
+  const pickManualAccent = (hex: string) => {
+    setSyncToArtwork(false);
+    setAccent(hex);
+  };
+
   return (
-    <View style={styles.hqBadge}>
-      <Text style={styles.hqBadgeText}>{label}</Text>
+    <SettingsSection title="Color Engine">
+      <View style={styles.colorEngineIntro}>
+        <Text style={styles.rowSubtitle}>
+          App Preferences — dock, in-app pill, mini strip, and machined borders follow this accent
+          instantly (native bridge + AsyncStorage).
+        </Text>
+      </View>
+      <View style={styles.presetRow}>
+        {THEME_COLOR_PRESETS.map((p) => {
+          const selected = accent === p.hex;
+          return (
+            <Pressable
+              key={p.id}
+              onPress={() => {
+                void Haptics.selectionAsync();
+                pickManualAccent(p.hex);
+              }}
+              style={[
+                styles.presetChip,
+                { borderColor: selected ? p.hex : 'rgba(255,255,255,0.18)' },
+                selected && { backgroundColor: hexToRgba(p.hex, 0.14) },
+              ]}
+            >
+              <View style={[styles.presetSwatch, { backgroundColor: p.hex }]} />
+              <Text style={[styles.presetLabel, selected && { color: p.hex }]}>{p.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <View style={[styles.row, styles.sliderRow, styles.rowBorder, styles.colorEngineHueRow]}>
+        <View style={styles.rowIcon}>
+          <CategoryIcon category="content">
+            <SlidersHorizontal />
+          </CategoryIcon>
+        </View>
+        <View style={styles.sliderBody}>
+          <Text style={styles.rowTitle}>Hue ring</Text>
+          <Text style={styles.rowSubtitle}>Sweep the spectrum — updates instantly.</Text>
+          <Slider
+            style={styles.slider}
+            minimumValue={0}
+            maximumValue={359}
+            value={hue}
+            onValueChange={(v) => {
+              setHue(v);
+              pickManualAccent(hsvHueToHex(v));
+            }}
+            minimumTrackTintColor={accent}
+            maximumTrackTintColor={NAVY_TRACK}
+            thumbTintColor={accent}
+          />
+        </View>
+      </View>
+
+      <View style={[styles.row, styles.rowBorder, styles.colorEngineHueRow]}>
+        <View style={styles.rowIcon}>
+          <CategoryIcon category="content">
+            <Sparkles />
+          </CategoryIcon>
+        </View>
+        <View style={{ flex: 1, minWidth: 0, paddingVertical: 10, paddingRight: 8 }}>
+          <Text style={styles.rowTitle}>Sync to Artwork</Text>
+          <Text style={styles.rowSubtitle}>
+            When on, the accent follows the dominant color from the current track&apos;s album art.
+          </Text>
+        </View>
+        <ShadowNeonSwitch
+          value={syncToArtwork}
+          onValueChange={(v) => {
+            void Haptics.selectionAsync();
+            setSyncToArtwork(v);
+          }}
+        />
+      </View>
+    </SettingsSection>
+  );
+}
+
+function HqBadge({ label }: { label: string }) {
+  const accent = useThemeStore((s) => s.accentColor);
+  return (
+    <View
+      style={[
+        styles.hqBadge,
+        { borderColor: hexToRgba(accent, 0.5), backgroundColor: hexToRgba(accent, 0.1) },
+      ]}
+    >
+      <Text style={[styles.hqBadgeText, { color: accent }]}>{label}</Text>
     </View>
   );
 }
@@ -349,6 +460,8 @@ export default function SettingsScreen() {
   const handleUnlockTap = usePlaybackDebugStore((s) => s.handleUnlockTap);
   const debugOverlayVisible = usePlaybackDebugStore((s) => s.debugOverlayVisible);
   const toggleDebugOverlay = usePlaybackDebugStore((s) => s.toggleDebugOverlay);
+
+  const deviceAccent = useThemeStore((s) => s.accentColor);
 
   const bottomPadding = insets.bottom + (showMiniPlayer ? MINI_PLAYER_HEIGHT : 0) + 48;
 
@@ -463,7 +576,7 @@ export default function SettingsScreen() {
           <View style={{ width: 40 }} />
         </View>
 
-        <View style={styles.searchShell}>
+        <View style={[styles.searchShell, { borderColor: hexToRgba(deviceAccent, 0.24) }]}>
           <Search size={20} color="rgba(255,255,255,0.5)" strokeWidth={STROKE} />
           <VybeTextInput
             value={searchQuery}
@@ -480,7 +593,7 @@ export default function SettingsScreen() {
               }}
               hitSlop={10}
             >
-              <Text style={styles.cancelBtn}>Cancel</Text>
+              <Text style={[styles.cancelBtn, { color: deviceAccent }]}>Cancel</Text>
             </Pressable>
           ) : null}
         </View>
@@ -549,8 +662,16 @@ export default function SettingsScreen() {
                 Steve Jobs&apos; Left Toe (iPhone 15 Pro Max)
               </Text>
             </View>
-            <View style={styles.activeBadge}>
-              <Text style={styles.activeBadgeText}>LOGIC ACTIVE</Text>
+            <View
+              style={[
+                styles.activeBadge,
+                {
+                  borderColor: deviceAccent,
+                  backgroundColor: hexToRgba(deviceAccent, 0.14),
+                },
+              ]}
+            >
+              <Text style={[styles.activeBadgeText, { color: deviceAccent }]}>LOGIC ACTIVE</Text>
             </View>
           </View>
           <View style={[styles.row, styles.rowBorder, styles.deviceRow]}>
@@ -562,8 +683,16 @@ export default function SettingsScreen() {
                 {'Louis 🔐🔐🏴☠️ (iPhone 14 Pro Max)'}
               </Text>
             </View>
-            <View style={styles.activeBadge}>
-              <Text style={styles.activeBadgeText}>NATIVE PILL ACTIVE</Text>
+            <View
+              style={[
+                styles.activeBadge,
+                {
+                  borderColor: deviceAccent,
+                  backgroundColor: hexToRgba(deviceAccent, 0.14),
+                },
+              ]}
+            >
+              <Text style={[styles.activeBadgeText, { color: deviceAccent }]}>NATIVE PILL ACTIVE</Text>
             </View>
           </View>
         </SettingsSection>
@@ -764,6 +893,8 @@ export default function SettingsScreen() {
             value="Dark"
           />
         </SettingsSection>
+
+        <ColorEngineSection searchQuery={q} />
 
         <SettingsSection title="Downloads">
           <SettingsItem
@@ -1023,8 +1154,9 @@ export default function SettingsScreen() {
   );
 }
 
-/** Minimal footer — machined cyan accent only (no legacy brand colors). */
+/** Minimal footer — pulses the live global UI accent (no legacy brand colors). */
 function VybeSystemFooter() {
+  const accent = useThemeStore((s) => s.accentColor);
   const [scanning, setScanning] = useState(false);
   const tint = useSharedValue(0);
   const scanX = useSharedValue(-1);
@@ -1057,12 +1189,8 @@ function VybeSystemFooter() {
   }, [tint]);
 
   const textStyle = useAnimatedStyle(() => ({
-    color: interpolateColor(
-      tint.value,
-      [0, 1],
-      ['rgba(255,255,255,0.22)', MACHINED_CYAN],
-    ),
-  }));
+    color: interpolateColor(tint.value, [0, 1], ['rgba(255,255,255,0.22)', accent]),
+  }), [accent]);
 
   const scanStyle = useAnimatedStyle(() => ({
     opacity: scanOpacity.value,
@@ -1081,7 +1209,14 @@ function VybeSystemFooter() {
         <Animated.Text style={[styles.settingsFooterEggText, textStyle]}>
           {scanning ? 'SIGNAL LOCKED' : 'VYBE · CONTINUOUS PLAYBACK CORE'}
         </Animated.Text>
-        <Animated.View pointerEvents="none" style={[styles.settingsFooterEggScan, scanStyle]} />
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.settingsFooterEggScan,
+            { backgroundColor: hexToRgba(accent, 0.35) },
+            scanStyle,
+          ]}
+        />
       </View>
     </Pressable>
   );
@@ -1123,7 +1258,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: OLED_BLACK,
     borderWidth: 1,
-    borderColor: 'rgba(0,255,255,0.24)',
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -1139,7 +1273,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   cancelBtn: {
-    color: MACHINED_CYAN,
     fontSize: 15,
     fontWeight: '700',
     marginLeft: 10,
@@ -1229,8 +1362,6 @@ const styles = StyleSheet.create({
   },
   activeBadge: {
     borderWidth: 1,
-    borderColor: MACHINED_CYAN,
-    backgroundColor: 'rgba(0,255,255,0.14)',
     paddingHorizontal: 8,
     paddingVertical: 7,
     borderRadius: 6,
@@ -1238,7 +1369,6 @@ const styles = StyleSheet.create({
     maxWidth: 132,
   },
   activeBadgeText: {
-    color: MACHINED_CYAN,
     fontSize: 9,
     fontWeight: '900',
     letterSpacing: 0.45,
@@ -1259,16 +1389,51 @@ const styles = StyleSheet.create({
     height: 36,
     marginTop: 8,
   },
+  colorEngineIntro: {
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: 8,
+  },
+  presetRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingBottom: 12,
+  },
+  presetChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  presetSwatch: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.35)',
+  },
+  presetLabel: {
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  colorEngineHueRow: {
+    borderBottomWidth: 0,
+  },
   hqBadge: {
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: 'rgba(0,255,255,0.5)',
-    backgroundColor: 'rgba(0,255,255,0.1)',
   },
   hqBadgeText: {
-    color: MACHINED_CYAN,
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 0.8,
@@ -1325,7 +1490,6 @@ const styles = StyleSheet.create({
     width: 22,
     left: '50%',
     marginLeft: -11,
-    backgroundColor: MACHINED_CYAN,
     opacity: 0.35,
   },
 });

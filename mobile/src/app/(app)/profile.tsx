@@ -23,7 +23,8 @@ import { VybePlusWordmark } from '@/components/VybePlusWordmark';
 import { MINI_PLAYER_HEIGHT } from './_layout';
 import { Track } from '@/types/music';
 import { authClient } from '@/lib/auth/auth-client';
-import { MACHINED_CYAN, OLED_BLACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
+import { OLED_BLACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
+import { useThemeStore } from '@/stores/themeStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -99,6 +100,7 @@ function ArtistCircle({ name, image, onPress }: { name: string; image?: string; 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const accent = useThemeStore((s) => s.accentColor);
   const tier = useSubscriptionStore(s => s.tier);
   const currentTrack = usePlaybackController(s => s.currentTrack);
   const likedTrackIds = usePlaybackController(s => s.likedTracks);
@@ -195,11 +197,11 @@ export default function ProfileScreen() {
             {avatarUrl ? (
               <Image
                 source={{ uri: avatarUrl }}
-                style={styles.avatar}
+                style={[styles.avatar, { borderColor: accent }]}
                 contentFit="cover"
               />
             ) : (
-              <View style={[styles.avatar, styles.avatarPlaceholder]}>
+              <View style={[styles.avatar, styles.avatarPlaceholder, { borderColor: accent }]}>
                 <Text style={styles.avatarV}>V</Text>
               </View>
             )}
@@ -373,7 +375,6 @@ const styles = StyleSheet.create({
     height: 108,
     borderRadius: 54,
     borderWidth: 2,
-    borderColor: MACHINED_CYAN,
   },
   avatarPlaceholder: {
     backgroundColor: 'rgba(255,255,255,0.06)',

@@ -1,4 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   View,
   Text,
@@ -43,10 +51,20 @@ import type {
 import { MachinedGradientText } from '@/components/MachinedGradientText';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
 import { getSocialActivityFeed, getSocialFeed, type SocialPost } from '@/lib/api/social';
-import { MACHINED_CYAN, OLED_BLACK } from '@/constants/machinedTheme';
+import { OLED_BLACK } from '@/constants/machinedTheme';
+import { useThemeStore } from '@/stores/themeStore';
+import { hexToRgba } from '@/lib/themeColorUtils';
 
 /** Set true to show Active Posts above the compose row again. */
 const SHOW_ACTIVE_POSTS_SECTION = false;
+
+const SocialStylesCtx = createContext<ReturnType<typeof makeSocialStyles> | null>(null);
+
+function useSocialStylesFromContext() {
+  const v = useContext(SocialStylesCtx);
+  if (!v) throw new Error('useSocialStylesFromContext must be used under SocialScreen');
+  return v;
+}
 
 const BRAND_FEED_ITEMS = [
   {
@@ -82,6 +100,7 @@ function SectionHeader({
   /** `machined` — machined cyan gradient headline (e.g. Active Posts). */
   titleVariant?: 'default' | 'machined';
 }) {
+  const styles = useSocialStylesFromContext();
   return (
     <View style={styles.sectionHeader}>
       {titleVariant === 'machined' ? (
@@ -107,6 +126,7 @@ function BrandFeedRow({
   detail: string;
   timeLabel: string;
 }) {
+  const styles = useSocialStylesFromContext();
   return (
     <View style={styles.brandCard}>
       <Text style={styles.brandName}>{brand}</Text>
@@ -120,6 +140,8 @@ function BrandFeedRow({
 }
 
 function PlaylistShareRow({ item, onJoin }: { item: PlaylistShareItem; onJoin: () => void }) {
+  const styles = useSocialStylesFromContext();
+  const accent = useThemeStore((s) => s.accentColor);
   const scPrimary = item.streamPrimary === 'soundcloud';
   return (
     <View style={styles.playlistCard}>
@@ -137,7 +159,7 @@ function PlaylistShareRow({ item, onJoin }: { item: PlaylistShareItem; onJoin: (
           accessibilityRole="button"
           accessibilityLabel="SoundCloud stream"
         >
-          <Cloud size={26} color={MACHINED_CYAN} strokeWidth={2.35} />
+          <Cloud size={26} color={accent} strokeWidth={2.35} />
         </Pressable>
       ) : (
         <BlurView intensity={32} tint="dark" style={styles.joinBlur}>
@@ -153,6 +175,8 @@ function PlaylistShareRow({ item, onJoin }: { item: PlaylistShareItem; onJoin: (
 const FEED_SUCCESS_SPRING = { mass: 1, damping: 18, stiffness: 200 } as const;
 
 function FeedPostSuccessPulse({ tick, bottom }: { tick: number; bottom: number }) {
+  const styles = useSocialStylesFromContext();
+  const accent = useThemeStore((s) => s.accentColor);
   const scale = useSharedValue(0);
   const opacity = useSharedValue(0);
 
@@ -184,12 +208,13 @@ function FeedPostSuccessPulse({ tick, bottom }: { tick: number; bottom: number }
       pointerEvents="none"
       style={[styles.feedSuccessBubble, { bottom }, bubbleStyle]}
     >
-      <Check size={26} strokeWidth={3} color={MACHINED_CYAN} />
+      <Check size={26} strokeWidth={3} color={accent} />
     </Animated.View>
   );
 }
 
 function SocialInteractionRow({ item }: { item: SocialInteractionItem }) {
+  const styles = useSocialStylesFromContext();
   return (
     <View style={styles.interactionRow}>
       <Text style={styles.interactionMain}>
@@ -221,6 +246,7 @@ function SocialFeedHeader({
   handleOpenComposer,
   feedPostCount,
 }: SocialFeedHeaderProps) {
+  const styles = useSocialStylesFromContext();
   return (
     <View style={{ backgroundColor: OLED_BLACK }}>
       <SectionHeader title="Brand Feed" subtitle="Partner grid · Krak Coffee · STAK" />
@@ -307,6 +333,7 @@ type SocialFeedFooterProps = {
 };
 
 function SocialFeedFooter({ playlistItems, interactionItems }: SocialFeedFooterProps) {
+  const styles = useSocialStylesFromContext();
   return (
     <View style={{ backgroundColor: OLED_BLACK }}>
       <View style={styles.divider} />
@@ -335,6 +362,8 @@ function SocialFeedFooter({ playlistItems, interactionItems }: SocialFeedFooterP
 
 export default function SocialScreen() {
   const insets = useSafeAreaInsets();
+  const accent = useThemeStore((s) => s.accentColor);
+  const styles = useMemo(() => makeSocialStyles(accent), [accent]);
   const stories = useSocialActivityStore((s) => s.stories);
   const activePosts = useSocialActivityStore((s) => s.activePosts);
   const tailItems = useSocialActivityStore((s) => s.tailItems);
@@ -436,6 +465,7 @@ export default function SocialScreen() {
   const feedPosts = feedQuery.data ?? [];
 
   return (
+    <SocialStylesCtx.Provider value={styles}>
     <View style={styles.screen}>
       <View style={[styles.topBar, { paddingTop: insets.top + 64 }]}>
         <View style={styles.topBarRow}>
@@ -477,8 +507,8 @@ export default function SocialScreen() {
               void feedQuery.refetch();
               void activityQuery.refetch();
             }}
-            tintColor={MACHINED_CYAN}
-            colors={[MACHINED_CYAN]}
+            tintColor={accent}
+            colors={[accent]}
             progressBackgroundColor="#111111"
           />
         }
@@ -494,7 +524,7 @@ export default function SocialScreen() {
         />
         {feedQuery.isLoading ? (
           <View style={styles.feedLoading}>
-            <ActivityIndicator color={MACHINED_CYAN} />
+            <ActivityIndicator color={accent} />
           </View>
         ) : isUnauthorized ? (
           <View style={styles.feedEmpty}>
@@ -532,7 +562,7 @@ export default function SocialScreen() {
           pressed && { transform: [{ scale: 0.96 }] },
         ]}
       >
-        <Plus size={26} color={MACHINED_CYAN} strokeWidth={2.6} />
+        <Plus size={26} color={accent} strokeWidth={2.6} />
       </Pressable>
 
       <PostComposer
@@ -544,10 +574,13 @@ export default function SocialScreen() {
       {/* Above feed scroll + FAB so the checkmark is actually visible after post */}
       <FeedPostSuccessPulse tick={feedSuccessTick} bottom={fabBottom + 72} />
     </View>
+    </SocialStylesCtx.Provider>
   );
 }
 
-const styles = StyleSheet.create({
+function makeSocialStyles(accent: string) {
+  const rb = (a: number) => hexToRgba(accent, a);
+  return StyleSheet.create({
   screen: {
     flex: 1,
     // Solid black: transparent relied on a parent fill that is not guaranteed (reads as white on iOS).
@@ -560,14 +593,14 @@ const styles = StyleSheet.create({
     width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: 'rgba(0,229,255,0.1)',
+    backgroundColor: rb(0.1),
     borderWidth: 1,
-    borderColor: MACHINED_CYAN,
+    borderColor: accent,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 30000,
     elevation: 30000,
-    shadowColor: MACHINED_CYAN,
+    shadowColor: accent,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.55,
     shadowRadius: 14,
@@ -605,15 +638,15 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: 'rgba(255,255,255,0.04)',
     borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.22)',
-    shadowColor: MACHINED_CYAN,
+    borderColor: rb(0.22),
+    shadowColor: accent,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.18,
     shadowRadius: 10,
     elevation: 4,
   },
   brandName: {
-    color: MACHINED_CYAN,
+    color: accent,
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 1.4,
@@ -645,10 +678,10 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,229,255,0.08)',
+    backgroundColor: rb(0.08),
     borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.55)',
-    shadowColor: MACHINED_CYAN,
+    borderColor: rb(0.55),
+    shadowColor: accent,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.5,
     shadowRadius: 12,
@@ -667,17 +700,17 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 14,
-    backgroundColor: 'rgba(0,229,255,0.12)',
+    backgroundColor: rb(0.12),
     borderWidth: 1,
-    borderColor: MACHINED_CYAN,
-    shadowColor: MACHINED_CYAN,
+    borderColor: accent,
+    shadowColor: accent,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.45,
     shadowRadius: 8,
     elevation: 8,
   },
   topPostBtnText: {
-    color: MACHINED_CYAN,
+    color: accent,
     fontSize: 13,
     fontWeight: '900',
     letterSpacing: 1.2,
@@ -815,11 +848,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 14,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: MACHINED_CYAN,
-    backgroundColor: 'rgba(0,229,255,0.08)',
+    borderColor: accent,
+    backgroundColor: rb(0.08),
   },
   feedRetryText: {
-    color: MACHINED_CYAN,
+    color: accent,
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 1.6,
@@ -834,8 +867,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#000000',
     borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.85)',
-    shadowColor: MACHINED_CYAN,
+    borderColor: rb(0.85),
+    shadowColor: accent,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.5,
     shadowRadius: 12,
@@ -851,8 +884,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: 'rgba(255,255,255,0.03)',
     borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.22)',
-    shadowColor: MACHINED_CYAN,
+    borderColor: rb(0.22),
+    shadowColor: accent,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.2,
     shadowRadius: 8,
@@ -880,19 +913,21 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,229,255,0.1)',
+    backgroundColor: rb(0.1),
     borderWidth: 1,
-    borderColor: MACHINED_CYAN,
-    shadowColor: MACHINED_CYAN,
+    borderColor: accent,
+    shadowColor: accent,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.35,
     shadowRadius: 10,
     elevation: 6,
   },
   newPostCtaText: {
-    color: MACHINED_CYAN,
+    color: accent,
     fontSize: 14,
     fontWeight: '900',
     letterSpacing: 2,
   },
-});
+  });
+}
+

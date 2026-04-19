@@ -35,10 +35,12 @@ import {
 } from '@/lib/soundcloudStreamPreloadCache';
 import { filterDeadYoutubeQueueTracks, isDeadYoutubeQueueTitle } from '@/lib/queueSanitize';
 import { fetchRadioParadiseNowPlaying } from '@/lib/radioParadiseApi';
+import { getGlobalRadioStation, type GlobalRadioStationId } from '@/lib/GlobalRadioClient';
 import {
   fetchSoundcloudMatchForYoutubeTrack,
   isYoutubeHardStreamFailure,
 } from '@/lib/soundcloudYoutubeBridge';
+import { raceSoundcloudMatchFirst, SC_MATCH_FIRST_BUDGET_MS } from '@/lib/mediaPlaybackResolver';
 import { recordSoundcloudFireActivity } from '@/lib/api/social';
 import { useSocialActivityStore } from '@/stores/socialActivityStore';
 // Lazy-cached refs to avoid circular dependency + dynamic require overhead
@@ -409,6 +411,7 @@ function startNowPlayingInterval() {
       duration,
       currentTrack.title,
       currentTrack.artist,
+      currentTrack.globalRadioIslandAlbum,
     );
     // Update lock screen / Apple TV Now Playing info center + re-anchor
     // the native keep-alive timer so it doesn't drift. This is the main
@@ -467,6 +470,7 @@ async function refreshRadioParadiseNowPlayingIfActive(expectedTrackId: string) {
   const snap = usePlaybackController.getState();
   const rpMeta =
     snap.currentTrack?.globalRadioMetadataSource === 'radioparadise_api' ||
+    snap.currentTrack?.globalRadioStationId === 'vault_modern' ||
     snap.currentSource === 'radio_paradise';
   if (
     snap.currentTrack?.id !== expectedTrackId ||
@@ -482,6 +486,7 @@ async function refreshRadioParadiseNowPlayingIfActive(expectedTrackId: string) {
   const st = usePlaybackController.getState();
   const stRp =
     st.currentTrack?.globalRadioMetadataSource === 'radioparadise_api' ||
+    st.currentTrack?.globalRadioStationId === 'vault_modern' ||
     st.currentSource === 'radio_paradise';
   if (st.currentTrack?.id !== expectedTrackId || !stRp) return;
 
@@ -515,6 +520,7 @@ async function refreshRadioParadiseNowPlayingIfActive(expectedTrackId: string) {
     st.duration || 0,
     nextTrack.title,
     nextTrack.artist,
+    nextTrack.globalRadioIslandAlbum,
   );
 }
 
@@ -813,12 +819,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     const playTapAt = Date.now();
     useDynamicIslandSignal.getState().setScIgnitionGlow(false);
     const preemptBackend = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
-    const scMatchPromise: Promise<Track | null> =
-      (source === 'youtube' || source === 'youtube_music') &&
-      extractYoutubeVideoId(track) &&
-      preemptBackend
-        ? fetchSoundcloudMatchForYoutubeTrack(track)
-        : Promise.resolve(null);
 
     // ONE PLAYER RULE: Stop all sources before starting new playback
     // (this may deactivate the iOS audio session)
@@ -834,12 +834,31 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     // Bail again after async session init
     if (!isStillCurrent()) { await stopVybeAudio(); return; }
 
-    const scAlt = await scMatchPromise;
-    if (scAlt?.soundcloudUrl && isStillCurrent()) {
+    // SoundCloud-first (INSTANT_STEALTH): race sc-match vs a short budget so
+    // YouTube resolve + vault handshake are not blocked for the full network RTT.
+    const wantScMatch =
+      (source === 'youtube' || source === 'youtube_music') &&
+      !!extractYoutubeVideoId(track) &&
+      !!preemptBackend;
+    const scMatchPromise = wantScMatch ? fetchSoundcloudMatchForYoutubeTrack(track) : Promise.resolve(null);
+    const scQuick = await raceSoundcloudMatchFirst(scMatchPromise, SC_MATCH_FIRST_BUDGET_MS);
+    if (scQuick?.soundcloudUrl && isStillCurrent()) {
       useDynamicIslandSignal.getState().setScIgnitionGlow(true);
-      const mergedQueue = newQueue.map((t) => (t.id === track.id ? scAlt : t));
-      return get().playTrack(scAlt, mergedQueue, options);
+      const mergedQueue = newQueue.map((t) => (t.id === track.id ? scQuick : t));
+      return get().playTrack(scQuick, mergedQueue, options);
     }
+    void scMatchPromise.then((late) => {
+      if (!late?.soundcloudUrl || !isStillCurrent()) return;
+      const st = get();
+      if (st.currentTrack?.id !== track.id) return;
+      if (st.currentSource === 'soundcloud') return;
+      if (st.currentSource !== 'youtube' && st.currentSource !== 'youtube_music') return;
+      if (st.playbackState !== 'loading' && st.playbackState !== 'buffering') return;
+      useDynamicIslandSignal.getState().setScIgnitionGlow(true);
+      const q = st.queue;
+      const mergedQueue = q.some((t) => t.id === track.id) ? q.map((t) => (t.id === track.id ? late : t)) : [late, ...q];
+      void get().playTrack(late, mergedQueue, { expandNowPlaying: false });
+    });
 
     // Add to recents
     useRecentsStore.getState().addToRecents(track);
@@ -889,10 +908,17 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     });
 
     // Start / update Now Playing Live Activity (Dynamic Island)
-    startNowPlayingActivity(track.title, track.artist, track.artwork ?? '', track.duration || 0);
+    void startNowPlayingActivity(
+      track.title,
+      track.artist,
+      track.artwork ?? '',
+      track.duration || 0,
+      track.globalRadioIslandAlbum,
+    );
     startNowPlayingInterval();
     if (
       track.globalRadioMetadataSource === 'radioparadise_api' ||
+      track.globalRadioStationId === 'vault_modern' ||
       source === 'radio_paradise'
     ) {
       startGlobalRadioMetaPoll(track.id);
@@ -1561,7 +1587,11 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
             const st0 = await sound.getStatusAsync();
             loadedOk = st0.isLoaded;
             if (loadedOk) {
-              await waitForNetworkAudioBufferAhead(sound, 5000, 16000);
+              const grId = track.globalRadioStationId as GlobalRadioStationId | undefined;
+              const grDef = grId ? getGlobalRadioStation(grId) : null;
+              const targetMs = grDef?.bufferAheadMs ?? 5000;
+              const timeoutMs = grDef?.bufferTimeoutMs ?? 16000;
+              await waitForNetworkAudioBufferAhead(sound, targetMs, timeoutMs);
             }
             if (!isStillCurrent()) {
               await sound.stopAsync().catch(() => {});

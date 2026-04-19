@@ -22,7 +22,8 @@ import { RADIO_PARADISE_BRAND_LOGO_URL } from '@/constants/radioParadise';
 import { useNowPlayingSheetStore } from '@/stores/nowPlayingSheetStore';
 import { useDynamicIslandSignal } from '@/stores/dynamicIslandStore';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
-import { VIBRANT_BLUE } from '@/constants/machinedTheme';
+import { useThemeStore } from '@/stores/themeStore';
+import { hexToRgb, hexToRgba } from '@/lib/themeColorUtils';
 import { islandAlignedPillTop } from '@/constants/iosIslandLayout';
 import { RadioParadiseSoulActions } from '@/components/radio/RadioParadiseSoulActions';
 import { usePillLockStore } from '@/stores/pillLockStore';
@@ -44,8 +45,6 @@ const NEON_RED = '#FF3355';
 const SOUNDCLOUD_IGNITION_ORANGE = '#FF3300';
 /** Baby blue pulse while the backend auto-heals a failed YouTube vault (SHADOW_HEALING). */
 const BABY_BLUE = '#9FD9FF';
-/** Pure Neon Cyan — distinguishes SHADOW_HEALING from a hard error (Neon Red). */
-const NEON_CYAN = '#00FFFF';
 const OLED = '#000000';
 
 const SPRING = { stiffness: 200, damping: 20, mass: 0.7 } as const;
@@ -153,13 +152,17 @@ export function DynamicIsland() {
   const chillLead = isLiveRadio && currentTrack?.globalRadioDiLeading === 'chill';
   const diTag = currentTrack?.globalRadioDiTag;
   /** Slim pill: RP mark / station art / chill glyph. */
+  const rpIslandThumb =
+    isLiveRadio &&
+    (currentTrack?.globalRadioStationId === 'paradise' ||
+      currentTrack?.globalRadioStationId === 'vault_modern');
   const metaThumbUri = chillLead
     ? null
-    : isLiveRadio && currentTrack?.globalRadioStationId === 'paradise'
+    : rpIslandThumb
       ? RADIO_PARADISE_BRAND_LOGO_URL
       : currentTrack?.artwork;
   const expandedArtUri =
-    isLiveRadio && currentTrack?.globalRadioStationId === 'paradise'
+    rpIslandThumb
       ? currentTrack?.artwork || RADIO_PARADISE_BRAND_LOGO_URL
       : currentTrack?.artwork;
   const metaArtistLine =
@@ -213,6 +216,46 @@ export function DynamicIsland() {
   const fireBurstSV = useSharedValue(0);
   /** Radio "HYPE" — brief Machined Cyan takeover of pill chrome (~1s). */
   const radioCyanPulseSV = useSharedValue(0);
+
+  const accentColor = useThemeStore((s) => s.accentColor);
+  const accentR = useSharedValue(0);
+  const accentG = useSharedValue(255);
+  const accentB = useSharedValue(255);
+
+  useEffect(() => {
+    const { r, g, b } = hexToRgb(accentColor);
+    accentR.value = r;
+    accentG.value = g;
+    accentB.value = b;
+  }, [accentColor, accentR, accentG, accentB]);
+
+  const accentChrome = useMemo(
+    () => ({
+      metaThumbFallback: { backgroundColor: hexToRgba(accentColor, 0.18) },
+      chillThumb: { borderColor: hexToRgba(accentColor, 0.45) },
+      chillBar: { backgroundColor: accentColor },
+      healingLine: { color: accentColor, textShadowColor: accentColor },
+      transportBtn: {
+        backgroundColor: hexToRgba(accentColor, 0.1),
+        borderColor: hexToRgba(accentColor, 0.55),
+      },
+      davinciStatus: { color: accentColor },
+      recoveryDotHealing: { backgroundColor: accentColor, shadowColor: accentColor },
+      recoveryStatusHealing: { color: accentColor, textShadowColor: accentColor },
+      successCheckHost: {
+        backgroundColor: hexToRgba(accentColor, 0.16),
+        borderColor: accentColor,
+        shadowColor: accentColor,
+      },
+      successLabel: { color: accentColor },
+      hdBadge: {
+        backgroundColor: hexToRgba(accentColor, 0.18),
+        borderColor: accentColor,
+      },
+      hdBadgeText: { color: accentColor },
+    }),
+    [accentColor],
+  );
 
   /** Cyan-tinted recovery states (auto-heal / token refresh) vs red errors. */
   const isHealingLabel =
@@ -482,13 +525,14 @@ export function DynamicIsland() {
     const capped = ring > 1.6 ? 1.6 : ring;
     const egg = borderHueSV.value;
     const sc = scIgnitionSV.value;
+    const machined = `rgb(${Math.round(accentR.value)}, ${Math.round(accentG.value)}, ${Math.round(accentB.value)})`;
     // Fire flare wins the border colour while active: SC-Orange overrides
     // both the egg amber and the steady ignition orange so the user feels
     // the burn the instant they tap. Falls back to the prior hot color.
     const baseColor =
       egg > 0.5
-        ? interpolateColor(egg, [0.5, 1], [VIBRANT_BLUE, NEON_AMBER])
-        : interpolateColor(sc, [0, 1], [VIBRANT_BLUE, SOUNDCLOUD_IGNITION_ORANGE]);
+        ? interpolateColor(egg, [0.5, 1], [machined, NEON_AMBER])
+        : interpolateColor(sc, [0, 1], [machined, SOUNDCLOUD_IGNITION_ORANGE]);
     const hotColor = interpolateColor(
       flare,
       [0, 1],
@@ -496,7 +540,7 @@ export function DynamicIsland() {
     );
     const withRadio =
       radioPulse > 0.002
-        ? interpolateColor(radioPulse, [0, 1], [hotColor, NEON_CYAN])
+        ? interpolateColor(radioPulse, [0, 1], [hotColor, machined])
         : hotColor;
     return {
       width: widthSV.value,
@@ -595,10 +639,13 @@ export function DynamicIsland() {
               style={[styles.row, styles.metaRow, metaStyle]}
             >
               {chillLead ? (
-                <View style={[styles.metaThumb, styles.chillThumb]} accessibilityLabel="Chill">
-                  <View style={styles.chillBar} />
-                  <View style={[styles.chillBar, styles.chillBarMid]} />
-                  <View style={styles.chillBar} />
+                <View
+                  style={[styles.metaThumb, styles.chillThumb, accentChrome.chillThumb]}
+                  accessibilityLabel="Chill"
+                >
+                  <View style={[styles.chillBar, accentChrome.chillBar]} />
+                  <View style={[styles.chillBar, styles.chillBarMid, accentChrome.chillBar]} />
+                  <View style={[styles.chillBar, accentChrome.chillBar]} />
                 </View>
               ) : metaThumbUri ? (
                 <Image
@@ -608,7 +655,7 @@ export function DynamicIsland() {
                   transition={120}
                 />
               ) : (
-                <View style={[styles.metaThumb, styles.metaThumbFallback]} />
+                <View style={[styles.metaThumb, styles.metaThumbFallback, accentChrome.metaThumbFallback]} />
               )}
               <View style={styles.metaText}>
                 <Text numberOfLines={1} style={styles.metaTitle}>
@@ -620,15 +667,15 @@ export function DynamicIsland() {
                 {healingStreamActive && isStreamResolving ? (
                   <Animated.Text
                     numberOfLines={1}
-                    style={[styles.healingLine, healingPulseStyle]}
+                    style={[styles.healingLine, accentChrome.healingLine, healingPulseStyle]}
                   >
                     SHADOW_HEALING
                   </Animated.Text>
                 ) : null}
               </View>
               {showHdBadge ? (
-                <View style={styles.hdBadge} pointerEvents="none">
-                  <Text style={styles.hdBadgeText}>HD</Text>
+                <View style={[styles.hdBadge, accentChrome.hdBadge]} pointerEvents="none">
+                  <Text style={[styles.hdBadgeText, accentChrome.hdBadgeText]}>HD</Text>
                 </View>
               ) : null}
               <Animated.View
@@ -660,7 +707,9 @@ export function DynamicIsland() {
                   transition={160}
                 />
               ) : (
-                <View style={[styles.expandedArt, styles.metaThumbFallback]} />
+                <View
+                  style={[styles.expandedArt, styles.metaThumbFallback, accentChrome.metaThumbFallback]}
+                />
               )}
               <View style={styles.expandedText}>
                 <Text numberOfLines={1} style={styles.expandedTitle}>
@@ -693,13 +742,13 @@ export function DynamicIsland() {
                     void togglePlay();
                   }}
                   hitSlop={8}
-                  style={styles.transportBtn}
+                  style={[styles.transportBtn, accentChrome.transportBtn]}
                   disabled={!currentTrack}
                 >
                   {isPlaying ? (
-                    <Pause size={18} color={VIBRANT_BLUE} strokeWidth={2.2} />
+                    <Pause size={18} color={accentColor} strokeWidth={2.2} />
                   ) : (
-                    <Play size={18} color={VIBRANT_BLUE} strokeWidth={2.2} />
+                    <Play size={18} color={accentColor} strokeWidth={2.2} />
                   )}
                 </Pressable>
                 <Pressable
@@ -708,10 +757,10 @@ export function DynamicIsland() {
                     next();
                   }}
                   hitSlop={8}
-                  style={styles.transportBtn}
+                  style={[styles.transportBtn, accentChrome.transportBtn]}
                   disabled={!currentTrack}
                 >
-                  <SkipForward size={18} color={VIBRANT_BLUE} strokeWidth={2.2} />
+                  <SkipForward size={18} color={accentColor} strokeWidth={2.2} />
                 </Pressable>
               </View>
             </Animated.View>
@@ -722,7 +771,7 @@ export function DynamicIsland() {
               style={[StyleSheet.absoluteFill, styles.davinciRoot, davinciStyle]}
             >
               <Pressable onPress={openDavinci} style={styles.davinciInner} hitSlop={6}>
-                <Text style={styles.davinciStatus}>SYSTEM STATUS: OPTIMIZED</Text>
+                <Text style={[styles.davinciStatus, accentChrome.davinciStatus]}>SYSTEM STATUS: OPTIMIZED</Text>
                 <Text style={styles.davinciSig}>Managed by DaVinci Dynamics</Text>
               </Pressable>
             </Animated.View>
@@ -735,7 +784,7 @@ export function DynamicIsland() {
               <Animated.View
                 style={[
                   styles.recoveryDot,
-                  isHealingLabel ? styles.recoveryDotHealing : null,
+                  isHealingLabel ? [styles.recoveryDotHealing, accentChrome.recoveryDotHealing] : null,
                   recoveryDotStyle,
                 ]}
               />
@@ -748,7 +797,7 @@ export function DynamicIsland() {
                 <Text
                   style={[
                     styles.recoveryStatus,
-                    isHealingLabel ? styles.recoveryStatusHealing : null,
+                    isHealingLabel ? [styles.recoveryStatusHealing, accentChrome.recoveryStatusHealing] : null,
                   ]}
                 >
                   {recoveryLabelOverride ?? 'MACHINED_RECOVERY'}
@@ -772,10 +821,12 @@ export function DynamicIsland() {
               pointerEvents="none"
               style={[StyleSheet.absoluteFill, styles.successRoot, successStyle]}
             >
-              <Animated.View style={[styles.successCheckHost, successCheckStyle]}>
-                <Check size={18} color={VIBRANT_BLUE} strokeWidth={3} />
+              <Animated.View
+                style={[styles.successCheckHost, accentChrome.successCheckHost, successCheckStyle]}
+              >
+                <Check size={18} color={accentColor} strokeWidth={3} />
               </Animated.View>
-              <Text style={styles.successLabel} numberOfLines={1}>
+              <Text style={[styles.successLabel, accentChrome.successLabel]} numberOfLines={1}>
                 {successLabel ?? 'POSTED'}
               </Text>
             </Animated.View>
@@ -792,8 +843,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    zIndex: 9999,
-    elevation: 9999,
+    zIndex: 10000,
+    elevation: 10000,
   },
   pillWrap: {
     position: 'absolute',
@@ -847,7 +898,7 @@ const styles = StyleSheet.create({
     width: 14,
     height: 2,
     borderRadius: 1,
-    backgroundColor: NEON_CYAN,
+    backgroundColor: '#00FFFF',
     opacity: 0.85,
   },
   chillBarMid: {
@@ -883,11 +934,11 @@ const styles = StyleSheet.create({
     marginTop: 3,
     // Pure Neon Cyan distinguishes this from a Neon Red error or the BABY_BLUE
     // progress shimmer. Pulses via `healingPulseStyle`.
-    color: NEON_CYAN,
+    color: '#00FFFF',
     fontSize: 9,
     fontWeight: '900',
     letterSpacing: 1.4,
-    textShadowColor: NEON_CYAN,
+    textShadowColor: '#00FFFF',
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 6,
   },
@@ -978,7 +1029,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
   },
   davinciStatus: {
-    color: VIBRANT_BLUE,
+    color: '#00E5FF',
     fontSize: 13,
     fontWeight: '900',
     letterSpacing: 2.6,
@@ -1007,8 +1058,8 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   recoveryDotHealing: {
-    backgroundColor: NEON_CYAN,
-    shadowColor: NEON_CYAN,
+    backgroundColor: '#00FFFF',
+    shadowColor: '#00FFFF',
   },
   recoveryText: {
     flex: 1,
@@ -1021,8 +1072,8 @@ const styles = StyleSheet.create({
     letterSpacing: 1.8,
   },
   recoveryStatusHealing: {
-    color: NEON_CYAN,
-    textShadowColor: NEON_CYAN,
+    color: '#00FFFF',
+    textShadowColor: '#00FFFF',
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 6,
   },
@@ -1047,15 +1098,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(0,229,255,0.16)',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: VIBRANT_BLUE,
-    shadowColor: VIBRANT_BLUE,
+    borderColor: '#00E5FF',
+    shadowColor: '#00E5FF',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.95,
     shadowRadius: 14,
     marginRight: 10,
   },
   successLabel: {
-    color: VIBRANT_BLUE,
+    color: '#00E5FF',
     fontSize: 12,
     fontWeight: '900',
     letterSpacing: 1.6,
@@ -1068,10 +1119,10 @@ const styles = StyleSheet.create({
     marginRight: 8,
     backgroundColor: 'rgba(0,229,255,0.18)',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: VIBRANT_BLUE,
+    borderColor: '#00E5FF',
   },
   hdBadgeText: {
-    color: VIBRANT_BLUE,
+    color: '#00E5FF',
     fontSize: 9,
     fontWeight: '900',
     letterSpacing: 1.2,

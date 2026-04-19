@@ -36,6 +36,8 @@ import { PlaybackDebugIndicator } from '@/components/PlaybackDebugOverlay';
 import { LoadingRing } from '@/components/LoadingRing';
 import * as Haptics from 'expo-haptics';
 import { MINI_PLAYER_HEIGHT, TAB_BAR_HEIGHT } from '@/constants/Layout';
+import { useThemeStore } from '@/stores/themeStore';
+import { hexToRgb } from '@/lib/themeColorUtils';
 
 const AnimatedRect = Animated.createAnimatedComponent(Rect);
 
@@ -45,6 +47,7 @@ const PLACEHOLDER_ARTWORK =
   'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=128&h=128&fit=crop&q=60';
 
 function MiniPlayerSlimProgress() {
+  const accent = useThemeStore((s) => s.accentColor);
   const layoutW = useSharedValue(0);
   const frac = useSharedValue(0);
   const [svgW, setSvgW] = useState(0);
@@ -78,7 +81,7 @@ function MiniPlayerSlimProgress() {
       {svgW > 0 ? (
         <Svg width={svgW} height={2}>
           <Rect x={0} y={0} width={svgW} height={2} fill="rgba(255,255,255,0.08)" />
-          <AnimatedRect x={0} y={0} height={2} fill="#FFFFFF" animatedProps={animatedProps} />
+          <AnimatedRect x={0} y={0} height={2} fill={accent} animatedProps={animatedProps} />
         </Svg>
       ) : null}
     </View>
@@ -186,6 +189,18 @@ function MiniPlayerInner({ bottomLift }: MiniPlayerProps) {
   const heartbeatSV = useSharedValue(0.35);
   /** 0 → hidden; 1 → POWERED_BY_DAVINCI subtext visible (fades in after track bloom settles). */
   const davinciSubSV = useSharedValue(0);
+
+  const accentHex = useThemeStore((s) => s.accentColor);
+  const accentR = useSharedValue(0);
+  const accentG = useSharedValue(255);
+  const accentB = useSharedValue(255);
+
+  useEffect(() => {
+    const { r, g, b } = hexToRgb(accentHex);
+    accentR.value = r;
+    accentG.value = g;
+    accentB.value = b;
+  }, [accentHex, accentR, accentG, accentB]);
 
   useEffect(() => {
     if (isLoading) {
@@ -380,16 +395,15 @@ function MiniPlayerInner({ bottomLift }: MiniPlayerProps) {
   }));
 
   /** Border tint + iOS glow radius interpolated off `bloomSV`. */
-  const bloomBorderStyle = useAnimatedStyle(() => ({
-    borderColor: interpolateColor(
-      bloomSV.value,
-      [0, 1],
-      ['rgba(255,255,255,0.08)', '#00E5FF'],
-    ),
-    shadowColor: '#00E5FF',
-    shadowOpacity: bloomSV.value * 0.75,
-    shadowRadius: 4 + bloomSV.value * 14,
-  }));
+  const bloomBorderStyle = useAnimatedStyle(() => {
+    const machined = `rgb(${Math.round(accentR.value)}, ${Math.round(accentG.value)}, ${Math.round(accentB.value)})`;
+    return {
+      borderColor: interpolateColor(bloomSV.value, [0, 1], ['rgba(255,255,255,0.08)', machined]),
+      shadowColor: machined,
+      shadowOpacity: bloomSV.value * 0.75,
+      shadowRadius: 4 + bloomSV.value * 14,
+    };
+  });
 
   const heartbeatAnimatedStyle = useAnimatedStyle(() => ({
     opacity: heartbeatSV.value,

@@ -30,7 +30,9 @@ import { useDynamicIslandSignal } from '@/stores/dynamicIslandStore';
 import { createSocialPost } from '@/lib/api/social';
 import type { SocialPost } from '@/lib/api/social';
 import { DECADES_VAULT_FEED_TRACKS, type DecadesVaultFeedTrackRef } from '@/constants/decadesVault';
-import { GRAPHITE_GREY, OLED_BLACK, VIBRANT_BLUE } from '@/constants/machinedTheme';
+import { GRAPHITE_GREY, OLED_BLACK } from '@/constants/machinedTheme';
+import { useThemeStore } from '@/stores/themeStore';
+import { hexToRgba } from '@/lib/themeColorUtils';
 
 const NEON_MAGENTA = '#FF00D4';
 const GRAPHITE = '#6B6E73';
@@ -67,6 +69,320 @@ function trackToPostAttach(t: Track): {
   };
 }
 
+function makePostComposerStyles(accent: string) {
+  const rb = (a: number) => hexToRgba(accent, a);
+  return StyleSheet.create({
+    sheetBg: {
+      backgroundColor: OLED_BLACK,
+      borderTopLeftRadius: 32,
+      borderTopRightRadius: 32,
+    },
+    handlePill: {
+      width: 40,
+      height: 3,
+      borderRadius: 2,
+      backgroundColor: GRAPHITE_GREY,
+    },
+    body: {
+      flexGrow: 1,
+      paddingHorizontal: 18,
+      paddingTop: 6,
+    },
+    headerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 10,
+    },
+    headerTitle: {
+      color: '#FFFFFF',
+      fontSize: 11,
+      fontWeight: '900',
+      letterSpacing: 1.8,
+      textTransform: 'uppercase',
+    },
+    closeBtn: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(255,255,255,0.06)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.10)',
+    },
+    headerPostBtn: {
+      height: 30,
+      paddingHorizontal: 16,
+      borderRadius: 15,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: rb(0.14),
+      borderWidth: 1,
+      borderColor: accent,
+      minWidth: 72,
+    },
+    headerPostBtnDisabled: {
+      borderColor: 'rgba(255,255,255,0.15)',
+      backgroundColor: 'rgba(255,255,255,0.04)',
+    },
+    headerPostText: {
+      color: accent,
+      fontWeight: '900',
+      fontSize: 11,
+      letterSpacing: 1.4,
+    },
+    trackPreviewCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 8,
+      paddingHorizontal: 10,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: PREVIEW_BORDER,
+      backgroundColor: 'rgba(255,255,255,0.04)',
+      marginBottom: 10,
+    },
+    trackPreviewArt: {
+      width: 44,
+      height: 44,
+      borderRadius: 8,
+      marginRight: 10,
+      backgroundColor: '#111',
+    },
+    trackPreviewSource: {
+      color: accent,
+      fontSize: 9,
+      fontWeight: '800',
+      letterSpacing: 1.4,
+      textTransform: 'uppercase',
+      marginBottom: 1,
+    },
+    trackPreviewTitle: {
+      color: '#FFFFFF',
+      fontSize: 12,
+      fontWeight: '700',
+      letterSpacing: -0.1,
+    },
+    trackPreviewArtist: {
+      color: GRAPHITE_SOFT,
+      fontSize: 11,
+      fontWeight: '600',
+      marginTop: 1,
+    },
+    trackPreviewClear: {
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(0,0,0,0.4)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.12)',
+      marginLeft: 6,
+    },
+    input: {
+      alignSelf: 'stretch',
+      minHeight: 168,
+      maxHeight: 220,
+      color: '#FFFFFF',
+      fontSize: 17,
+      lineHeight: 23,
+      fontWeight: '600',
+      letterSpacing: -0.2,
+      paddingVertical: 12,
+      paddingHorizontal: 12,
+      textAlignVertical: 'top',
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.10)',
+      backgroundColor: 'rgba(255,255,255,0.04)',
+    },
+    mediaThumbWrap: {
+      position: 'relative',
+      alignSelf: 'flex-start',
+      marginVertical: 6,
+    },
+    mediaThumb: {
+      width: 64,
+      height: 64,
+      borderRadius: 10,
+      backgroundColor: '#111',
+      borderWidth: 1,
+      borderColor: rb(0.4),
+    },
+    mediaThumbClear: {
+      position: 'absolute',
+      top: -6,
+      right: -6,
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      backgroundColor: 'rgba(0,0,0,0.7)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.2)',
+    },
+    toolbar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingTop: 8,
+      paddingBottom: 6,
+      borderTopWidth: 1,
+      borderTopColor: 'rgba(255,255,255,0.06)',
+    },
+    toolbarIconBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: rb(0.08),
+      borderWidth: 1,
+      borderColor: rb(0.25),
+    },
+    vaultSearchRow: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.10)',
+      borderRadius: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      backgroundColor: 'rgba(255,255,255,0.04)',
+    },
+    vaultSearchInput: {
+      flex: 1,
+      color: '#FFFFFF',
+      fontSize: 14,
+      fontWeight: '600',
+      padding: 0,
+    },
+    charsLeft: {
+      color: GRAPHITE_SOFT,
+      fontSize: 12,
+      fontWeight: '700',
+      fontVariant: ['tabular-nums'],
+      minWidth: 28,
+      textAlign: 'right',
+    },
+    vaultChips: {
+      paddingTop: 8,
+      paddingBottom: 4,
+      paddingRight: 4,
+    },
+    vaultChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      width: 180,
+      paddingVertical: 6,
+      paddingHorizontal: 8,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.1)',
+      backgroundColor: 'rgba(255,255,255,0.04)',
+      marginRight: 8,
+    },
+    vaultChipSelected: {
+      borderColor: accent,
+      backgroundColor: rb(0.1),
+      shadowColor: accent,
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.45,
+      shadowRadius: 6,
+    },
+    vaultChipArt: {
+      width: 32,
+      height: 32,
+      borderRadius: 6,
+      marginRight: 8,
+      backgroundColor: '#111',
+    },
+    vaultChipTitle: {
+      color: '#FFFFFF',
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    vaultChipArtist: {
+      color: GRAPHITE_SOFT,
+      fontSize: 10,
+      fontWeight: '600',
+      marginTop: 1,
+    },
+    androidPostBtn: {
+      marginTop: 8,
+      height: 44,
+      borderRadius: 22,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: rb(0.14),
+      borderWidth: 1,
+      borderColor: accent,
+    },
+    androidPostBtnDisabled: {
+      borderColor: 'rgba(255,255,255,0.15)',
+      backgroundColor: 'rgba(255,255,255,0.04)',
+    },
+    androidPostText: {
+      color: accent,
+      fontWeight: '900',
+      fontSize: 13,
+      letterSpacing: 1.6,
+    },
+    accessoryBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderTopWidth: 1,
+      borderTopColor: rb(0.18),
+      backgroundColor: OLED_BLACK,
+    },
+    accessoryChars: {
+      color: GRAPHITE_SOFT,
+      fontSize: 13,
+      fontWeight: '700',
+      fontVariant: ['tabular-nums'],
+    },
+    accessoryPostBtn: {
+      minWidth: 84,
+      height: 34,
+      paddingHorizontal: 18,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: rb(0.18),
+      borderWidth: 1,
+      borderColor: accent,
+      shadowColor: accent,
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.6,
+      shadowRadius: 8,
+    },
+    accessoryPostBtnDisabled: {
+      borderColor: 'rgba(255,255,255,0.15)',
+      shadowOpacity: 0,
+      backgroundColor: 'rgba(255,255,255,0.04)',
+    },
+    accessoryPostText: {
+      color: accent,
+      fontWeight: '900',
+      fontSize: 12,
+      letterSpacing: 1.6,
+    },
+    errorText: {
+      marginTop: 6,
+      color: NEON_MAGENTA,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+  });
+}
+
 /**
  * Fire-post composer — Gorhom handles keyboard + `BottomSheetScrollView` so the
  * multiline field stays on-screen. Toolbar, vault chips, iOS accessory POST.
@@ -77,6 +393,9 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
   const inputRef = useRef<React.ComponentRef<typeof BottomSheetTextInput>>(null);
   const vaultSearchRef = useRef<React.ComponentRef<typeof BottomSheetTextInput>>(null);
   const focusedFirstSnapRef = useRef(false);
+
+  const accentColor = useThemeStore((s) => s.accentColor);
+  const styles = useMemo(() => makePostComposerStyles(accentColor), [accentColor]);
 
   const [text, setText] = useState('');
   const [vaultQuery, setVaultQuery] = useState('');
@@ -352,7 +671,7 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
               ]}
             >
               {submitting ? (
-                <ActivityIndicator size="small" color={VIBRANT_BLUE} />
+                <ActivityIndicator size="small" color={accentColor} />
               ) : (
                 <Text style={styles.headerPostText}>POST</Text>
               )}
@@ -404,7 +723,7 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
             multiline
             maxLength={MAX_LEN}
             autoCapitalize="sentences"
-            selectionColor={VIBRANT_BLUE}
+            selectionColor={accentColor}
             editable={!submitting}
             inputAccessoryViewID={Platform.OS === 'ios' ? ACCESSORY_ID : undefined}
           />
@@ -429,7 +748,7 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
               accessibilityLabel="Add photo or video"
               disabled={submitting}
             >
-              <ImagePlus size={18} color={VIBRANT_BLUE} strokeWidth={2.2} />
+              <ImagePlus size={18} color={accentColor} strokeWidth={2.2} />
             </Pressable>
             <View style={styles.vaultSearchRow}>
               <Search size={14} color={GRAPHITE} style={{ marginRight: 6 }} />
@@ -443,7 +762,7 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
                 autoCapitalize="none"
                 autoCorrect={false}
                 editable={!submitting}
-                selectionColor={VIBRANT_BLUE}
+                selectionColor={accentColor}
               />
             </View>
             <Text
@@ -499,7 +818,7 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
               ]}
             >
               {submitting ? (
-                <ActivityIndicator size="small" color={VIBRANT_BLUE} />
+                <ActivityIndicator size="small" color={accentColor} />
               ) : (
                 <Text style={styles.androidPostText}>POST</Text>
               )}
@@ -529,7 +848,7 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
             ]}
           >
             {submitting ? (
-              <ActivityIndicator size="small" color={VIBRANT_BLUE} />
+              <ActivityIndicator size="small" color={accentColor} />
             ) : (
               <Text style={styles.accessoryPostText}>POST</Text>
             )}
@@ -540,316 +859,3 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  sheetBg: {
-    backgroundColor: OLED_BLACK,
-    borderTopLeftRadius: 32,
-    borderTopRightRadius: 32,
-  },
-  handlePill: {
-    width: 40,
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: GRAPHITE_GREY,
-  },
-  body: {
-    flexGrow: 1,
-    paddingHorizontal: 18,
-    paddingTop: 6,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  headerTitle: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 1.8,
-    textTransform: 'uppercase',
-  },
-  closeBtn: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.10)',
-  },
-  headerPostBtn: {
-    height: 30,
-    paddingHorizontal: 16,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,229,255,0.14)',
-    borderWidth: 1,
-    borderColor: VIBRANT_BLUE,
-    minWidth: 72,
-  },
-  headerPostBtnDisabled: {
-    borderColor: 'rgba(255,255,255,0.15)',
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
-  headerPostText: {
-    color: VIBRANT_BLUE,
-    fontWeight: '900',
-    fontSize: 11,
-    letterSpacing: 1.4,
-  },
-  trackPreviewCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: PREVIEW_BORDER,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    marginBottom: 10,
-  },
-  trackPreviewArt: {
-    width: 44,
-    height: 44,
-    borderRadius: 8,
-    marginRight: 10,
-    backgroundColor: '#111',
-  },
-  trackPreviewSource: {
-    color: VIBRANT_BLUE,
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 1.4,
-    textTransform: 'uppercase',
-    marginBottom: 1,
-  },
-  trackPreviewTitle: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: -0.1,
-  },
-  trackPreviewArtist: {
-    color: GRAPHITE_SOFT,
-    fontSize: 11,
-    fontWeight: '600',
-    marginTop: 1,
-  },
-  trackPreviewClear: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    marginLeft: 6,
-  },
-  input: {
-    alignSelf: 'stretch',
-    // Fixed compose height: `flex:1` inside the sheet + iOS keyboard was resolving
-    // to ~0 visible lines so only the accessory bar appeared above the keyboard.
-    minHeight: 168,
-    maxHeight: 220,
-    color: '#FFFFFF',
-    fontSize: 17,
-    lineHeight: 23,
-    fontWeight: '600',
-    letterSpacing: -0.2,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    textAlignVertical: 'top',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.10)',
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
-  mediaThumbWrap: {
-    position: 'relative',
-    alignSelf: 'flex-start',
-    marginVertical: 6,
-  },
-  mediaThumb: {
-    width: 64,
-    height: 64,
-    borderRadius: 10,
-    backgroundColor: '#111',
-    borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.4)',
-  },
-  mediaThumbClear: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-  },
-  toolbar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingTop: 8,
-    paddingBottom: 6,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.06)',
-  },
-  toolbarIconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,229,255,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.25)',
-  },
-  vaultSearchRow: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.10)',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
-  vaultSearchInput: {
-    flex: 1,
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-    padding: 0,
-  },
-  charsLeft: {
-    color: GRAPHITE_SOFT,
-    fontSize: 12,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-    minWidth: 28,
-    textAlign: 'right',
-  },
-  vaultChips: {
-    paddingTop: 8,
-    paddingBottom: 4,
-    paddingRight: 4,
-  },
-  vaultChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    width: 180,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    marginRight: 8,
-  },
-  vaultChipSelected: {
-    borderColor: VIBRANT_BLUE,
-    backgroundColor: 'rgba(0,229,255,0.1)',
-    shadowColor: VIBRANT_BLUE,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.45,
-    shadowRadius: 6,
-  },
-  vaultChipArt: {
-    width: 32,
-    height: 32,
-    borderRadius: 6,
-    marginRight: 8,
-    backgroundColor: '#111',
-  },
-  vaultChipTitle: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  vaultChipArtist: {
-    color: GRAPHITE_SOFT,
-    fontSize: 10,
-    fontWeight: '600',
-    marginTop: 1,
-  },
-  androidPostBtn: {
-    marginTop: 8,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,229,255,0.14)',
-    borderWidth: 1,
-    borderColor: VIBRANT_BLUE,
-  },
-  androidPostBtnDisabled: {
-    borderColor: 'rgba(255,255,255,0.15)',
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
-  androidPostText: {
-    color: VIBRANT_BLUE,
-    fontWeight: '900',
-    fontSize: 13,
-    letterSpacing: 1.6,
-  },
-  accessoryBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(0,229,255,0.18)',
-    backgroundColor: OLED_BLACK,
-  },
-  accessoryChars: {
-    color: GRAPHITE_SOFT,
-    fontSize: 13,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
-  accessoryPostBtn: {
-    minWidth: 84,
-    height: 34,
-    paddingHorizontal: 18,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,229,255,0.18)',
-    borderWidth: 1,
-    borderColor: VIBRANT_BLUE,
-    shadowColor: VIBRANT_BLUE,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 8,
-  },
-  accessoryPostBtnDisabled: {
-    borderColor: 'rgba(255,255,255,0.15)',
-    shadowOpacity: 0,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-  },
-  accessoryPostText: {
-    color: VIBRANT_BLUE,
-    fontWeight: '900',
-    fontSize: 12,
-    letterSpacing: 1.6,
-  },
-  errorText: {
-    marginTop: 6,
-    color: NEON_MAGENTA,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-});

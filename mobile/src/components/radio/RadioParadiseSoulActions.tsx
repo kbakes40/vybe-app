@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { View, Pressable, StyleSheet, Platform } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Heart, Flame } from 'lucide-react-native';
@@ -21,12 +21,12 @@ import { useDynamicIslandSignal } from '@/stores/dynamicIslandStore';
 import { useShadowPlaybackToastStore } from '@/stores/shadowPlaybackToastStore';
 import { usePlaybackController } from '@/stores/playbackController';
 import { NAV_BAR_PURPLE } from '@/constants/machinedTheme';
+import { useThemeStore } from '@/stores/themeStore';
+import { hexToRgba } from '@/lib/themeColorUtils';
 import {
   GLOBAL_RADIO_STATIONS,
   type GlobalRadioStationId,
 } from '@/lib/GlobalRadioClient';
-
-const MACHINED_CYAN = '#00FFFF';
 
 export type RadioParadiseSoulActionsLayout = 'full' | 'island_compact';
 
@@ -46,6 +46,14 @@ export function RadioParadiseSoulActions({
   const compact = layout === 'island_compact';
   const icon = compact ? 15 : 22;
   const pad = compact ? 5 : 11;
+  const accent = useThemeStore((s) => s.accentColor);
+  const heartChrome = useMemo(
+    () => ({
+      borderColor: hexToRgba(accent, 0.85),
+      ...(Platform.OS === 'ios' ? { shadowColor: accent } : {}),
+    }),
+    [accent],
+  );
 
   const currentTrack = usePlaybackController((s) => s.currentTrack);
   const currentSource = usePlaybackController((s) => s.currentSource);
@@ -142,13 +150,18 @@ export function RadioParadiseSoulActions({
     <View style={[styles.row, compact && styles.rowCompact]}>
       <Pressable
         onPress={onHeart}
-        style={({ pressed }) => [styles.heartShell, { padding: pad }, pressed && styles.pressed]}
+        style={({ pressed }) => [
+          styles.heartShell,
+          heartChrome,
+          { padding: pad },
+          pressed && styles.pressed,
+        ]}
         accessibilityRole="button"
         accessibilityLabel="Vault current track"
       >
-        <Heart size={icon} color={MACHINED_CYAN} strokeWidth={2.25} />
+        <Heart size={icon} color={accent} strokeWidth={2.25} />
       </Pressable>
-      <Animated.View style={[fireMax && fireShellPulseStyle]}>
+      <Animated.View style={[fireMax && fireShellPulseStyle, fireMax && { shadowColor: accent }]}>
         <Pressable
           onPress={onFire}
           style={({ pressed }) => [styles.fireShell, { padding: pad }, pressed && styles.pressed]}
@@ -177,13 +190,11 @@ const styles = StyleSheet.create({
   heartShell: {
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(0,255,255,0.85)',
     backgroundColor: 'rgba(0,0,0,0.35)',
     alignItems: 'center',
     justifyContent: 'center',
     ...(Platform.OS === 'ios'
       ? {
-          shadowColor: MACHINED_CYAN,
           shadowOffset: { width: 0, height: 0 },
           shadowOpacity: 0.45,
           shadowRadius: 8,

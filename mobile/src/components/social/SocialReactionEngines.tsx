@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Flame, Speaker } from 'lucide-react-native';
@@ -16,6 +16,8 @@ import Animated, {
   Easing,
   interpolate,
 } from 'react-native-reanimated';
+import { useThemeStore } from '@/stores/themeStore';
+import { hexToRgb } from '@/lib/themeColorUtils';
 
 const HIT = 44;
 const SPARK_COUNT = 7;
@@ -103,6 +105,17 @@ type FireProps = {
 const FIRE_MUTED = 'rgba(180, 130, 100, 0.5)';
 
 export function FireReactionButton({ count, onPress }: FireProps) {
+  const accentHex = useThemeStore((s) => s.accentColor);
+  const accentR = useSharedValue(0);
+  const accentG = useSharedValue(255);
+  const accentB = useSharedValue(255);
+  useEffect(() => {
+    const { r, g, b } = hexToRgb(accentHex);
+    accentR.value = r;
+    accentG.value = g;
+    accentB.value = b;
+  }, [accentHex, accentR, accentG, accentB]);
+
   const scale = useSharedValue(1);
   const heat = useSharedValue(0);
   const burst = useSharedValue(0);
@@ -137,8 +150,9 @@ export function FireReactionButton({ count, onPress }: FireProps) {
 
   const glowWrapStyle = useAnimatedStyle(() => {
     const g = Math.max(glowPulse.value, heat.value * 0.95);
+    const rim = `rgb(${Math.round(accentR.value)}, ${Math.round(accentG.value)}, ${Math.round(accentB.value)})`;
     return {
-      shadowColor: '#FF4500',
+      shadowColor: rim,
       shadowOffset: { width: 0, height: 0 },
       shadowOpacity: 0.55 + g * 0.4,
       shadowRadius: 6 + g * 16,
@@ -214,11 +228,10 @@ type SpeakerProps = {
   onPress: () => void;
 };
 
-const CYAN = '#22D3EE';
-const CYAN_GLOW = '#00E5CC';
 const SPEAKER_MUTED = 'rgba(148, 163, 184, 0.55)';
 
 export function CyanSpeakerReactionButton({ count, onPress }: SpeakerProps) {
+  const accent = useThemeStore((s) => s.accentColor);
   const scale = useSharedValue(1);
   const ripple = useSharedValue(0);
   const burst = useSharedValue(0);
@@ -259,13 +272,13 @@ export function CyanSpeakerReactionButton({ count, onPress }: SpeakerProps) {
   const glowWrapStyle = useAnimatedStyle(() => {
     const g = Math.max(glowPulse.value, ripple.value * 0.5);
     return {
-      shadowColor: CYAN_GLOW,
+      shadowColor: accent,
       shadowOffset: { width: 0, height: 0 },
       shadowOpacity: 0.45 + g * 0.45,
       shadowRadius: 5 + g * 14,
       ...(IS_ANDROID ? { elevation: 3 + g * 10 } : {}),
     };
-  });
+  }, [accent]);
 
   const hotIconStyle = useAnimatedStyle(() => ({
     opacity: interpolate(ripple.value, [0, 0.15, 1], [0, 1, 0.85]),
@@ -299,19 +312,20 @@ export function CyanSpeakerReactionButton({ count, onPress }: SpeakerProps) {
         accessibilityLabel="Speaker reaction"
       >
         <View style={styles.iconBox}>
-          <SparkBurstLayer burst={burst} angles={angles} color={CYAN} distance={38} />
+          <SparkBurstLayer burst={burst} angles={angles} color={accent} distance={38} />
           <Animated.View style={[styles.speakerIconWrap, glowWrapStyle, iconScaleStyle]}>
             <Animated.View
               pointerEvents="none"
               style={[
                 styles.rippleRing,
+                { borderColor: accent },
                 rippleStyle,
               ]}
             />
             <View style={styles.speakerStack}>
               <Speaker size={22} color={SPEAKER_MUTED} strokeWidth={2} />
               <Animated.View style={[styles.speakerHot, hotIconStyle]} pointerEvents="none">
-                <Speaker size={22} color={CYAN} strokeWidth={2.2} />
+                <Speaker size={22} color={accent} strokeWidth={2.2} />
               </Animated.View>
             </View>
           </Animated.View>
@@ -378,7 +392,7 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 20,
     borderWidth: 2,
-    borderColor: CYAN,
+    borderColor: 'transparent',
     left: -3,
     top: -3,
   },

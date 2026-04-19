@@ -23,10 +23,13 @@ export function computeAllowIslandSurfaces(opts: {
   pathname: string;
   segments: string[];
 }): boolean {
-  if (opts.isPending || !opts.hasUser) return false;
+  // Do not gate on `isPending`: Better Auth often leaves `isPending` true during
+  // background refresh while `user` is still populated — that hid the in-app
+  // pill + native Now Playing bridge for long stretches.
+  if (!opts.hasUser) return false;
   const p = (opts.pathname || '').toLowerCase();
-  if (/(^|[/])(sign-in|verify-otp|onboarding)([/]|$)/.test(p)) return false;
+  if (/(^|[/])(sign-in|login|verify-otp|onboarding)([/]|$)/.test(p)) return false;
   const s0 = (opts.segments[0] || '').toLowerCase();
-  if (s0 === 'sign-in' || s0 === 'verify-otp' || s0 === 'onboarding') return false;
+  if (s0 === 'sign-in' || s0 === 'login' || s0 === 'verify-otp' || s0 === 'onboarding') return false;
   return true;
 }

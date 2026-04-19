@@ -1,8 +1,17 @@
-import React from 'react';
-import { Text, type TextProps, type StyleProp, type TextStyle, StyleSheet, Platform } from 'react-native';
+import React, { useMemo } from 'react';
+import {
+  Text,
+  type TextProps,
+  type StyleProp,
+  type TextStyle,
+  StyleSheet,
+  Platform,
+  type ColorValue,
+} from 'react-native';
 import MaskedView from '@react-native-masked-view/masked-view';
 import { LinearGradient } from 'expo-linear-gradient';
-import { VIBRANT_BLUE, MACHINED_BLUE_MID, SHADOW_BLUE } from '@/constants/machinedTheme';
+import { useThemeStore } from '@/stores/themeStore';
+import { accentMachinedGradientStops, hexToRgba } from '@/lib/themeColorUtils';
 
 type Props = TextProps & {
   style?: StyleProp<TextStyle>;
@@ -14,16 +23,24 @@ type Props = TextProps & {
 /**
  * Headline text filled with a cyan → blue “machined” gradient (library headers, social section titles).
  */
-const neonMaskExtra = Platform.select({
-  ios: {
-    textShadowColor: `${VIBRANT_BLUE}99`,
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 14,
-  },
-  default: {},
-});
-
 export function MachinedGradientText({ style, children, neonGlow, ...textProps }: Props) {
+  const accent = useThemeStore((s) => s.accentColor);
+  const gradientColors = useMemo(
+    () => accentMachinedGradientStops(accent) as unknown as readonly [ColorValue, ColorValue, ColorValue],
+    [accent],
+  );
+  const neonMaskExtra = useMemo(
+    () =>
+      Platform.select({
+        ios: {
+          textShadowColor: hexToRgba(accent, 0.55),
+          textShadowOffset: { width: 0, height: 0 },
+          textShadowRadius: 14,
+        },
+        default: {},
+      }),
+    [accent],
+  );
   const maskStyle = [styles.maskText, neonGlow ? neonMaskExtra : null, style];
   return (
     <MaskedView
@@ -34,7 +51,7 @@ export function MachinedGradientText({ style, children, neonGlow, ...textProps }
       }
     >
       <LinearGradient
-        colors={[VIBRANT_BLUE, MACHINED_BLUE_MID, SHADOW_BLUE]}
+        colors={gradientColors}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.gradientBox}

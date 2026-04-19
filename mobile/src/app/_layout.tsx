@@ -23,10 +23,12 @@ import { ShadowInputAccessory } from '@/components/ShadowInputAccessory';
 import { DynamicIslandChrome } from '@/components/DynamicIslandChrome';
 import { DynamicIslandTopFade } from '@/components/DynamicIslandTopFade';
 import { DynamicIsland } from '@/components/DynamicIsland';
+import { ThemeArtworkAccentSync } from '@/components/ThemeArtworkAccentSync';
 import { PillLockSync } from '@/components/PillLockSync';
 import { LoginMorphOverlay } from '@/components/LoginMorphOverlay';
 import { authClient } from '@/lib/auth/auth-client';
 import { useKeyboardChromeStore } from '@/stores/keyboardChromeStore';
+import { useThemeStore } from '@/stores/themeStore';
 
 LogBox.ignoreLogs(['Expo AV has been deprecated', 'Disconnected from Metro']);
 
@@ -173,6 +175,10 @@ export default function RootLayout() {
     configurePurchases();
   }, []);
 
+  useEffect(() => {
+    void useThemeStore.getState().hydrateTheme();
+  }, []);
+
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
@@ -188,6 +194,7 @@ export default function RootLayout() {
                 <RootLayoutNav />
                 {/* PILL_LOCK_V2: PillLockSync + top fade (9997) / chrome (9998) / pill (9999) */}
                 <PillLockSync />
+                <ThemeArtworkAccentSync />
                 <DynamicIslandTopFade />
                 <DynamicIslandChrome />
                 <DynamicIsland />

@@ -65,6 +65,8 @@ export interface Track {
   globalRadioDiLeading?: 'default' | 'chill';
   /** HIP HOP: max-frequency Fire shell pulse in soul actions. */
   globalRadioFirePulse?: 'normal' | 'max';
+  /** MPNowPlaying / Dynamic Island album line (e.g. `VAULT: 80S`, `GLOBAL · NTS`). */
+  globalRadioIslandAlbum?: string;
 }
 
 export interface RelatedTrack extends Track {

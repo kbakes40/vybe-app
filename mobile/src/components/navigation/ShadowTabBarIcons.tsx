@@ -14,15 +14,13 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useTabBarBloomStore } from '@/stores/tabBarBloomStore';
+import { useThemeStore } from '@/stores/themeStore';
+import { hexToRgb } from '@/lib/themeColorUtils';
 
 /** Shadow tab chrome — shared across tab bar icons. */
 export const SHADOW_TAB_STROKE = 1.5;
-/** Neon Cyan — active tab + machined indicator (global nav). */
-export const SHADOW_TAB_ACTIVE = '#00FFFF';
 /** Muted Machined Grey — inactive silhouettes (white at 25% opacity). */
 export const SHADOW_TAB_INACTIVE = '#FFFFFF40';
-
-const MACHINED_BLUE = SHADOW_TAB_ACTIVE;
 const MAGENTA_HEARTBEAT = '#FF00FF';
 
 /** Active-tab glow target — per spec: shadowOpacity 0.8 / shadowRadius 10. */
@@ -76,6 +74,18 @@ export function ShadowTabIconShell({
   const breath = useSharedValue(1);
   const dotPulse = useSharedValue(1);
   const lastPulseAtRef = useRef(0);
+
+  const accentR = useSharedValue(0);
+  const accentG = useSharedValue(255);
+  const accentB = useSharedValue(255);
+  const accentColor = useThemeStore((s) => s.accentColor);
+
+  useEffect(() => {
+    const { r, g, b } = hexToRgb(accentColor);
+    accentR.value = r;
+    accentG.value = g;
+    accentB.value = b;
+  }, [accentColor, accentR, accentG, accentB]);
 
   useEffect(() => {
     focusedSv.value = withSpring(focused ? 1 : 0, FOCUS_SPRING);
@@ -162,8 +172,8 @@ export function ShadowTabIconShell({
       boost * 6;
     return {
       transform: [{ scale: bloomScale.value }],
-      borderColor: `rgba(0, 255, 255, ${borderOpacity})`,
-      shadowColor: MACHINED_BLUE,
+      borderColor: `rgba(${accentR.value}, ${accentG.value}, ${accentB.value}, ${borderOpacity})`,
+      shadowColor: `rgb(${accentR.value}, ${accentG.value}, ${accentB.value})`,
       shadowOffset: { width: 0, height: 0 },
       shadowOpacity,
       shadowRadius,
