@@ -68,6 +68,25 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
   const [mainPointerEvents, setMainPointerEvents] = useState<'auto' | 'none'>(() =>
     maxTranslate > 0 ? 'none' : 'auto',
   );
+  /** When collapsed, entire sheet shell is non-hit-testable so touches reach MiniPlayer (z below). */
+  const [shellPointerEvents, setShellPointerEvents] = useState<'none' | 'box-none'>(() =>
+    maxTranslate > 0 ? 'none' : 'box-none',
+  );
+
+  const applyTouchPolicy = useCallback((collapsed: boolean | null) => {
+    if (collapsed === null) {
+      setMainPointerEvents('auto');
+      setShellPointerEvents('box-none');
+      return;
+    }
+    if (collapsed) {
+      setMainPointerEvents('none');
+      setShellPointerEvents('none');
+    } else {
+      setMainPointerEvents('auto');
+      setShellPointerEvents('box-none');
+    }
+  }, []);
 
   const expand = useCallback(() => {
     const d = timingForOpen(ty.value);
@@ -111,11 +130,11 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
 
   useEffect(() => {
     if (maxTranslate <= 0) {
-      setMainPointerEvents('auto');
+      applyTouchPolicy(null);
       return;
     }
-    setMainPointerEvents(ty.value > maxTranslate * 0.72 ? 'none' : 'auto');
-  }, [maxTranslate]);
+    applyTouchPolicy(ty.value > maxTranslate * 0.72);
+  }, [maxTranslate, applyTouchPolicy]);
 
   useAnimatedReaction(
     () => ({ y: ty.value, m: maxTranslate }),
@@ -139,12 +158,12 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
     (y) => {
       const m = maxTranslate;
       if (m <= 0) {
-        runOnJS(setMainPointerEvents)('auto');
+        runOnJS(applyTouchPolicy)(null);
         return;
       }
-      runOnJS(setMainPointerEvents)(y > m * 0.72 ? 'none' : 'auto');
+      runOnJS(applyTouchPolicy)(y > m * 0.72);
     },
-    [maxTranslate],
+    [maxTranslate, applyTouchPolicy],
   );
 
   /** Anchor to the window so the sheet overlays content instead of shifting the tab stack. */
@@ -245,7 +264,10 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
     });
 
   return (
-    <Animated.View style={[styles.shell, shellLayoutStyle]} pointerEvents="box-none">
+    <Animated.View
+      style={[styles.shell, shellLayoutStyle]}
+      pointerEvents={shellPointerEvents}
+    >
       <View style={styles.column} pointerEvents="box-none">
         <GestureDetector gesture={pan}>
           <View style={styles.panArea} pointerEvents="box-none">
