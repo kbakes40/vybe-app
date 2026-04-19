@@ -27,7 +27,7 @@ function sheetExpandedHeightPx(windowHeight: number): number {
  * Leaves a strip of the previous screen (status bar + DI pill) visible above
  * the sheet's rounded top corners — Apple/Spotify/Google Music pattern.
  */
-const EXPANDED_TOP_OFFSET = 80;
+const EXPANDED_TOP_OFFSET = 110;
 
 /** Keeps the top corners rounded even when the sheet is fully open. */
 const EXPANDED_TOP_RADIUS = 32;
