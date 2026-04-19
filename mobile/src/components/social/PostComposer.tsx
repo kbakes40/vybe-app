@@ -651,6 +651,9 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
+    // minHeight guards against a broken flex chain from ancestors — even if
+    // the parent hits a 0-height ambiguity the input stays visible.
+    minHeight: 140,
     color: '#FFFFFF',
     fontSize: 17,
     lineHeight: 23,
