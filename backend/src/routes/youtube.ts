@@ -128,38 +128,36 @@ function setCachedUrl(videoId: string, url: string): void {
 /**
  * Resolver attempt = (player_client, whether to attach cookies).
  *
- * EMPIRICAL RANKING (2026-04-19, /api/youtube/_test probes):
+ * 2026-04-19 PROBE FINDINGS — what actually returns a streaming URL:
  *
- *   GOLD (returns 27+ formats with NO "MISSING POT" flag → CDN actually
- *   serves the bytes when we proxy them):
- *     - mediaconnect, android_vr, android_creator, ios_creator
+ *   1. ios/tv/tv_embedded + NO cookies → returns URL with MISSING POT.
+ *      CDN serves bytes for older/un-flagged videos (e.g. Rick Astley)
+ *      but 403s on currently popular tracks.
+ *   2. mediaconnect/android_vr/ios_creator + NO cookies → lists formats
+ *      but --get-url itself returns "Sign in to confirm you're not a bot".
+ *   3. ANY client + cookies → only storyboards (current cookies flagged).
  *
- *   SILVER (returns formats but most are "MISSING POT" → CDN often 403s):
- *     - ios, tv, tv_embedded, mweb, web_safari
- *
- *   COOKIES = POISON: any request that attaches cookies on Railway's
- *   IP gets storyboards-only. So all attempts must be cookie-less.
- *
- * The fast race uses GOLD clients only — these give us PO-token-free
- * formats that actually stream. SILVER tier remains as a fallback in
- * case all GOLD clients fail (e.g. video that requires the web client).
+ * So the best we can do today is option 1 with cookie-less ios/tv/tv_embedded.
+ * For tracks where the CDN 403s, the user needs ONE of the following infra
+ * fixes (none of which are pure-code):
+ *   a) Fresh non-flagged YouTube cookies, OR
+ *   b) bgutil-ytdlp-pot-provider plugin installed on Railway, OR
+ *   c) Residential proxy (so YouTube doesn't see Railway's datacenter IP).
  */
 type ResolveAttempt = { client: string; useCookies: boolean };
 function getFastAttempts(): readonly ResolveAttempt[] {
   return [
-    { client: "mediaconnect", useCookies: false },
-    { client: "android_vr", useCookies: false },
-    { client: "ios_creator", useCookies: false },
+    { client: "ios", useCookies: false },
+    { client: "tv", useCookies: false },
+    { client: "tv_embedded", useCookies: false },
   ] as const;
 }
 function getSlowAttempts(): readonly ResolveAttempt[] {
   return [
-    { client: "android_creator", useCookies: false },
-    { client: "ios", useCookies: false },
-    { client: "tv", useCookies: false },
-    { client: "tv_embedded", useCookies: false },
     { client: "mweb", useCookies: false },
     { client: "web_safari", useCookies: false },
+    // Last resort for genuinely auth-gated content (age/region).
+    { client: "ios", useCookies: true },
   ] as const;
 }
 const YTDLP_RESOLVE_FAST_TIMEOUT_MS = 10_000;
@@ -426,16 +424,10 @@ youtubeRouter.get("/download/:videoId", async (c) => {
   const tmpBase = `/tmp/yt_${videoId}_${Date.now()}`;
   const tmpTemplate = `${tmpBase}.%(ext)s`;
 
-  // Same GOLD ranking as the resolver: clients that return formats
-  // WITHOUT the "MISSING POT" flag, so the CDN actually serves us bytes.
-  const PLAYER_CLIENTS = [
-    "mediaconnect",
-    "android_vr",
-    "ios_creator",
-    "android_creator",
-    "ios",
-    "tv",
-  ] as const;
+  // ios/tv/tv_embedded + NO cookies → returns formats; CDN serves bytes
+  // for un-flagged videos. mediaconnect/android_vr extract richer formats
+  // but require cookies that, on Railway IP, are flagged → storyboards-only.
+  const PLAYER_CLIENTS = ["ios", "tv", "tv_embedded", "mweb", "web_safari"] as const;
 
   const tryClient = async (client: string): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
     // Clean up any partial files from a previous attempt so the --print
@@ -602,7 +594,7 @@ youtubeRouter.get("/search", async (c) => {
 });
 
 /** ytsearch on Railway needs cookies + rotating clients; otherwise we fall through to Data API and burn invalid keys. */
-const YTDLP_SEARCH_CLIENTS = ["mediaconnect", "android_vr", "ios_creator", "ios", "tv"] as const;
+const YTDLP_SEARCH_CLIENTS = ["tv", "tv_embedded", "ios", "mweb"] as const;
 
 function parseYtsearchJsonLines(
   output: string,
@@ -729,12 +721,11 @@ youtubeRouter.get("/info/:videoId", async (c) => {
 });
 
 const YT_DLP_CLIENT_FALLBACKS = [
-  "mediaconnect",
-  "android_vr",
-  "ios_creator",
-  "ios",
   "tv",
+  "ios",
   "tv_embedded",
+  "web_safari",
+  "mweb",
 ];
 
 async function getVideoInfo(videoId: string): Promise<{ title: string; channel: string; thumbnail: string; duration: number }> {
