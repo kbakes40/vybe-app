@@ -213,7 +213,10 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
       Extrapolation.CLAMP,
     );
     return {
-      height: m,
+      // Shrink the sheet's rendered height by EXPANDED_TOP_OFFSET so that
+      // when translated down to rest at y=80, the bottom row (Queue / AirPlay
+      // / Share) stays on-screen instead of being clipped by the 80pt shift.
+      height: m - EXPANDED_TOP_OFFSET,
       transform: [{ translateY: ty.value }],
       borderTopLeftRadius: topRadius,
       borderTopRightRadius: topRadius,
