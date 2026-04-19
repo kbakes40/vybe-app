@@ -162,6 +162,12 @@ app.route("/api/vip", vipRouter);
 app.route("/api/library", libraryRouter);
 app.route("/api/social", socialRouter);
 
+// Build marker — bumped to force Railway to pick up new commits.
+// If you see this in Railway logs, the new code IS deployed.
+const BUILD_MARKER = "vybe-backend@2026-04-19T05:35:00Z [social+_diag+bearer+yt-cookies]";
+console.log("[boot]", BUILD_MARKER);
+app.get("/api/_build", (c) => c.json({ marker: BUILD_MARKER }));
+
 const port = Number(process.env.PORT) || 3000;
 
 // NOTE: Cache prewarm intentionally disabled. Firing 40 searches against
