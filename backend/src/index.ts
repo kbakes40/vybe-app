@@ -188,6 +188,31 @@ app.use("/api/soundcloud/*", routeShield({
   },
 }));
 
+// Mirror the shield onto /api/discover/* — instant-onboarding was the 183s
+// offender in the latest log (it synchronously awaits buildInstantOnboardingFeed
+// which fans out to YouTube+SoundCloud, so when the Data API is exhausted it
+// stacks up yt-dlp fallbacks). 3s deadline returns an empty feed and lets the
+// mobile client hydrate from cached snapshots / local state.
+app.use("/api/discover/*", routeShield({
+  timeoutMs: 3000,
+  snapshotTtlMs: 10 * 60 * 1000,
+  stableFallback: (c) => {
+    const path = new URL(c.req.url).pathname;
+    if (path.endsWith("/instant-onboarding")) {
+      // Shape-compatible with buildInstantOnboardingFeed's inner value; mobile
+      // client is tolerant of empty sections / tracks arrays here.
+      return { sections: [], tracks: [] };
+    }
+    if (path.endsWith("/feed")) {
+      return { sections: [] };
+    }
+    if (path.endsWith("/preferences")) {
+      return { genres: [], moods: [], favoriteArtists: [] };
+    }
+    return {};
+  },
+}));
+
 app.use("/api/discovery/*", routeShield({
   timeoutMs: 3000,
   snapshotTtlMs: 10 * 60 * 1000,

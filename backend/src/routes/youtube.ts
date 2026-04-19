@@ -612,7 +612,9 @@ youtubeRouter.get("/download/:videoId", async (c) => {
     Bun.spawn(["sh", "-c", `rm -f ${tmpBase}.* 2>/dev/null`]);
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 60_000);
+    // 20s hard cap (was 60s) — bot-walled yt-dlp was hanging ~180s before,
+    // pileups starved other requests. Fail fast, let caller retry/fallback.
+    const timer = setTimeout(() => controller.abort(), 20_000);
     try {
       const output = await ytDlp.execPromise([
         `https://www.youtube.com/watch?v=${videoId}`,
@@ -866,7 +868,9 @@ async function searchYouTubeYtDlp(query: string, maxResults: number): Promise<Ar
 
   for (const client of YTDLP_SEARCH_CLIENTS) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 45_000);
+    // 20s hard cap (was 45s) per search client — iterate fast through clients
+    // instead of hanging on a single bot-walled attempt.
+    const timer = setTimeout(() => controller.abort(), 20_000);
     try {
       const output = await ytDlp.execPromise(
         [
@@ -1061,7 +1065,8 @@ youtubeRouter.get("/playlist-tracks", async (c) => {
 
 async function getPlaylistTracks(listId: string): Promise<Array<{ videoId: string; title: string; channel: string; thumbnail: string; duration: number }>> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 60_000);
+  // 20s hard cap (was 60s) — prevents playlist-tracks hangs from starving the event loop.
+  const timer = setTimeout(() => controller.abort(), 20_000);
   let output: string;
   try {
     output = await ytDlp.execPromise([

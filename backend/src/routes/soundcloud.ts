@@ -774,7 +774,8 @@ export async function fetchSoundcloudPlaylistDump(
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 60_000);
+  // 20s hard cap (was 60s) — flat-playlist metadata should return quickly.
+  const timer = setTimeout(() => controller.abort(), 20_000);
   let output = "";
   try {
     output = await ytDlp.execPromise(
@@ -1348,7 +1349,8 @@ export async function searchSoundCloud(query: string, maxResults: number): Promi
   soundcloudUrl: string;
 }>> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 45_000);
+  // 20s hard cap (was 45s) — SC search should complete well under this.
+  const timer = setTimeout(() => controller.abort(), 20_000);
   let output: string;
   try {
     output = await ytDlp.execPromise([
