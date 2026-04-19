@@ -290,12 +290,15 @@ export default function AppLayout() {
         <Stack.Screen
           name="nowPlaying"
           options={{
-            presentation: 'transparentModal',
-            animation: 'fade',
+            // 'modal' presents as the native iOS page-sheet: slides up from the
+            // bottom, leaves the previous screen visible above (Apple/Spotify/
+            // Google Music pattern), rounded corners, swipe-down to dismiss.
+            presentation: 'modal',
+            animation: 'slide_from_bottom',
             headerShown: false,
             headerTransparent: true,
             headerShadowVisible: false,
-            contentStyle: { backgroundColor: 'transparent' },
+            contentStyle: { backgroundColor: '#000000' },
             gestureEnabled: true,
           }}
         />
