@@ -527,7 +527,7 @@ export function DynamicIsland() {
   // sit inside the status bar area end up with the clock visually on top and
   // the middle content occluded. Sitting 8pt below insets.top keeps the pill
   // fully visible while still feeling anchored to the top.
-  const pillTop = insets.top + 4;
+  const pillTop = insets.top;
 
   /** HD badge appears for premium subs whenever audio is engaged. */
   const showHdBadge = isPremium && (isPlaying || isStreamResolving);
