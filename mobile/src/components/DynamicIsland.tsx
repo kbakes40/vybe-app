@@ -22,10 +22,11 @@ import { useNowPlayingSheetStore } from '@/stores/nowPlayingSheetStore';
 import { useDynamicIslandSignal } from '@/stores/dynamicIslandStore';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import { VIBRANT_BLUE } from '@/constants/machinedTheme';
+import { islandAlignedPillTop } from '@/constants/iosIslandLayout';
 
 /**
  * Global interactive pill mounted above navigation chrome.
- * - Idle: slim centered pill under the Dynamic Island notch.
+ * - Idle: slim centered pill aligned on the hardware Dynamic Island band.
  * - Playing: morphs wider to show track metadata + magenta heartbeat.
  * - Tap: expands into a Shadow Sexy mini-controller (art + transport).
  * - Long press (pill): flips to a DaVinci Dynamics system-status card for 2.4s.
@@ -51,8 +52,8 @@ type DIState = 'idle' | 'playing' | 'expanded' | 'davinci' | 'recovery' | 'succe
 // Pill morphology per state (container width / height).
 // Playing morphs to 95% of the screen width per the IMG_3643 "Integrated Notch"
 // spec; expanded anchors to the same width so the mini-controller feels like a
-// continuation. Notch "ears" (battery / signal) stay visible because the pill
-// sits BELOW the hardware Dynamic Island / status bar, not over it.
+// continuation. Idle pill is vertically centered on the hardware Dynamic Island
+// band (see `islandAlignedPillTop`); expanded state grows downward from there.
 const SCREEN_W = Dimensions.get('window').width;
 const ACTIVE_W = Math.round(SCREEN_W * 0.95);
 
@@ -148,8 +149,13 @@ export function DynamicIsland() {
     !!currentTrack &&
     (currentSource === 'youtube' || currentSource === 'youtube_music') &&
     (playbackState === 'loading' || playbackState === 'buffering');
-  /** Wide pill + metadata while the stream URL is still handshaking (CDN / proxy). */
-  const showAsPlayingBar = isPlaying || isStreamResolving;
+  /** Wide pill + metadata whenever a track is engaged (not idle / ended / error). */
+  const showAsPlayingBar =
+    !!currentTrack &&
+    (playbackState === 'playing' ||
+      playbackState === 'paused' ||
+      playbackState === 'loading' ||
+      playbackState === 'buffering');
   const showVaultTimeoutLane = recoveryLabelOverride === 'VAULT_TIMEOUT';
   const isRecovering =
     (playbackState === 'error' && !!currentTrack) || showVaultTimeoutLane;
@@ -334,10 +340,13 @@ export function DynamicIsland() {
         withTiming(1.25, { duration: 260 }),
         withTiming(1, { duration: 360 }),
       );
+    } else if (showAsPlayingBar) {
+      // Paused with a queue — keep a soft cyan ring so title/artist stay legible in the pill.
+      glowIntensitySV.value = withTiming(0.42, { duration: 320 });
     } else {
       glowIntensitySV.value = withTiming(0, { duration: 420 });
     }
-  }, [isPlaying, isStreamResolving, glowIntensitySV]);
+  }, [isPlaying, isStreamResolving, showAsPlayingBar, glowIntensitySV]);
 
   // Magenta "heartbeat" while playing.
   useEffect(() => {
@@ -512,11 +521,13 @@ export function DynamicIsland() {
     transform: [{ scale: 0.6 + fireFlareSV.value * 0.5 }],
   }));
 
-  // IMG_3643: hug the notch — `top: -4` relative to safe-area line (insets.top − 4).
-  // Clamp to a minimum so the pill stays visible even if the SafeAreaProvider
-  // hasn't resolved insets yet on first paint (would otherwise render at -4
-  // and disappear behind the notch).
-  const pillTop = Math.max(insets.top - 4, Platform.OS === 'ios' ? 44 : 12);
+  // Anchor the pill *just below* the status bar instead of centered on the
+  // hardware DI band. iOS renders the system status bar (clock/signal/battery)
+  // in its own layer above app content — no zIndex beats it — so pills that
+  // sit inside the status bar area end up with the clock visually on top and
+  // the middle content occluded. Sitting 8pt below insets.top keeps the pill
+  // fully visible while still feeling anchored to the top.
+  const pillTop = insets.top + 8;
 
   /** HD badge appears for premium subs whenever audio is engaged. */
   const showHdBadge = isPremium && (isPlaying || isStreamResolving);
