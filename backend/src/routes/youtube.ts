@@ -369,7 +369,14 @@ youtubeRouter.get("/audio/:videoId", async (c) => {
   }
 
   const rangeHeader = c.req.header("Range");
-  const MAX_AUDIO_PROXY_ATTEMPTS = 3;
+  // Without a PO token provider, every retry hits the same CDN bot wall
+  // and 403s identically — burning 4-5s per attempt for nothing. Cut to
+  // 2 attempts max (one fresh resolve + one with a different player_client
+  // via cache bust). Once we ship a real PO token provider this can stay
+  // at 2 since each attempt becomes meaningful again.
+  const MAX_AUDIO_PROXY_ATTEMPTS = 2;
+  // Cap CDN fetch wait — a 403 comes back in <500ms, so 8s is plenty.
+  const CDN_FETCH_TIMEOUT_MS = 8_000;
   let upstream: Response | null = null;
   let lastDirectUrl = "";
   let lastError: string | null = null;
@@ -401,7 +408,7 @@ youtubeRouter.get("/audio/:videoId", async (c) => {
       visitorData: cachedBundle?.visitorData,
     });
     const cdnAbort = new AbortController();
-    const cdnTimeout = setTimeout(() => cdnAbort.abort(), 45_000);
+    const cdnTimeout = setTimeout(() => cdnAbort.abort(), CDN_FETCH_TIMEOUT_MS);
     let res: Response;
     try {
       res = await fetch(directUrl, { headers: upstreamHeaders, signal: cdnAbort.signal });
@@ -417,12 +424,12 @@ youtubeRouter.get("/audio/:videoId", async (c) => {
     upstream = res;
     if (res.ok) break;
 
+    // 403 means the CDN is rejecting this token/IP combo. Retrying with
+    // the same yt-dlp client config produces an identical reject in ~4s.
+    // Only retry on transient-looking codes (429/502/503) which suggest
+    // a temporary CDN edge issue, not a permanent bot block.
     const retryable =
-      res.status === 403 ||
-      res.status === 404 ||
-      res.status === 429 ||
-      res.status === 502 ||
-      res.status === 503;
+      res.status === 429 || res.status === 502 || res.status === 503;
     lastError = `HTTP ${res.status}`;
     if (!retryable) break;
   }

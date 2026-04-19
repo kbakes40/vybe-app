@@ -1047,6 +1047,22 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
           const msg = error instanceof Error ? error.message : 'Unknown error';
           console.error('[PlaybackController] YouTube proxy error:', msg);
           set({ playbackState: 'error', error: `Failed to play: ${msg}` });
+          // Auto-skip: a 502/CDN reject on this video means YouTube's bot
+          // wall is blocking our token. The next track in the queue might
+          // be old enough to bypass it. Better UX than sitting on a dead
+          // pause button waiting for the user to tap skip.
+          const queueState = get();
+          const queueLen = queueState.queue.length;
+          if (queueLen > 1 && queueState.currentIndex < queueLen - 1) {
+            setTimeout(() => {
+              const stillSameTrack = get().currentTrack?.id === track.id;
+              const stillErrored = get().playbackState === 'error';
+              if (stillSameTrack && stillErrored) {
+                console.log('[PlaybackController] Auto-skipping unplayable YouTube track');
+                get().next();
+              }
+            }, 1200);
+          }
           return;
         }
       }
