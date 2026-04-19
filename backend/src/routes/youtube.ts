@@ -240,9 +240,8 @@ function tryResolveWithClient(
       [
         `https://www.youtube.com/watch?v=${videoId}`,
         "-f",
-        // Bias to iOS-native m4a/aac first; keep loose fallbacks so we don't
-        // hit "Requested format is not available" on weirder uploads.
-        "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio/best/bestaudio*/best*",
+        // Prefer Opus (≈160kbps tier) then AAC/m4a fallbacks for vault clarity.
+        "bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio/best/bestaudio*/best*",
         "--get-url",
         "--no-playlist",
         "--no-warnings",
@@ -303,9 +302,7 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
     return `${a.client}${tag}${pot}`;
   };
 
-  if (bundle) {
-    console.log(`[yt-dlp] resolve ${videoId}: PO token acquired, racing web/ios/tv`);
-  } else if (isPoTokenProviderConfigured()) {
+  if (!bundle && isPoTokenProviderConfigured()) {
     console.warn(`[yt-dlp] resolve ${videoId}: PO provider configured but token fetch failed → cookieless fallback`);
   }
 
@@ -328,9 +325,6 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
     for (const r of races) {
       if (r.attempt !== winner.attempt) r.abort();
     }
-    if (winner.attempt !== fastAttempts[0]) {
-      console.log(`[yt-dlp] resolve ${videoId}: fast-race won by ${labelOf(winner.attempt)}`);
-    }
     return winner.url;
   } catch (e) {
     const fastErr = e instanceof AggregateError
@@ -349,7 +343,6 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
         bundle,
       );
       const url = await promise;
-      console.log(`[yt-dlp] resolve ${videoId}: slow fallback ok with ${labelOf(attempt)}`);
       return url;
     } catch (e: any) {
       lastMsg = e.message ?? String(e);
@@ -581,10 +574,6 @@ youtubeRouter.get("/download/:videoId", async (c) => {
   const PLAYER_CLIENTS = bundle
     ? (["web", "ios", "tv", "tv_embedded", "mweb"] as const)
     : (["ios", "tv", "tv_embedded", "mweb", "web_safari"] as const);
-  if (bundle) {
-    console.log(`[YouTube] download ${videoId}: PO token acquired`);
-  }
-
   const tryClient = async (client: string): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
     // Clean up any partial files from a previous attempt so the --print
     // output only reports the file this attempt created.
@@ -595,7 +584,8 @@ youtubeRouter.get("/download/:videoId", async (c) => {
     try {
       const output = await ytDlp.execPromise([
         `https://www.youtube.com/watch?v=${videoId}`,
-        "-f", "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio/best/bestaudio*/best*",
+        "-f",
+        "bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio/best/bestaudio*/best*",
         "--no-playlist",
         "-o", tmpTemplate,
         "--no-warnings",

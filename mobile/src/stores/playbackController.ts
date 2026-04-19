@@ -26,7 +26,6 @@ import {
   extractYoutubeVideoId,
   normalizeYoutubeTrackForPlayback,
   resolveYoutubeStreamForVideoId,
-  trackToPlayerDebugPayload,
 } from '@/lib/audio/playbackService';
 import {
   preResolveSoundcloudStreamUrl,
@@ -389,7 +388,6 @@ async function autoFillQueue(seedTrack: Track, currentQueue: Track[], playNext =
       usePlaybackController.setState({ queueIndex: nextIndex });
     }
   } catch (e) {
-    console.warn('[AutoQueue] Failed to fill queue:', e);
   }
 }
 
@@ -467,7 +465,6 @@ const initializeAudioSession = async (): Promise<void> => {
       interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
     });
     audioSessionInitialized = true;
-    console.log('[PlaybackController] Audio session initialized');
   } catch (error) {
     console.error('[PlaybackController] Failed to initialize audio session:', error);
   }
@@ -576,7 +573,6 @@ const stopVybeAudio = async (): Promise<void> => {
 
 // Stop all audio sources - the ONE PLAYER RULE
 const stopAllSources = async (): Promise<void> => {
-  console.log('[PlaybackController] Stopping all audio sources');
 
   // Stop VYBE native audio
   await stopVybeAudio();
@@ -637,7 +633,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     // Guard against event objects being passed as track
     if (isEventObject(track) || !isValidTrack(track)) {
       if (__DEV__) {
-        console.warn('[PlaybackController] playTrack received invalid payload:', typeof track);
       }
       return;
     }
@@ -646,7 +641,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
     if (isDeadYoutubeQueueTitle(track.title)) {
       if (__DEV__) {
-        console.warn('[PlaybackController] Skipping dead/unplayable track title');
       }
       return;
     }
@@ -664,14 +658,12 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     const newQueue = filterDeadYoutubeQueueTracks(queue ?? [track]);
     if (newQueue.length === 0) {
       if (__DEV__) {
-        console.warn('[PlaybackController] Queue empty after scrubbing placeholders');
       }
       return;
     }
     const index = newQueue.findIndex(t => t.id === track.id);
     if (index < 0) {
       if (__DEV__) {
-        console.warn('[PlaybackController] Active track missing after scrubbing queue');
       }
       return;
     }
@@ -696,6 +688,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     }
 
     const playTapAt = Date.now();
+    useDynamicIslandSignal.getState().setScIgnitionGlow(false);
     const preemptBackend = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
     const scMatchPromise: Promise<Track | null> =
       (source === 'youtube' || source === 'youtube_music') &&
@@ -719,14 +712,10 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
     const scAlt = await scMatchPromise;
     if (scAlt?.soundcloudUrl && isStillCurrent()) {
-      if (__DEV__) {
-        console.log('[PlaybackController] SoundCloud-first preempt:', track.title, '→', scAlt.title);
-      }
+      useDynamicIslandSignal.getState().setScIgnitionGlow(true);
       const mergedQueue = newQueue.map((t) => (t.id === track.id ? scAlt : t));
       return get().playTrack(scAlt, mergedQueue, options);
     }
-
-    console.log('[PlaybackController] Playing track:', track.title, 'source:', source);
 
     // Add to recents
     useRecentsStore.getState().addToRecents(track);
@@ -788,7 +777,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     const dlHit = useDownloadsStore.getState().getDownloadedTrack(track.id);
     const localUri = dlHit?.localFilePath || (track.audioUrl?.startsWith('file://') ? track.audioUrl : null);
     if (localUri) {
-      console.log('[PlaybackController] playing from local file:', localUri);
       track = { ...track, audioUrl: localUri };
     }
 
@@ -935,15 +923,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       let trackForPlayer = { ...track, audioUrl: playUri };
       set({ currentTrack: trackForPlayer });
 
-      if (__DEV__) {
-        console.log(
-          '[PlaybackController] YouTube play:',
-          fromCdn ? 'CDN (pre-resolved)' : 'proxy',
-          playUri.split('?')[0].slice(0, 96),
-          trackToPlayerDebugPayload(trackForPlayer, playUri, ytVideoId),
-        );
-      }
-
       if (Platform.OS === 'ios') {
         import('@/stores/prefetchStore')
           .then(({ queueYoutubeHeadPrefetchForPlayback }) => {
@@ -1004,11 +983,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
                 (status.isPlaying || (status.positionMillis ?? 0) > 40)
               ) {
                 clearGhostOnce();
-                if (__DEV__) {
-                  console.log(
-                    `[PlaybackLatency] tap→playback ~${Date.now() - playTapAt}ms (${track.title.slice(0, 40)})`,
-                  );
-                }
               }
 
               const progressSec = status.positionMillis / 1000;
@@ -1195,9 +1169,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
               const mergedQueue = q.some((t) => t.id === track.id)
                 ? q.map((t) => (t.id === track.id ? alt : t))
                 : [alt];
-              if (__DEV__) {
-                console.log('[PlaybackController] SoundCloud fallback after vault hard failure:', alt.title);
-              }
+              useDynamicIslandSignal.getState().setScIgnitionGlow(true);
               await get().playTrack(alt, mergedQueue, { expandNowPlaying: false });
             })();
           }
@@ -1213,7 +1185,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
               const stillSameTrack = get().currentTrack?.id === track.id;
               const stillErrored = get().playbackState === 'error';
               if (stillSameTrack && stillErrored) {
-                console.log('[PlaybackController] Auto-skipping unplayable YouTube track');
                 get().next();
               }
             }, 2200);
@@ -1229,19 +1200,12 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     const scUrl = (track as Track & { soundcloudUrl?: string }).soundcloudUrl;
     if (source === 'soundcloud' && scUrl) {
       const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
-      const lqUrl = `${backendBase}/api/soundcloud/audio?url=${encodeURIComponent(scUrl)}&quality=low`;
+      const hqProxyUrl = `${backendBase}/api/soundcloud/audio?url=${encodeURIComponent(scUrl)}&quality=high`;
 
       preResolveSoundcloudStreamUrl(scUrl);
       void resolveSoundcloudStreamUrlForPlayback(scUrl);
-      const directSc = await resolveSoundcloudStreamUrlWithBudget(scUrl, 2_400);
-      const playScUri = directSc ?? lqUrl;
-      if (__DEV__) {
-        console.log(
-          '[PlaybackController] SoundCloud play:',
-          directSc ? 'direct CDN/HLS' : 'proxy LQ',
-          playScUri.split('?')[0].slice(0, 88),
-        );
-      }
+      const directSc = await resolveSoundcloudStreamUrlWithBudget(scUrl, 3_200);
+      const playScUri = directSc ?? hqProxyUrl;
 
       const makeSCStatusCallback = (snd: Audio.Sound) => (status: AVPlaybackStatus) => {
         const { currentTrack } = get();
@@ -1279,9 +1243,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         }
         await sound.playAsync();
         set({ playbackState: 'playing' });
-        console.log(
-          `[SC_IGNITION] Track: ${track.title} - Stream Ready in ${Date.now() - playTapAt}ms`,
-        );
+        console.log(`[SC_IGNITION] ${Date.now() - playTapAt}ms | ${track.title}`);
 
         // Background: download HQ version, then seamlessly switch to it
         (async () => {
@@ -1304,8 +1266,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
               if (!downloaded?.localFilePath) return;
 
               const savedProgress = state.progress;
-              console.log('[PlaybackController] SoundCloud HQ upgrade at', savedProgress.toFixed(1), 's');
-
               // Stop LQ stream
               clearCrossfadeState();
               if (vybeSound) {
@@ -1324,14 +1284,13 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
                 await hqSound.playAsync();
                 vybeSound = hqSound;
                 set({ playbackState: 'playing' });
-                console.log('[PlaybackController] SoundCloud switched to HQ local file');
               } catch (e) {
-                console.warn('[PlaybackController] HQ upgrade failed, staying on LQ stream:', e);
+                console.error('[PlaybackController] SoundCloud HQ upgrade failed:', e);
                 try { await hqSound.unloadAsync(); } catch {}
               }
             });
           } catch (e) {
-            console.warn('[PlaybackController] HQ upgrade setup failed:', e);
+            console.error('[PlaybackController] HQ upgrade setup failed:', e);
           }
         })();
 
@@ -1352,15 +1311,12 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         await adapter.play();
         set({ playbackState: 'playing' });
       } catch (e) {
-        console.log('[PlaybackController] Adapter error:', e);
         set({ playbackState: 'error', error: 'Failed to start playback' });
       }
     } else {
       // VYBE native audio
       try {
         if (track.audioUrl) {
-          console.log('[PlaybackController] Loading VYBE audio:', track.audioUrl);
-
           // Validate the audio URL before loading
           const isValidUrl = track.audioUrl.startsWith('http://') ||
                             track.audioUrl.startsWith('https://') ||
@@ -1423,7 +1379,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
           if (!isStillCurrent()) { sound.stopAsync().catch(() => {}); sound.unloadAsync().catch(() => {}); return; }
           if (status.isLoaded) {
             vybeSound = sound;
-            console.log('[PlaybackController] Audio loaded successfully, duration:', status.durationMillis);
             set({ playbackState: 'playing' });
           } else {
             console.error('[PlaybackController] Audio failed to load:', status);
@@ -1584,7 +1539,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     // Guard against event objects
     if (isEventObject(track) || !isValidTrack(track)) {
       if (__DEV__) {
-        console.warn('[PlaybackController] addToQueue received invalid payload');
       }
       return;
     }
@@ -1600,7 +1554,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     // Guard against event objects
     if (isEventObject(track) || !isValidTrack(track)) {
       if (__DEV__) {
-        console.warn('[PlaybackController] playNext received invalid payload');
       }
       return;
     }
@@ -1680,7 +1633,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     // Guard against event objects being passed as trackId
     if (!isValidId(trackId)) {
       if (__DEV__) {
-        console.warn('[PlaybackController] toggleLike received invalid trackId:', typeof trackId);
       }
       return;
     }
@@ -1719,7 +1671,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     const currentState = get().playbackState;
     // Only update and log if state actually changed
     if (currentState !== state) {
-      console.log('[PlaybackController] State change:', state);
       set({ playbackState: state });
     }
   },
@@ -1760,7 +1711,6 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
         await adapter.prepare(track);
         set({ preparedTrackId: track.id });
       } catch (e) {
-        console.log('[PlaybackController] Prepare error:', e);
       }
     }
   },
@@ -1779,18 +1729,14 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
     // If no progress update in 600ms while "playing", something is wrong
     if (timeSinceProgress > 600) {
-      console.log('[PlaybackController] Silent playback detected! No progress for', timeSinceProgress, 'ms');
-      console.log('[PlaybackController] Current retry count:', silentRetryCount);
 
       if (silentRetryCount < 1) {
         // Auto-retry once
-        console.log('[PlaybackController] Auto-retrying playback...');
         set({ silentRetryCount: silentRetryCount + 1 });
         // Signal to adapter to retry
         return; // Caller should handle retry
       } else {
         // Max retries reached
-        console.log('[PlaybackController] Max silent retries reached, showing error');
         set({
           playbackState: 'error',
           error: 'SoundCloud is being stubborn. Try again or open it in SoundCloud.',
@@ -1968,13 +1914,10 @@ if (Platform.OS === 'ios') {
     const { VybeNowPlaying } = NativeModules;
     if (VybeNowPlaying) {
       const airplayEmitter = new NativeEventEmitter(VybeNowPlaying);
-      console.log('[AirPlay] Listener registered, waiting for onAirPlayConnected event');
       airplayEmitter.addListener('onAirPlayConnected', () => {
         const { currentTrack, progress, duration, playbackState } = usePlaybackController.getState();
-        console.log('[AirPlay] 🎵 onAirPlayConnected fired. currentTrack:', currentTrack?.title, 'artwork:', currentTrack?.artwork);
         usePlaybackController.setState({ isAirPlayConnected: true });
         if (currentTrack) {
-          console.log('[AirPlay] Connected — re-pushing full Now Playing info + artwork');
           updateNowPlaying({
             trackTitle: currentTrack.title,
             artistName: currentTrack.artist,
@@ -1989,11 +1932,10 @@ if (Platform.OS === 'ios') {
         }
       });
       airplayEmitter.addListener('onAirPlayDisconnected', () => {
-        console.log('[AirPlay] 🔇 onAirPlayDisconnected fired');
         usePlaybackController.setState({ isAirPlayConnected: false });
       });
     }
   } catch (e) {
-    console.warn('[AirPlay] Failed to register listener:', e);
+    console.error('[PlaybackController] AirPlay listener registration failed:', e);
   }
 }

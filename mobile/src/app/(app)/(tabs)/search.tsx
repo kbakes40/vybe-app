@@ -101,6 +101,59 @@ function extractSpotifyPlaylistId(input: string): string | null {
 
 const searchMMKV = createMMKVCache('vybe-search');
 
+function VaultMachinedSkeletonBlock() {
+  return (
+    <View style={{ paddingHorizontal: 20, gap: 12 }}>
+      {[0, 1, 2].map((i) => (
+        <View key={i} style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: 10,
+              borderWidth: 1,
+              borderColor: VIBRANT_BLUE,
+              backgroundColor: 'rgba(0,229,255,0.09)',
+              ...Platform.select({
+                ios: {
+                  shadowColor: VIBRANT_BLUE,
+                  shadowOffset: { width: 0, height: 0 },
+                  shadowOpacity: 0.45,
+                  shadowRadius: 8,
+                },
+                android: { elevation: 4 },
+                default: {},
+              }),
+            }}
+          />
+          <View style={{ flex: 1, marginLeft: 12, gap: 8 }}>
+            <View
+              style={{
+                height: 14,
+                width: '68%',
+                borderRadius: 4,
+                borderWidth: 1,
+                borderColor: 'rgba(0,229,255,0.35)',
+                backgroundColor: 'rgba(0,229,255,0.06)',
+              }}
+            />
+            <View
+              style={{
+                height: 12,
+                width: '40%',
+                borderRadius: 4,
+                borderWidth: 1,
+                borderColor: 'rgba(0,229,255,0.22)',
+                backgroundColor: 'rgba(0,229,255,0.04)',
+              }}
+            />
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 const BROWSE_ROW_GAP = 8;
 const BROWSE_HORIZONTAL_PAD = 16;
 
@@ -122,6 +175,10 @@ export default function SearchScreen() {
   const [liveSoundCloudTracks, setLiveSoundCloudTracks] = useState<Track[]>([]);
   const [liveYtMusicTracks, setLiveYtMusicTracks] = useState<Track[]>([]);
   const [liveSearchFetching, setLiveSearchFetching] = useState(false);
+  const [vaultDeferredLatch, setVaultDeferredLatch] = useState(false);
+
+  const scRevealOpacity = useSharedValue(1);
+  const lastScRevealKey = useRef('');
 
   const [spotifyResult, setSpotifyResult] = useState<SpotifyPlaylistResult | null>(null);
   const [spotifyLoading, setSpotifyLoading] = useState(false);
@@ -174,6 +231,9 @@ export default function SearchScreen() {
       setLiveSoundCloudTracks([]);
       setLiveYtMusicTracks([]);
       setLiveSearchFetching(false);
+      setVaultDeferredLatch(false);
+      lastScRevealKey.current = '';
+      scRevealOpacity.value = 1;
       return;
     }
 
@@ -204,7 +264,13 @@ export default function SearchScreen() {
           if (!payload) {
             setLiveSoundCloudTracks([]);
             setLiveYtMusicTracks([]);
+            setVaultDeferredLatch(false);
             return;
+          }
+          if (payload.vaultDeferred) {
+            setVaultDeferredLatch(true);
+          } else {
+            setVaultDeferredLatch(false);
           }
           const scRows = [...(payload.soundcloudTop ?? []), ...(payload.soundcloudRest ?? [])];
           const scMapped: Track[] = scRows.map((t) => ({
@@ -252,6 +318,7 @@ export default function SearchScreen() {
             ytMapped = mapVault(vaultPayload.data.vaultTracks);
             setLiveYtMusicTracks(ytMapped);
           }
+          if (!cancelled) setVaultDeferredLatch(false);
 
           searchMMKV.set(`typed:${q.toLowerCase()}`, { yt: ytMapped, sc: scMapped });
 
@@ -266,7 +333,7 @@ export default function SearchScreen() {
             if (tr.artwork) void Image.prefetch(tr.artwork);
           });
         } catch {
-          /* keep stale rows */
+          if (!cancelled) setVaultDeferredLatch(false);
         } finally {
           if (!cancelled) setLiveSearchFetching(false);
         }
@@ -277,6 +344,21 @@ export default function SearchScreen() {
       clearTimeout(handle);
     };
   }, [searchQuery]);
+
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) return;
+    if (liveSoundCloudTracks.length === 0) return;
+    const k = `${q}|${liveSoundCloudTracks[0]?.id ?? ''}|${liveSoundCloudTracks.length}`;
+    if (lastScRevealKey.current === k) return;
+    lastScRevealKey.current = k;
+    scRevealOpacity.value = 0.8;
+    scRevealOpacity.value = withTiming(1, { duration: 260 });
+  }, [searchQuery, liveSoundCloudTracks]);
+
+  const scListRevealStyle = useAnimatedStyle(() => ({
+    opacity: scRevealOpacity.value,
+  }));
 
   const filteredArtists = searchQuery
     ? artists.filter(a => a.name.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -626,9 +708,16 @@ export default function SearchScreen() {
                         ))}
                       </View>
                     ) : (
-                      liveSoundCloudTracks.map((track) => (
-                        <TrackCard key={track.id} track={track} queue={liveSoundCloudTracks} rowVariant="search" />
-                      ))
+                      <Animated.View style={scListRevealStyle}>
+                        {liveSoundCloudTracks.map((track) => (
+                          <TrackCard
+                            key={track.id}
+                            track={track}
+                            queue={liveSoundCloudTracks}
+                            rowVariant="search"
+                          />
+                        ))}
+                      </Animated.View>
                     )}
                   </View>
                 ) : null}
@@ -639,18 +728,8 @@ export default function SearchScreen() {
                       variant="music"
                       subtitle="Vault Tracks · may need longer Machined Recovery (YouTube)"
                     />
-                    {liveYtMusicTracks.length === 0 && liveSearchFetching ? (
-                      <View style={{ paddingHorizontal: 20, gap: 12 }}>
-                        {[0, 1, 2].map((i) => (
-                          <View key={i} style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <View style={{ width: 56, height: 56, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)' }} />
-                            <View style={{ flex: 1, marginLeft: 12, gap: 8 }}>
-                              <View style={{ height: 14, width: '70%', borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.06)' }} />
-                              <View style={{ height: 12, width: '45%', borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.04)' }} />
-                            </View>
-                          </View>
-                        ))}
-                      </View>
+                    {liveYtMusicTracks.length === 0 && (liveSearchFetching || vaultDeferredLatch) ? (
+                      <VaultMachinedSkeletonBlock />
                     ) : (
                       liveYtMusicTracks.map((track) => (
                         <TrackCard key={track.id} track={track} queue={liveYtMusicTracks} rowVariant="search" />

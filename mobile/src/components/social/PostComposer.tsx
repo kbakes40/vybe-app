@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  InputAccessoryView,
+  Keyboard,
+  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -34,6 +37,12 @@ const NEON_MAGENTA = '#FF00D4';
 const GRAPHITE = '#6B6E73';
 const GRAPHITE_SOFT = 'rgba(107,110,115,0.55)';
 const MAX_LEN = 500;
+/** iOS InputAccessoryView nativeID — POST jumps here when keyboard is up. */
+const ACCESSORY_ID = 'vybe-post-accessory';
+/** Caps the text input growth so it never pushes the track card off-screen. */
+const INPUT_MAX_HEIGHT = 140;
+/** 1px Machined Border for the compact track preview card. */
+const PREVIEW_BORDER = 'rgba(255,255,255,0.20)';
 
 /** Drawer-like sheet motion — mass 1, damping 20, stiffness 150. */
 const SHEET_SPRING = { mass: 1, damping: 20, stiffness: 150 } as const;
@@ -79,6 +88,24 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
   const [mediaUri, setMediaUri] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  // Track keyboard visibility so the inline footer POST can collapse and
+  // the iOS accessory bar takes over (saves screen real estate while typing).
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => setKeyboardVisible(true),
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => setKeyboardVisible(false),
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   const currentTrack = usePlaybackController((s) => s.currentTrack);
   const flashSuccess = useDynamicIslandSignal((s) => s.flashSuccess);
@@ -246,7 +273,71 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
   const charsLeft = MAX_LEN - text.length;
   const canSubmit = text.trim().length > 0 && !submitting;
 
+  // Compact preview shown ABOVE the text input — keeps text + track always
+  // visible at the top so the user knows what they're attaching.
+  const attachedPreview = vaultPick
+    ? {
+        title: vaultPick.title,
+        artist: vaultPick.artist,
+        artwork: vaultPick.artwork,
+        source: 'vault' as const,
+      }
+    : attachNowPlaying && currentTrack
+      ? {
+          title: currentTrack.title,
+          artist: currentTrack.artist,
+          artwork: currentTrack.artwork,
+          source: 'now-playing' as const,
+        }
+      : null;
+
+  const clearAttachedPreview = useCallback(() => {
+    void Haptics.selectionAsync();
+    setVaultPick(null);
+    setAttachNowPlaying(false);
+  }, []);
+
+  const renderTrackPreview = () =>
+    attachedPreview ? (
+      <View style={styles.trackPreviewCard}>
+        {attachedPreview.artwork ? (
+          <Image
+            source={{ uri: attachedPreview.artwork }}
+            style={styles.trackPreviewArt}
+            contentFit="cover"
+          />
+        ) : (
+          <View style={[styles.trackPreviewArt, { backgroundColor: '#111' }]} />
+        )}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.trackPreviewSource} numberOfLines={1}>
+            {attachedPreview.source === 'vault' ? 'VAULT' : 'NOW PLAYING'}
+          </Text>
+          <Text style={styles.trackPreviewTitle} numberOfLines={1}>
+            {attachedPreview.title}
+          </Text>
+          <Text style={styles.trackPreviewArtist} numberOfLines={1}>
+            {attachedPreview.artist}
+          </Text>
+        </View>
+        <Pressable
+          hitSlop={8}
+          style={styles.trackPreviewClear}
+          onPress={clearAttachedPreview}
+          accessibilityLabel="Remove attached track"
+        >
+          <X size={14} color={GRAPHITE_SOFT} strokeWidth={2.4} />
+        </Pressable>
+      </View>
+    ) : null;
+
+  // Footer POST is hidden while the keyboard is up — the InputAccessoryView
+  // takes over (iOS) or the floating header POST shows (Android).
+  const showInlineFooterPost = !keyboardVisible;
+  const showHeaderPost = keyboardVisible && Platform.OS !== 'ios';
+
   return (
+    <>
     <BottomSheetModal
       ref={sheetRef}
       name="postComposer"
@@ -254,7 +345,6 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
       snapPoints={snapPoints}
       enablePanDownToClose
       enableDismissOnClose
-      keyboardBehavior="interactive"
       keyboardBlurBehavior="restore"
       android_keyboardInputMode="adjustResize"
       topInset={insets.top}
@@ -266,22 +356,54 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
       onDismiss={handleDismiss}
       onChange={handleSheetChange}
     >
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
+        keyboardVerticalOffset={0}
+      >
       <BottomSheetScrollView
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: 12 + insets.bottom }]}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: 12 + insets.bottom, justifyContent: 'flex-start' },
+        ]}
       >
         <View style={styles.headerRow}>
           <Text style={styles.headerTitle}>Fire post</Text>
-          <Pressable
-            onPress={() => sheetRef.current?.dismiss(animationConfigs)}
-            hitSlop={10}
-            style={styles.closeBtn}
-            accessibilityLabel="Close composer"
-          >
-            <X size={18} color={GRAPHITE_SOFT} strokeWidth={2.4} />
-          </Pressable>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            {showHeaderPost ? (
+              <Pressable
+                onPress={handleSubmit}
+                disabled={!canSubmit}
+                hitSlop={6}
+                style={({ pressed }) => [
+                  styles.headerPostBtn,
+                  !canSubmit && styles.headerPostBtnDisabled,
+                  pressed && canSubmit && { opacity: 0.85 },
+                ]}
+              >
+                {submitting ? (
+                  <ActivityIndicator size="small" color={VIBRANT_BLUE} />
+                ) : (
+                  <Text style={styles.headerPostText}>POST</Text>
+                )}
+              </Pressable>
+            ) : null}
+            <Pressable
+              onPress={() => sheetRef.current?.dismiss(animationConfigs)}
+              hitSlop={10}
+              style={styles.closeBtn}
+              accessibilityLabel="Close composer"
+            >
+              <X size={18} color={GRAPHITE_SOFT} strokeWidth={2.4} />
+            </Pressable>
+          </View>
         </View>
+
+        {/* Pinned track header — sits directly above the text input so both
+            text and attached track are always visible at the top. */}
+        {renderTrackPreview()}
 
         <Text style={styles.sectionLabel}>Text</Text>
         <BottomSheetTextInput
@@ -290,12 +412,13 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
           onChangeText={setText}
           placeholder="What's on your mind?"
           placeholderTextColor={GRAPHITE}
-          style={styles.input}
+          style={[styles.input, { maxHeight: INPUT_MAX_HEIGHT }]}
           multiline
           maxLength={MAX_LEN}
           autoCapitalize="sentences"
           selectionColor={VIBRANT_BLUE}
           editable={!submitting}
+          inputAccessoryViewID={Platform.OS === 'ios' ? ACCESSORY_ID : undefined}
         />
 
         <Text style={[styles.sectionLabel, styles.sectionSpaced]}>Attach track</Text>
@@ -388,33 +511,65 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
           )}
         </View>
 
-        <View style={styles.footerRow}>
-          <Text style={[styles.charsLeft, charsLeft < 60 ? { color: NEON_MAGENTA } : null]}>{charsLeft}</Text>
-          <Pressable
-            onPress={handleSubmit}
-            disabled={!canSubmit}
-            style={({ pressed }) => [
-              styles.submitBtn,
-              !canSubmit && styles.submitBtnDisabled,
-              pressed && canSubmit && { opacity: 0.88 },
-            ]}
-          >
-            {Platform.OS === 'ios' ? (
-              <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
-            ) : (
-              <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.35)' }]} />
-            )}
-            {submitting ? (
-              <ActivityIndicator size="small" color={VIBRANT_BLUE} />
-            ) : (
-              <Text style={styles.submitText}>POST</Text>
-            )}
-          </Pressable>
-        </View>
+        {showInlineFooterPost ? (
+          <View style={styles.footerRow}>
+            <Text style={[styles.charsLeft, charsLeft < 60 ? { color: NEON_MAGENTA } : null]}>{charsLeft}</Text>
+            <Pressable
+              onPress={handleSubmit}
+              disabled={!canSubmit}
+              style={({ pressed }) => [
+                styles.submitBtn,
+                !canSubmit && styles.submitBtnDisabled,
+                pressed && canSubmit && { opacity: 0.88 },
+              ]}
+            >
+              {Platform.OS === 'ios' ? (
+                <BlurView intensity={24} tint="dark" style={StyleSheet.absoluteFill} />
+              ) : (
+                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.35)' }]} />
+              )}
+              {submitting ? (
+                <ActivityIndicator size="small" color={VIBRANT_BLUE} />
+              ) : (
+                <Text style={styles.submitText}>POST</Text>
+              )}
+            </Pressable>
+          </View>
+        ) : null}
 
         {errorMsg ? <Text style={styles.errorText}>{errorMsg}</Text> : null}
       </BottomSheetScrollView>
+      </KeyboardAvoidingView>
     </BottomSheetModal>
+
+    {/* iOS keyboard accessory bar — POST is reachable without leaving the
+        keyboard, freeing the screen up for text + track preview. */}
+    {Platform.OS === 'ios' ? (
+      <InputAccessoryView nativeID={ACCESSORY_ID} backgroundColor={OLED_BLACK}>
+        <View style={styles.accessoryBar}>
+          <Text style={[styles.accessoryChars, charsLeft < 60 ? { color: NEON_MAGENTA } : null]}>
+            {charsLeft}
+          </Text>
+          <Pressable
+            onPress={handleSubmit}
+            disabled={!canSubmit}
+            hitSlop={6}
+            style={({ pressed }) => [
+              styles.accessoryPostBtn,
+              !canSubmit && styles.accessoryPostBtnDisabled,
+              pressed && canSubmit && { opacity: 0.85 },
+            ]}
+          >
+            {submitting ? (
+              <ActivityIndicator size="small" color={VIBRANT_BLUE} />
+            ) : (
+              <Text style={styles.accessoryPostText}>POST</Text>
+            )}
+          </Pressable>
+        </View>
+      </InputAccessoryView>
+    ) : null}
+    </>
   );
 }
 
@@ -430,8 +585,119 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingTop: 4,
+    paddingTop: 12,
     paddingBottom: 8,
+  },
+  trackPreviewCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: PREVIEW_BORDER,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    marginBottom: 12,
+  },
+  trackPreviewArt: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    marginRight: 10,
+    backgroundColor: '#111',
+  },
+  trackPreviewSource: {
+    color: VIBRANT_BLUE,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+    marginBottom: 1,
+  },
+  trackPreviewTitle: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: -0.1,
+  },
+  trackPreviewArtist: {
+    color: GRAPHITE_SOFT,
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  trackPreviewClear: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    marginLeft: 6,
+  },
+  headerPostBtn: {
+    height: 30,
+    paddingHorizontal: 14,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,229,255,0.14)',
+    borderWidth: 1,
+    borderColor: VIBRANT_BLUE,
+  },
+  headerPostBtnDisabled: {
+    borderColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  headerPostText: {
+    color: VIBRANT_BLUE,
+    fontWeight: '900',
+    fontSize: 11,
+    letterSpacing: 1.4,
+  },
+  accessoryBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0,229,255,0.18)',
+    backgroundColor: OLED_BLACK,
+  },
+  accessoryChars: {
+    color: GRAPHITE_SOFT,
+    fontSize: 13,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  accessoryPostBtn: {
+    minWidth: 84,
+    height: 34,
+    paddingHorizontal: 18,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,229,255,0.18)',
+    borderWidth: 1,
+    borderColor: VIBRANT_BLUE,
+    shadowColor: VIBRANT_BLUE,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 8,
+  },
+  accessoryPostBtnDisabled: {
+    borderColor: 'rgba(255,255,255,0.15)',
+    shadowOpacity: 0,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  accessoryPostText: {
+    color: VIBRANT_BLUE,
+    fontWeight: '900',
+    fontSize: 12,
+    letterSpacing: 1.6,
   },
   headerRow: {
     flexDirection: 'row',

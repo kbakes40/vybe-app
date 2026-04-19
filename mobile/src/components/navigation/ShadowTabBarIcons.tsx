@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, Platform, StyleSheet } from 'react-native';
 import Svg, { Path, Circle, Line } from 'react-native-svg';
 import { Radar } from 'lucide-react-native';
@@ -12,6 +12,7 @@ import Animated, {
   withSequence,
   withTiming,
 } from 'react-native-reanimated';
+import { useTabBarBloomStore } from '@/stores/tabBarBloomStore';
 
 /** Shadow tab chrome — shared across tab bar icons. */
 export const SHADOW_TAB_STROKE = 1.5;
@@ -26,11 +27,8 @@ const MAGENTA_HEARTBEAT = '#FF00FF';
 /** Base iOS shadow radius; doubles briefly on focus (bloom). */
 const SHADOW_R_DEFAULT = 6;
 const SHADOW_R_VYBE = 9;
-const GLOW_OPACITY_MAX = 0.44;
-/** Inactive tab: glow at 60% of design max. */
-const GLOW_INACTIVE_MULT = 0.6;
-/** Central Vybe tab — extra dim when inactive. */
-const VYBE_INACTIVE_DIM = 0.52;
+/** Permanent Machined Blue shadowOpacity floor (all tabs). */
+const TAB_GLOW_BASE = 0.6;
 
 const BLOOM_IN_MS = 150;
 const BLOOM_OUT_MS = 150;
@@ -38,18 +36,21 @@ const BLOOM_OUT_MS = 150;
 type TabIconVariant = 'default' | 'vybe';
 
 /**
- * Tab icon shell — permanent Machined Blue 1px ring + outer glow (inactive 0.6 / active 1.0),
- * Reanimated bloom on focus, magenta heartbeat dot under active tab.
- * `variant="vybe"`: stronger ring + base glow; active uses slow breathing (0.8–1.0).
+ * Tab icon shell — permanent Machined Blue 1px ring + outer glow (baseline 0.6 opacity),
+ * press-driven 1.2× bloom + doubled shadow (300ms), magenta heartbeat dot under active tab.
+ * `variant="vybe"`: stronger ring + breathing glow when active.
  */
 export function ShadowTabIconShell({
   focused,
   variant = 'default',
+  pressRoute,
   children,
 }: {
   focused: boolean;
   /** Central Vybe (discover) — stronger ring + breathing glow when active. */
   variant?: TabIconVariant;
+  /** Route name — matches `useTabBarBloomStore.pulse(route)` for press bloom. */
+  pressRoute?: string;
   children: React.ReactNode;
 }) {
   const isVybe = variant === 'vybe';
@@ -61,6 +62,7 @@ export function ShadowTabIconShell({
   const bloomShadowR = useSharedValue(baseRadius);
   const breath = useSharedValue(1);
   const dotPulse = useSharedValue(1);
+  const lastPulseAtRef = useRef(0);
 
   useEffect(() => {
     focusedSv.value = focused ? 1 : 0;
@@ -71,7 +73,13 @@ export function ShadowTabIconShell({
   }, [isVybe, variantVybeSv]);
 
   useEffect(() => {
-    if (focused) {
+    if (!pressRoute) return undefined;
+    const unsub = useTabBarBloomStore.subscribe((s) => {
+      if (s.pulseRoute !== pressRoute) return;
+      if (s.pulseAt === lastPulseAtRef.current) return;
+      lastPulseAtRef.current = s.pulseAt;
+      cancelAnimation(bloomScale);
+      cancelAnimation(bloomShadowR);
       bloomScale.value = withSequence(
         withTiming(1.2, { duration: BLOOM_IN_MS }),
         withTiming(1, { duration: BLOOM_OUT_MS }),
@@ -80,13 +88,9 @@ export function ShadowTabIconShell({
         withTiming(baseRadius * 2, { duration: BLOOM_IN_MS }),
         withTiming(baseRadius, { duration: BLOOM_OUT_MS }),
       );
-    } else {
-      cancelAnimation(bloomScale);
-      cancelAnimation(bloomShadowR);
-      bloomScale.value = withTiming(1, { duration: 120 });
-      bloomShadowR.value = withTiming(baseRadius, { duration: 120 });
-    }
-  }, [focused, baseRadius, bloomScale, bloomShadowR]);
+    });
+    return unsub;
+  }, [pressRoute, baseRadius, bloomScale, bloomShadowR]);
 
   useEffect(() => {
     if (focused && isVybe) {
@@ -123,12 +127,8 @@ export function ShadowTabIconShell({
   const shellAnimatedStyle = useAnimatedStyle(() => {
     const f = focusedSv.value;
     const vy = variantVybeSv.value;
-    const inactiveBase = GLOW_OPACITY_MAX * GLOW_INACTIVE_MULT;
-    const inactiveGlow = inactiveBase * (vy > 0.5 ? VYBE_INACTIVE_DIM : 1);
-    const activeGlowDefault = GLOW_OPACITY_MAX;
-    const activeGlowVybe = GLOW_OPACITY_MAX * breath.value;
-    const activeGlow = vy > 0.5 ? activeGlowVybe : activeGlowDefault;
-    const shadowOpacity = inactiveGlow + (activeGlow - inactiveGlow) * f;
+    const breathMix = vy > 0.5 ? breath.value : 1;
+    const shadowOpacity = Math.min(1, TAB_GLOW_BASE + f * 0.36 * breathMix);
 
     return {
       transform: [{ scale: bloomScale.value }],
@@ -300,7 +300,7 @@ const styles = StyleSheet.create({
     padding: 2,
   },
   heartbeatDot: {
-    marginTop: 5,
+    marginTop: 4,
     width: 6,
     height: 6,
     borderRadius: 3,

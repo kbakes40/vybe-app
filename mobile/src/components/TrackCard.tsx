@@ -5,6 +5,11 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
+  withRepeat,
+  withSequence,
+  withTiming,
+  cancelAnimation,
+  Easing,
 } from 'react-native-reanimated';
 import { Track } from '@/types/music';
 import { usePlaybackController } from '@/stores/playbackController';
@@ -12,6 +17,8 @@ import { useSoundCloudPreloadStore } from '@/stores/soundcloudPreloadStore';
 import { formatDuration } from '@/data/mockData';
 import { Play } from 'lucide-react-native';
 import { DownloadButton } from './DownloadButton';
+import { MachinedCloudIcon } from '@/components/MachinedCloudIcon';
+import { useDownloadsStore } from '@/stores/downloadsStore';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -79,8 +86,11 @@ function trackCardPropsEqual(prev: TrackCardProps, next: TrackCardProps): boolea
   return true;
 }
 
+const VAULT_MAGENTA = '#FF00FF';
+
 function TrackCardInner({ track, queue, showArtwork = true, index, rowVariant = 'default' }: TrackCardProps) {
   const scale = useSharedValue(1);
+  const vaultRing = useSharedValue(0);
   const playTrack = usePlaybackController(s => s.playTrack);
   const isCurrentTrack = usePlaybackController(s => s.currentTrack?.id === track.id);
   const isPlaying = usePlaybackController(
@@ -88,6 +98,7 @@ function TrackCardInner({ track, queue, showArtwork = true, index, rowVariant = 
   );
   const preloadTrack = useSoundCloudPreloadStore(s => s.preloadTrack);
   const isPreloaded = useSoundCloudPreloadStore(s => s.isPreloaded);
+  const vaultCloudPulse = useDownloadsStore((s) => !!s.vaultCloudActiveById[track.id]);
 
   // Preload SoundCloud tracks when they become visible
   useEffect(() => {
@@ -109,8 +120,31 @@ function TrackCardInner({ track, queue, showArtwork = true, index, rowVariant = 
     }
   }, [track.id, track.source, track.soundcloudUrl, track.artwork, track.title, track.artist, track.duration, preloadTrack, isPreloaded]);
 
+  useEffect(() => {
+    if (vaultCloudPulse) {
+      vaultRing.value = withRepeat(
+        withSequence(
+          withTiming(1, { duration: 380, easing: Easing.inOut(Easing.quad) }),
+          withTiming(0.35, { duration: 420, easing: Easing.inOut(Easing.quad) }),
+        ),
+        -1,
+        true,
+      );
+    } else {
+      cancelAnimation(vaultRing);
+      vaultRing.value = 0;
+    }
+  }, [vaultCloudPulse, vaultRing]);
+
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
+  }));
+
+  const vaultRingStyle = useAnimatedStyle(() => ({
+    borderColor: `rgba(255,0,255,${0.28 + 0.55 * vaultRing.value})`,
+    shadowColor: VAULT_MAGENTA,
+    shadowOpacity: 0.35 + 0.45 * vaultRing.value,
+    shadowRadius: 4 + 6 * vaultRing.value,
   }));
 
   const handlePress = useCallback(() => {
@@ -126,7 +160,7 @@ function TrackCardInner({ track, queue, showArtwork = true, index, rowVariant = 
       onPressOut={() => {
         scale.value = withSpring(1);
       }}
-      style={animatedStyle}
+      style={[animatedStyle, vaultCloudPulse ? { borderWidth: 1, borderRadius: 14 } : null, vaultCloudPulse ? vaultRingStyle : null]}
       className={`flex-row items-center px-4 ${rowVariant === 'search' ? 'py-3.5' : 'py-3'}`}
     >
       {index !== undefined ? (
@@ -178,6 +212,12 @@ function TrackCardInner({ track, queue, showArtwork = true, index, rowVariant = 
         <Text className="text-white/40 text-sm mr-2">
           {formatDuration(track.duration)}
         </Text>
+      ) : null}
+
+      {vaultCloudPulse ? (
+        <View style={{ marginRight: 6 }} pointerEvents="none">
+          <MachinedCloudIcon size={16} strokeWidth={1} />
+        </View>
       ) : null}
 
       <View style={{ marginLeft: 4 }} onStartShouldSetResponder={() => true}>

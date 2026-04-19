@@ -179,6 +179,7 @@ interface PlaylistTrack {
   channelId?: string;
   thumbnailUrl: string;
   publishedAt: string;
+  soundcloudUrl?: string;
 }
 
 interface CuratedPlaylist {
@@ -186,9 +187,29 @@ interface CuratedPlaylist {
   name: string;
   thumbnailUrl: string;
   tracks: PlaylistTrack[];
+  /** Present for SoundCloud set playlists — used for cache + refetch. */
+  soundcloudSetUrl?: string;
 }
 
 function toTrack(t: PlaylistTrack, playlist: CuratedPlaylist): Track {
+  const scUrl = t.soundcloudUrl?.trim();
+  if (scUrl) {
+    return {
+      id: `sc-${t.videoId}`,
+      title: t.title,
+      artist: t.channelName,
+      artistId: '',
+      album: playlist.name,
+      albumId: `sc-pl-${playlist.playlistId}`,
+      artwork: t.thumbnailUrl,
+      duration: 0,
+      isLiked: false,
+      source: 'soundcloud' as const,
+      soundcloudUrl: scUrl,
+      soundcloudId: t.videoId,
+      audioUrl: '',
+    };
+  }
   return {
     id: `ytm-${t.videoId}`,
     title: t.title,
@@ -503,9 +524,15 @@ function singleRouteParam(v: string | string[] | undefined): string {
 export default function PlaylistDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ id?: string; playlistId?: string; playlistName?: string }>();
+  const params = useLocalSearchParams<{
+    id?: string;
+    playlistId?: string;
+    playlistName?: string;
+    scSet?: string;
+  }>();
   /** Home uses `?id=`, Heavy Rotation uses `params.playlistId` — both must work. */
   const id = singleRouteParam(params.id) || singleRouteParam(params.playlistId);
+  const scSet = singleRouteParam(params.scSet);
   const routePlaylistName = singleRouteParam(params.playlistName);
 
   const [playlist, setPlaylist] = useState<CuratedPlaylist | null>(null);
@@ -532,6 +559,33 @@ export default function PlaylistDetailScreen() {
 
   useEffect(() => {
     async function load() {
+      if (scSet) {
+        try {
+          const decoded = decodeURIComponent(scSet);
+          const data = await api.get<{
+            tracks: PlaylistTrack[];
+            playlistTitle: string;
+            thumbnailUrl: string;
+            canonicalUrl: string;
+            playlistId: string;
+          }>(`/api/soundcloud/playlist-tracks?url=${encodeURIComponent(decoded)}`);
+          if (data?.tracks?.length) {
+            setPlaylist({
+              playlistId: data.playlistId || `sc-${data.canonicalUrl.slice(-32)}`,
+              name: data.playlistTitle || 'SoundCloud playlist',
+              thumbnailUrl: data.thumbnailUrl || data.tracks[0]?.thumbnailUrl || '',
+              soundcloudSetUrl: data.canonicalUrl,
+              tracks: data.tracks,
+            });
+          }
+        } catch (e) {
+          console.error('[PlaylistDetail] SoundCloud load error:', e);
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
+
       if (!id) {
         setLoading(false);
         return;
@@ -541,7 +595,7 @@ export default function PlaylistDetailScreen() {
         // instant content and survives backend response drift.
         const cached = [
           homeMMKV.get<CuratedPlaylist[]>('curatedPlaylists', TTL.CURATED)?.value,
-          discoverMMKV.get<CuratedPlaylist[]>('ytCuratedPlaylists', TTL.CURATED)?.value,
+          discoverMMKV.get<CuratedPlaylist[]>('scCuratedPlaylists', TTL.CURATED)?.value,
         ];
         for (const list of cached) {
           const hit = list?.find(p => p.playlistId === id);
@@ -581,7 +635,7 @@ export default function PlaylistDetailScreen() {
       }
     }
     void load();
-  }, [id]);
+  }, [id, scSet]);
 
   const tracks = useMemo(() => {
     if (!playlist) return [] as Track[];
@@ -596,8 +650,13 @@ export default function PlaylistDetailScreen() {
 
   const playlistTitleForAds = playlist?.name?.trim() || routePlaylistName?.trim() || '';
   const flashListData = useMemo(
-    () => buildPlaylistDetailFlashRows(tracks, playlistTitleForAds, id || undefined),
-    [tracks, playlistTitleForAds, id],
+    () =>
+      buildPlaylistDetailFlashRows(
+        tracks,
+        playlistTitleForAds,
+        id || playlist?.playlistId || (scSet ? 'sc-route' : undefined),
+      ),
+    [tracks, playlistTitleForAds, id, scSet, playlist?.playlistId],
   );
 
   const mergedFlashData = useMemo((): PlaylistDetailListItem[] => {
@@ -1180,7 +1239,7 @@ export default function PlaylistDetailScreen() {
     return (
       <View style={{ flex: 1, backgroundColor: '#0A0A0A', alignItems: 'center', justifyContent: 'center' }}>
         <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 16 }}>
-          {!id ? 'Missing playlist link' : 'Playlist not found'}
+          {!id && !scSet ? 'Missing playlist link' : 'Playlist not found'}
         </Text>
         <Pressable onPress={() => router.back()} style={{ marginTop: 16 }}>
           <Text style={{ color: '#FF0000', fontSize: 16 }}>Go Back</Text>

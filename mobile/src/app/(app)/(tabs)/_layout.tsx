@@ -23,6 +23,7 @@ import type { BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
 import { TAB_BAR_HEIGHT } from '@/constants/Layout';
 import { useKeyboardChromeStore } from '@/stores/keyboardChromeStore';
 import { ShadowMachinedTabBar } from '@/components/navigation/ShadowMachinedTabBar';
+import { useTabBarBloomStore } from '@/stores/tabBarBloomStore';
 
 const VYBE_TAB_ICON = require('../../../../assets/images/icon.png');
 
@@ -49,8 +50,8 @@ const ICON_SIZE = 28;
  * Tab bar button — Shadow theme uses light haptic on every press.
  * Forwards children unchanged (icons + labels come from `screenOptions`).
  */
-function HapticTabButton(props: BottomTabBarButtonProps) {
-  const { children, onPress, ...rest } = props;
+function HapticTabButton(props: BottomTabBarButtonProps & { bloomRoute?: string }) {
+  const { children, onPress, bloomRoute, ...rest } = props;
 
   return (
     <Pressable
@@ -58,6 +59,7 @@ function HapticTabButton(props: BottomTabBarButtonProps) {
       unstable_pressDelay={0}
       onPressIn={() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        if (bloomRoute) useTabBarBloomStore.getState().pulse(bloomRoute);
       }}
       onPress={onPress}
       style={styles.tabButton}
@@ -67,8 +69,8 @@ function HapticTabButton(props: BottomTabBarButtonProps) {
   );
 }
 
-function SearchTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: () => void }) {
-  const { children, onPress, accessibilityState, onAlreadySelected, ...rest } = props;
+function SearchTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: () => void; bloomRoute?: string }) {
+  const { children, onPress, accessibilityState, onAlreadySelected, bloomRoute, ...rest } = props;
   const isSelected = accessibilityState?.selected ?? false;
 
   const handlePress = (e: Parameters<NonNullable<typeof onPress>>[0]) => {
@@ -85,6 +87,7 @@ function SearchTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: 
       unstable_pressDelay={0}
       onPressIn={() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        if (bloomRoute) useTabBarBloomStore.getState().pulse(bloomRoute);
       }}
       onPress={handlePress}
       style={styles.tabButton}
@@ -94,8 +97,8 @@ function SearchTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: 
   );
 }
 
-function LibraryTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: () => void }) {
-  const { children, onPress, accessibilityState, onAlreadySelected, ...rest } = props;
+function LibraryTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: () => void; bloomRoute?: string }) {
+  const { children, onPress, accessibilityState, onAlreadySelected, bloomRoute, ...rest } = props;
   const isSelected = accessibilityState?.selected ?? false;
   const lastTapRef = React.useRef(0);
 
@@ -117,6 +120,7 @@ function LibraryTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?:
       unstable_pressDelay={0}
       onPressIn={() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        if (bloomRoute) useTabBarBloomStore.getState().pulse(bloomRoute);
       }}
       onPress={handlePress}
       style={styles.tabButton}
@@ -317,12 +321,12 @@ export default function TabLayout() {
           name="index"
           options={{
             title: 'Home',
-            tabBarButton: (props) => <HapticTabButton {...props} />,
+            tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="index" />,
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
               const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
               return (
-                <ShadowTabIconShell focused={focused}>
+                <ShadowTabIconShell focused={focused} pressRoute="index">
                   <ShadowHomeIcon size={dim} color={c} />
                 </ShadowTabIconShell>
               );
@@ -334,13 +338,17 @@ export default function TabLayout() {
           options={{
             title: 'Search',
             tabBarButton: (props) => (
-              <SearchTabButton {...props} onAlreadySelected={() => setShowSearchMenu(true)} />
+              <SearchTabButton
+                {...props}
+                bloomRoute="search"
+                onAlreadySelected={() => setShowSearchMenu(true)}
+              />
             ),
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
               const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
               return (
-                <ShadowTabIconShell focused={focused}>
+                <ShadowTabIconShell focused={focused} pressRoute="search">
                   <ShadowSearchIcon size={dim} color={c} />
                 </ShadowTabIconShell>
               );
@@ -351,11 +359,11 @@ export default function TabLayout() {
           name="discover"
           options={{
             title: 'Discover',
-            tabBarButton: (props) => <HapticTabButton {...props} />,
+            tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="discover" />,
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
               return (
-                <ShadowTabIconShell focused={focused} variant="vybe">
+                <ShadowTabIconShell focused={focused} variant="vybe" pressRoute="discover">
                   <Image
                     source={VYBE_TAB_ICON}
                     style={{
@@ -378,6 +386,7 @@ export default function TabLayout() {
             tabBarButton: (props) => (
               <LibraryTabButton
                 {...props}
+                bloomRoute="library"
                 onAlreadySelected={() => setShowViewMenu(true)}
               />
             ),
@@ -385,7 +394,7 @@ export default function TabLayout() {
               const dim = size ?? ICON_SIZE;
               const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
               return (
-                <ShadowTabIconShell focused={focused}>
+                <ShadowTabIconShell focused={focused} pressRoute="library">
                   <ShadowLibraryIcon size={dim} color={c} />
                 </ShadowTabIconShell>
               );
@@ -396,12 +405,12 @@ export default function TabLayout() {
           name="profile"
           options={{
             title: 'Profile',
-            tabBarButton: (props) => <HapticTabButton {...props} />,
+            tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="profile" />,
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
               const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
               return (
-                <ShadowTabIconShell focused={focused}>
+                <ShadowTabIconShell focused={focused} pressRoute="profile">
                   <ShadowProfileIcon size={dim} color={c} />
                 </ShadowTabIconShell>
               );
@@ -412,12 +421,12 @@ export default function TabLayout() {
           name="social"
           options={{
             title: 'Social',
-            tabBarButton: (props) => <HapticTabButton {...props} />,
+            tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="social" />,
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
               const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
               return (
-                <ShadowTabIconShell focused={focused}>
+                <ShadowTabIconShell focused={focused} pressRoute="social">
                   <ShadowSparkleIcon size={dim} color={c} />
                 </ShadowTabIconShell>
               );

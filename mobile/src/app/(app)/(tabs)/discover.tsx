@@ -286,7 +286,7 @@ function DiscoverVaultCollectionsRow({
   playlists,
   router,
 }: {
-  playlists: CuratedPlaylist[];
+  playlists: SoundcloudCuratedPlaylist[];
   router: Router;
 }) {
   const ready = playlists.filter((p) => p.tracks.length > 0);
@@ -304,7 +304,7 @@ function DiscoverVaultCollectionsRow({
   const gap = 10;
   const cardW = (SCREEN_W - H_PAD * 2 - gap * 2) / 3;
 
-  const rows: { key: string; title: string; sub: string; pl: CuratedPlaylist }[] = [
+  const rows: { key: string; title: string; sub: string; pl: SoundcloudCuratedPlaylist }[] = [
     { key: 'midnight', title: 'Midnight Studio', sub: 'Industrial / focus', pl: midnight },
     { key: 'hi', title: 'High-Performance', sub: 'High-energy / gym', pl: hi },
     { key: 'ambient', title: 'Ambient Heat', sub: 'Lo-fi / relax', pl: ambient },
@@ -339,7 +339,9 @@ function DiscoverVaultCollectionsRow({
               key={key}
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                router.push(`/(app)/playlist-detail?id=${pl.playlistId}` as never);
+                router.push(
+                  `/(app)/playlist-detail?scSet=${encodeURIComponent(pl.soundcloudSetUrl)}` as never,
+                );
               }}
               style={{
                 width: cardW,
@@ -364,7 +366,7 @@ function DiscoverVaultCollectionsRow({
                   pointerEvents="none"
                 />
                 <View style={{ position: 'absolute', top: 8, right: 8 }} pointerEvents="none">
-                  <SourceCornerBadge source="youtube_music" />
+                  <SourceCornerBadge source="soundcloud" />
                 </View>
                 <View
                   pointerEvents="none"
@@ -398,28 +400,28 @@ function DiscoverVaultCollectionsRow({
 }
 
 function DiscoverVaultExclusivesRail({
-  tracks,
+  scTracks,
   playTrack,
 }: {
-  tracks: PlaylistTrack[];
+  scTracks: SCSearchTrack[];
   playTrack: (track: Track, queue?: Track[], options?: { expandNowPlaying?: boolean }) => Promise<void>;
 }) {
-  const slice = tracks.slice(0, 16).map((t) => normalizeYtmThumb(t as YtmPlaylistTrack));
+  const slice = scTracks.slice(0, 16);
   if (slice.length === 0) return null;
 
   const queue: Track[] = slice.map((t) => ({
-    id: `ytm-${t.videoId}`,
+    id: `sc-${t.trackId}`,
     title: t.title,
-    artist: t.channelName,
+    artist: t.artist,
     artistId: '',
     album: '',
     albumId: '',
-    artwork: t.thumbnailUrl,
-    duration: 0,
+    artwork: t.artwork,
+    duration: t.duration,
     isLiked: false,
-    source: 'youtube_music' as const,
-    youtubeMusicId: t.videoId,
-    youtubeId: t.videoId,
+    source: 'soundcloud' as const,
+    soundcloudUrl: t.soundcloudUrl,
+    soundcloudId: t.trackId,
     audioUrl: '',
   }));
 
@@ -438,10 +440,10 @@ function DiscoverVaultExclusivesRail({
           textTransform: 'uppercase',
         }}
       >
-        Vault exclusives
+        SoundCloud vault
       </MachinedGradientText>
       <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, fontWeight: '600', paddingHorizontal: H_PAD, marginBottom: 10 }}>
-        Cloud-locked picks from your taste graph
+        High-speed streams — SoundCloud-first picks
       </Text>
       <ScrollView
         horizontal
@@ -450,10 +452,10 @@ function DiscoverVaultExclusivesRail({
         style={{ flexGrow: 0 }}
       >
         {slice.map((t) => {
-          const self = queue.find((q) => q.id === `ytm-${t.videoId}`)!;
+          const self = queue.find((q) => q.id === `sc-${t.trackId}`)!;
           return (
             <Pressable
-              key={t.videoId}
+              key={t.trackId}
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 void playTrack(self, queue);
@@ -471,16 +473,16 @@ function DiscoverVaultExclusivesRail({
                   borderColor: 'rgba(0,229,255,0.5)',
                 }}
               >
-                <ShadowArtworkImage source={{ uri: t.thumbnailUrl }} style={{ width: dim, height: dim }} contentFit="cover" />
+                <ShadowArtworkImage source={{ uri: t.artwork }} style={{ width: dim, height: dim }} contentFit="cover" />
                 <View style={{ position: 'absolute', top: 8, right: 8 }} pointerEvents="none">
-                  <SourceCornerBadge source="youtube_music" />
+                  <SourceCornerBadge source="soundcloud" />
                 </View>
               </View>
               <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800', marginTop: 8, width: dim }} numberOfLines={1}>
                 {t.title}
               </Text>
               <Text style={{ color: '#888', fontSize: 11, width: dim }} numberOfLines={1}>
-                {t.channelName}
+                {t.artist}
               </Text>
             </Pressable>
           );
@@ -500,12 +502,20 @@ interface PlaylistTrack {
   artwork?: string;
   publishedAt: string;
 }
-interface CuratedPlaylist {
+interface SoundcloudCuratedTrackRow {
+  videoId: string;
+  title: string;
+  channelName: string;
+  thumbnailUrl: string;
+  publishedAt: string;
+  soundcloudUrl: string;
+}
+interface SoundcloudCuratedPlaylist {
   playlistId: string;
   name: string;
   thumbnailUrl: string;
-  artwork?: string;
-  tracks: PlaylistTrack[];
+  soundcloudSetUrl: string;
+  tracks: SoundcloudCuratedTrackRow[];
   category?: string;
   section?: string;
 }
@@ -518,7 +528,7 @@ const discoverMMKV = createMMKVCache('vybe-discover');
 const DISCOVER_KEYS = {
   sections: 'sections',
   vybeBeats: 'vybeBeats',
-  ytCuratedPlaylists: 'ytCuratedPlaylists',
+  scCuratedPlaylists: 'scCuratedPlaylists',
   scMixes: 'scMixes',
   // Trending track feeds per source
   ytVideosFeed: 'ytVideosFeed',
@@ -542,7 +552,7 @@ function buildCrateTiles(args: {
   playTrack: (track: Track, queue?: Track[], options?: { expandNowPlaying?: boolean }) => Promise<void>;
   ytVideosFeed: PlaylistTrack[];
   scTracksFeed: SCSearchTrack[];
-  ytCuratedPlaylists: CuratedPlaylist[];
+  scCuratedPlaylists: SoundcloudCuratedPlaylist[];
   scMixes: MixDefinition[];
   mixArtworkById: Record<string, string>;
   discoverFeedItems: DiscoverItem[];
@@ -554,7 +564,7 @@ function buildCrateTiles(args: {
     playTrack,
     ytVideosFeed,
     scTracksFeed,
-    ytCuratedPlaylists,
+    scCuratedPlaylists,
     scMixes,
     mixArtworkById,
     discoverFeedItems,
@@ -638,22 +648,22 @@ function buildCrateTiles(args: {
     });
   }
 
-  for (const pl of ytCuratedPlaylists) {
+  for (const pl of scCuratedPlaylists) {
     if (pl.tracks.length === 0) continue;
     if ((pl as { section?: string }).section === 'popular') continue;
     const queue: Track[] = pl.tracks.map((t) => ({
-      id: `ytm-${t.videoId}`,
+      id: `sc-${t.videoId}`,
       title: t.title,
       artist: t.channelName,
       artistId: '',
       album: pl.name,
-      albumId: `ytm-pl-${pl.playlistId}`,
-      artwork: t.artwork || t.thumbnailUrl,
+      albumId: `sc-pl-${pl.playlistId}`,
+      artwork: t.thumbnailUrl,
       duration: 0,
       isLiked: false,
-      source: 'youtube_music' as const,
-      youtubeMusicId: t.videoId,
-      youtubeId: t.videoId,
+      source: 'soundcloud' as const,
+      soundcloudUrl: t.soundcloudUrl,
+      soundcloudId: t.videoId,
       audioUrl: '',
     }));
     const art = curatedPlaylistCoverArt(pl);
@@ -665,12 +675,14 @@ function buildCrateTiles(args: {
       mediaHeight: squareH,
       layoutHeight: squareH + TITLE_BLOCK,
       vibes: inferVibes(pl.name, pl.category, pl.section),
-      badge: 'youtube_music',
+      badge: 'soundcloud',
       peekTrack: queue[0],
       peekQueue: queue,
       onPress: () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        router.push(`/(app)/playlist-detail?id=${pl.playlistId}` as never);
+        router.push(
+          `/(app)/playlist-detail?scSet=${encodeURIComponent(pl.soundcloudSetUrl)}` as never,
+        );
       },
     });
   }
@@ -801,8 +813,8 @@ export default function DiscoverScreen() {
   const setVybeBeats = useDiscoverFeedStore((s) => s.setVybeBeats);
 
   // Curated backend playlists — lazy-seed from MMKV so they paint instantly on cold launch
-  const [ytCuratedPlaylists, setYtCuratedPlaylists] = useState<CuratedPlaylist[]>(() => {
-    const hit = discoverMMKV.get<CuratedPlaylist[]>(DISCOVER_KEYS.ytCuratedPlaylists, TTL.CURATED);
+  const [scCuratedPlaylists, setScCuratedPlaylists] = useState<SoundcloudCuratedPlaylist[]>(() => {
+    const hit = discoverMMKV.get<SoundcloudCuratedPlaylist[]>(DISCOVER_KEYS.scCuratedPlaylists, TTL.CURATED);
     return hit?.value ?? [];
   });
   const [scMixes, setScMixes] = useState<MixDefinition[]>(() => {
@@ -858,7 +870,7 @@ export default function DiscoverScreen() {
         playTrack,
         ytVideosFeed,
         scTracksFeed,
-        ytCuratedPlaylists,
+        scCuratedPlaylists,
         scMixes,
         mixArtworkById,
         discoverFeedItems: filteredDiscoverItems,
@@ -870,7 +882,7 @@ export default function DiscoverScreen() {
       playTrack,
       ytVideosFeed,
       scTracksFeed,
-      ytCuratedPlaylists,
+      scCuratedPlaylists,
       scMixes,
       mixArtworkById,
       filteredDiscoverItems,
@@ -891,7 +903,7 @@ export default function DiscoverScreen() {
   useEffect(() => {
     (async () => {
       const settled = await Promise.allSettled([
-        api.get<CuratedPlaylist[]>('/api/youtube/playlists').catch(() => null),
+        api.get<SoundcloudCuratedPlaylist[]>('/api/soundcloud/playlists').catch(() => null),
         api.get<MixDefinition[]>('/api/soundcloud/mixes').catch(() => null),
         api
           .get<PlaylistTrack[]>(
@@ -906,7 +918,7 @@ export default function DiscoverScreen() {
           .catch(() => null),
       ]);
 
-      const yt = settled[0].status === 'fulfilled' ? settled[0].value : null;
+      const scPl = settled[0].status === 'fulfilled' ? settled[0].value : null;
       const sc = settled[1].status === 'fulfilled' ? settled[1].value : null;
       const ytVideos = settled[2].status === 'fulfilled' ? settled[2].value : null;
       const ytmRaw = settled[3].status === 'fulfilled' ? settled[3].value : [];
@@ -914,10 +926,10 @@ export default function DiscoverScreen() {
 
       const ytmTracks = ytmRaw.map((t) => normalizeYtmThumb(t as YtmPlaylistTrack));
 
-      if (yt && yt.length > 0) {
-        const filtered = yt.filter((p) => p.tracks.length > 0);
-        setYtCuratedPlaylists(filtered);
-        discoverMMKV.set(DISCOVER_KEYS.ytCuratedPlaylists, filtered);
+      if (scPl && scPl.length > 0) {
+        const filtered = scPl.filter((p) => p.tracks.length > 0);
+        setScCuratedPlaylists(filtered);
+        discoverMMKV.set(DISCOVER_KEYS.scCuratedPlaylists, filtered);
       }
       if (sc && sc.length > 0) {
         setScMixes(sc);
@@ -1182,8 +1194,8 @@ export default function DiscoverScreen() {
         }
         ListHeaderComponent={
           <>
-            <DiscoverVaultCollectionsRow playlists={ytCuratedPlaylists} router={router} />
-            <DiscoverVaultExclusivesRail tracks={ytmTracksFeed} playTrack={playTrack} />
+            <DiscoverVaultCollectionsRow playlists={scCuratedPlaylists} router={router} />
+            <DiscoverVaultExclusivesRail scTracks={scTracksFeed} playTrack={playTrack} />
             {preferences?.onboardingComplete ? (
               <Pressable
                 onPress={() => {

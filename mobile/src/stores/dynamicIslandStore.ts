@@ -12,6 +12,13 @@ interface DynamicIslandSignalState {
   healingStreamActive: boolean;
   setHealingStreamActive: (active: boolean) => void;
 
+  /**
+   * After a SoundCloud-first `scMatchPromise` resolves with a match, pill glow
+   * shifts to SoundCloud Orange until cleared (e.g. next non-SC play).
+   */
+  scIgnitionGlow: boolean;
+  setScIgnitionGlow: (on: boolean) => void;
+
   /** Monotonically updated timestamp; bump to trigger a SUCCESS flash. */
   successAt: number;
   /** Optional one-line label rendered next to the checkmark. */
@@ -33,6 +40,9 @@ interface DynamicIslandSignalState {
 export const useDynamicIslandSignal = create<DynamicIslandSignalState>((set) => ({
   healingStreamActive: false,
   setHealingStreamActive: (active) => set({ healingStreamActive: active }),
+
+  scIgnitionGlow: false,
+  setScIgnitionGlow: (on) => set({ scIgnitionGlow: on }),
 
   successAt: 0,
   successLabel: null,

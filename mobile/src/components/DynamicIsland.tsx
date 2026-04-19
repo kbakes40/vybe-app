@@ -41,6 +41,7 @@ import { VIBRANT_BLUE } from '@/constants/machinedTheme';
 const NEON_MAGENTA = '#FF00D4';
 const NEON_AMBER = '#FFB020';
 const NEON_RED = '#FF3355';
+const SOUNDCLOUD_IGNITION_ORANGE = '#FF3300';
 /** Baby blue pulse while the backend auto-heals a failed YouTube vault (SHADOW_HEALING). */
 const BABY_BLUE = '#9FD9FF';
 const OLED = '#000000';
@@ -86,6 +87,7 @@ export function DynamicIsland() {
   const currentSource = usePlaybackController((s) => s.currentSource);
   const playbackError = usePlaybackController((s) => s.error);
   const healingStreamActive = useDynamicIslandSignal((s) => s.healingStreamActive);
+  const scIgnitionGlow = useDynamicIslandSignal((s) => s.scIgnitionGlow);
 
   const isPlaying = playbackState === 'playing' && !!currentTrack;
   const isStreamResolving =
@@ -110,6 +112,8 @@ export function DynamicIsland() {
   const widthSV = useSharedValue(GEO.idle.w);
   const heightSV = useSharedValue(GEO.idle.h);
   const borderHueSV = useSharedValue(0); // 0 = blue, 1 = amber
+  /** 0 = machined blue family, 1 = SoundCloud ignition orange (after scMatchPromise). */
+  const scIgnitionSV = useSharedValue(0);
   /** 0 → resting dim hairline; 1 → full Machined-Blue bloom (glow + tint). */
   const glowIntensitySV = useSharedValue(0);
   const magPulse = useSharedValue(0.35);
@@ -229,6 +233,12 @@ export function DynamicIsland() {
     borderHueSV.value = withTiming(eggActive ? 1 : 0, { duration: 280 });
   }, [eggActive, borderHueSV]);
 
+  useEffect(() => {
+    const on =
+      scIgnitionGlow && currentSource === 'soundcloud' && !eggActive;
+    scIgnitionSV.value = withTiming(on ? 1 : 0, { duration: 280 });
+  }, [scIgnitionGlow, currentSource, eggActive, scIgnitionSV]);
+
   // Machined-Blue bloom while playing — pill goes from a dim hairline to a
   // full neon glow. Play kick-in gets a brief over-shoot flash ("Integrated
   // Notch" pulse from IMG_3643) before settling to steady glow. Eases out on
@@ -320,14 +330,17 @@ export function DynamicIsland() {
     const r = resolvePulse.value * isResolvingSV.value;
     const ring = g + r * 1.15;
     const capped = ring > 1.45 ? 1.45 : ring;
-    const hotColor = interpolateColor(
-      borderHueSV.value,
-      [0, 1],
-      [VIBRANT_BLUE, NEON_AMBER],
-    );
+    const egg = borderHueSV.value;
+    const sc = scIgnitionSV.value;
+    const hotColor =
+      egg > 0.5
+        ? interpolateColor(egg, [0.5, 1], [VIBRANT_BLUE, NEON_AMBER])
+        : interpolateColor(sc, [0, 1], [VIBRANT_BLUE, SOUNDCLOUD_IGNITION_ORANGE]);
     return {
       width: widthSV.value,
       height: heightSV.value,
+      borderWidth: 1,
+      borderColor: hotColor,
       shadowColor: hotColor,
       shadowOpacity: 0.25 + capped * 0.78,
       shadowRadius: 6 + capped * 22,
@@ -397,13 +410,7 @@ export function DynamicIsland() {
           delayLongPress={380}
           hitSlop={{ top: 6, bottom: 6, left: 12, right: 12 }}
         >
-          <Animated.View
-            style={[
-              styles.pill,
-              { borderColor: eggActive ? NEON_AMBER : VIBRANT_BLUE },
-              pillAnimatedStyle,
-            ]}
-          >
+          <Animated.View style={[styles.pill, pillAnimatedStyle]}>
             {/* ── IDLE / PLAYING compact content ─────────────────────────── */}
             <Animated.View
               pointerEvents="none"

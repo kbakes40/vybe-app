@@ -8,14 +8,12 @@ import { getShadowSyncDir, shadowSyncFilename } from './storageSettingsStore';
 
 // ── Live Activity bridge (iOS 16.1+ only) ─────────────────────────────────────
 const LiveActivityBridge = Platform.OS === 'ios' ? NativeModules.VybeDownloadActivity : null;
-console.log('[LiveActivity] bridge =', LiveActivityBridge ? 'FOUND' : 'MISSING', 'keys:', LiveActivityBridge ? Object.keys(LiveActivityBridge) : []);
 
 // ── Native background downloader (iOS only) ─────────────────────────────────
 // Uses URLSession.background so downloads keep running — and the Dynamic
 // Island Live Activity keeps updating — when the user backgrounds the app.
 // Android falls back to expo-file-system below.
 const NativeDownloader = Platform.OS === 'ios' ? NativeModules.VybeDownloader : null;
-console.log('[SyncEngine] native bridge =', NativeDownloader ? 'FOUND' : 'MISSING');
 
 async function nativeDownload(args: {
   url: string;
@@ -54,7 +52,6 @@ async function nativeDownload(args: {
 }
 
 async function laStartDownloadActivity(trackTitle: string, artistName: string): Promise<void> {
-  console.log('[LiveActivity] startActivity called', { trackTitle, artistName, bridge: !!LiveActivityBridge });
   // Reset throttle state so the next track's first progress update fires
   // immediately instead of being blocked by the previous track's throttle window.
   if (_laFlushTimer) { clearTimeout(_laFlushTimer); _laFlushTimer = null; }
@@ -62,9 +59,8 @@ async function laStartDownloadActivity(trackTitle: string, artistName: string): 
   _laLastSentAt = 0;
   try {
     await LiveActivityBridge?.startActivity(trackTitle, artistName);
-    console.log('[LiveActivity] startActivity OK');
-  } catch (e) {
-    console.log('[LiveActivity] startActivity ERROR', e);
+  } catch {
+    /* ActivityKit optional */
   }
 }
 
@@ -178,6 +174,8 @@ interface DownloadsState {
   downloads: DownloadedTrack[];
   isImporting: boolean;
   importProgress: number;
+  /** Track rows showing vault cloud sync pulse (POST /api/vault/save in flight). */
+  vaultCloudActiveById: Record<string, boolean>;
 
   // Actions
   addDownload: (track: DownloadedTrack) => void;
@@ -186,6 +184,7 @@ interface DownloadsState {
   isTrackDownloaded: (trackId: string) => boolean;
   setImporting: (isImporting: boolean) => void;
   setImportProgress: (progress: number) => void;
+  setVaultCloudPulse: (trackId: string, active: boolean) => void;
   getTotalStorageUsed: () => number;
   clearAllDownloads: () => Promise<void>;
 }
@@ -208,6 +207,7 @@ export const useDownloadsStore = create<DownloadsState>()(
       downloads: [],
       isImporting: false,
       importProgress: 0,
+      vaultCloudActiveById: {},
 
       addDownload: (track) => {
         set((state) => {
@@ -244,6 +244,14 @@ export const useDownloadsStore = create<DownloadsState>()(
       setImporting: (isImporting) => set({ isImporting }),
 
       setImportProgress: (progress) => set({ importProgress: progress }),
+
+      setVaultCloudPulse: (trackId, active) =>
+        set((s) => {
+          const next = { ...s.vaultCloudActiveById };
+          if (active) next[trackId] = true;
+          else delete next[trackId];
+          return { vaultCloudActiveById: next };
+        }),
 
       getTotalStorageUsed: () => {
         return get().downloads.reduce((total, track) => total + (track.fileSize || 0), 0);
@@ -354,6 +362,7 @@ export async function downloadYouTubeTrack(
 
   const base = backendBaseUrl.replace(/\/$/, '');
 
+  store.setVaultCloudPulse(track.id, true);
   void fetch(`${base}/api/vault/save`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -363,7 +372,11 @@ export async function downloadYouTubeTrack(
       artist: artistName,
       soundcloudUrl: (track as Track & { soundcloudUrl?: string }).soundcloudUrl,
     }),
-  }).catch(() => {});
+  })
+    .catch(() => {})
+    .finally(() => {
+      setTimeout(() => store.setVaultCloudPulse(track.id, false), 2400);
+    });
 
   try {
     const dir = await getShadowSyncDir();

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import path from "node:path";
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
@@ -631,8 +633,6 @@ async function expandShortUrl(url: string): Promise<string> {
       return stripTrackingParams(url);
     }
 
-    console.log("[SoundCloud] Expanding short URL:", url);
-
     // Follow the redirect to get the canonical URL.
     // Must use GET — many shorteners don't redirect on HEAD requests.
     const response = await fetch(url, {
@@ -641,7 +641,6 @@ async function expandShortUrl(url: string): Promise<string> {
     });
 
     const expandedUrl = response.url;
-    console.log("[SoundCloud] Expanded to:", expandedUrl);
 
     // Validate the expanded URL is a proper soundcloud.com URL
     const expandedParsed = new URL(expandedUrl);
@@ -654,7 +653,6 @@ async function expandShortUrl(url: string): Promise<string> {
 
     // Strip tracking parameters from the expanded URL
     const cleanUrl = stripTrackingParams(expandedUrl);
-    console.log("[SoundCloud] Clean canonical URL:", cleanUrl);
 
     return cleanUrl;
   } catch (error) {
@@ -689,6 +687,156 @@ function normalizeSoundCloudUrl(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** yt-dlp JSON row → mobile `CuratedPlaylist` track row (YouTube-shaped + `soundcloudUrl`). */
+export type SoundcloudCuratedPlaylistTrackRow = {
+  videoId: string;
+  title: string;
+  channelName: string;
+  thumbnailUrl: string;
+  publishedAt: string;
+  soundcloudUrl: string;
+};
+
+export type SoundcloudCuratedPlaylistResult = {
+  playlistId: string;
+  name: string;
+  thumbnailUrl: string;
+  soundcloudSetUrl: string;
+  tracks: SoundcloudCuratedPlaylistTrackRow[];
+  category?: string;
+  section?: string;
+};
+
+type SoundcloudCuratedCatalogEntry = { url: string; name: string; category?: string; section?: string };
+
+function loadSoundcloudCuratedCatalog(): SoundcloudCuratedCatalogEntry[] {
+  try {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const catalogPath = path.join(import.meta.dir, "..", "..", "catalog", "soundcloud-curated-playlists.json");
+    const raw = fs.readFileSync(catalogPath, "utf-8");
+    const arr = JSON.parse(raw) as unknown;
+    if (!Array.isArray(arr)) return [];
+    const out: SoundcloudCuratedCatalogEntry[] = [];
+    for (const x of arr) {
+      if (!x || typeof x !== "object") continue;
+      const o = x as Record<string, unknown>;
+      if (typeof o.url !== "string" || typeof o.name !== "string") continue;
+      const e: SoundcloudCuratedCatalogEntry = { url: o.url, name: o.name };
+      if (typeof o.category === "string" && o.category.length) e.category = o.category;
+      if (typeof o.section === "string" && o.section.length) e.section = o.section;
+      out.push(e);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Flatten a SoundCloud set or track URL into ranked track rows (yt-dlp --flat-playlist / --dump-json).
+ */
+export async function fetchSoundcloudPlaylistDump(
+  rawUrl: string,
+  maxTracks: number,
+): Promise<{ tracks: SoundcloudCuratedPlaylistTrackRow[]; playlistTitle: string; canonicalUrl: string }> {
+  const normalized = normalizeSoundCloudUrl(rawUrl);
+  if (!normalized) throw new Error("Invalid SoundCloud URL");
+
+  let canonicalUrl = normalized;
+  if (normalized.includes("on.soundcloud.com")) {
+    canonicalUrl = await expandShortUrl(normalized);
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60_000);
+  let output = "";
+  try {
+    output = await ytDlp.execPromise(
+      [canonicalUrl, "--dump-json", "--flat-playlist", "--quiet", "--no-warnings"],
+      {},
+      controller.signal,
+    );
+    clearTimeout(timer);
+  } catch (e: any) {
+    clearTimeout(timer);
+    output = e.stderr ?? "";
+    if (!output) throw new Error(`yt-dlp failed: ${e.message}`);
+  }
+
+  const rows = output
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        const j = JSON.parse(line) as Record<string, unknown>;
+        const idRaw = j.id;
+        const id = typeof idRaw === "number" ? String(idRaw) : typeof idRaw === "string" ? idRaw : "";
+        if (!id) return null;
+        const thumbs = (j.thumbnails as Array<{ url: string }> | undefined) ?? [];
+        const lastThumb = thumbs.length > 0 ? thumbs[thumbs.length - 1] : undefined;
+        const artwork =
+          lastThumb?.url ??
+          "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop";
+        const scPage = (j.webpage_url ?? j.url ?? canonicalUrl) as string;
+        return {
+          videoId: id,
+          title: (j.title as string) ?? "Unknown",
+          channelName: (j.uploader ?? j.channel ?? "Unknown") as string,
+          thumbnailUrl: artwork,
+          publishedAt: "",
+          soundcloudUrl: typeof scPage === "string" && SC_URL_RE.test(scPage) ? scPage : canonicalUrl,
+        } satisfies SoundcloudCuratedPlaylistTrackRow;
+      } catch {
+        return null;
+      }
+    })
+    .filter((t): t is SoundcloudCuratedPlaylistTrackRow => t !== null)
+    .slice(0, Math.max(1, Math.min(maxTracks, 500)));
+
+  let playlistTitle = "Playlist";
+  if (canonicalUrl.includes("/sets/")) {
+    const parts = canonicalUrl.split("/sets/");
+    if (parts[1]) playlistTitle = parts[1].replace(/-/g, " ").replace(/\?.*/, "").trim() || playlistTitle;
+  }
+
+  return { tracks: rows, playlistTitle, canonicalUrl };
+}
+
+function scPlaylistStableId(canonicalUrl: string): string {
+  return `scset_${createHash("sha256").update(canonicalUrl).digest("hex").slice(0, 24)}`;
+}
+
+let soundcloudCuratedPlaylistsCache: { results: SoundcloudCuratedPlaylistResult[]; expiresAt: number } | null =
+  null;
+const SOUNDcloud_CURATED_PLAYLISTS_TTL_MS = 45 * 60 * 1000;
+
+async function buildSoundcloudCuratedPlaylists(): Promise<SoundcloudCuratedPlaylistResult[]> {
+  const meta = loadSoundcloudCuratedCatalog();
+  if (meta.length === 0) return [];
+
+  const out: SoundcloudCuratedPlaylistResult[] = [];
+  for (const entry of meta) {
+    try {
+      const { tracks, playlistTitle, canonicalUrl } = await fetchSoundcloudPlaylistDump(entry.url, 28);
+      if (tracks.length === 0) continue;
+      const thumb = tracks[0]?.thumbnailUrl ?? "";
+      out.push({
+        playlistId: scPlaylistStableId(canonicalUrl),
+        name: entry.name || playlistTitle,
+        thumbnailUrl: thumb,
+        soundcloudSetUrl: canonicalUrl,
+        tracks,
+        ...(entry.category ? { category: entry.category } : {}),
+        ...(entry.section ? { section: entry.section } : {}),
+      });
+    } catch {
+      /* skip broken catalog rows */
+    }
+  }
+  return out;
 }
 
 /**
@@ -1203,9 +1351,9 @@ export async function searchSoundCloud(query: string, maxResults: number): Promi
         const id: string = j.id ?? "";
         if (!id) return null;
         const thumbs: Array<{ url: string }> = j.thumbnails ?? [];
-        const artwork = thumbs.length > 0
-          ? thumbs[thumbs.length - 1].url
-          : "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop";
+        const lastT = thumbs.length > 0 ? thumbs[thumbs.length - 1] : undefined;
+        const artwork = lastT?.url
+          ?? "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop";
         return {
           trackId: id,
           title: (j.title as string) ?? "Unknown",
@@ -1242,7 +1390,7 @@ export async function resolveSoundcloudPageStreamUrl(pageUrl: string): Promise<s
       [
         pageUrl,
         "-f",
-        "ba[protocol^=m3u8]/ba[ext=m3u8]/bestaudio[protocol=https][ext=mp3]/bestaudio[protocol=http][ext=mp3]/bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio",
+        "ba[protocol^=m3u8][abr>=128]/ba[ext=m3u8]/bestaudio[abr>=128]/bestaudio[protocol^=https][ext=mp3]/bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio",
         "--get-url",
         "--no-playlist",
         "--no-warnings",
@@ -1395,10 +1543,12 @@ soundcloudRouter.get("/audio", async (c) => {
  * server-side first so the mobile gets a known-size file in one shot.
  */
 soundcloudRouter.get("/download", async (c) => {
-  const url = c.req.query("url");
-  if (!url || !SC_URL_RE.test(url)) {
+  const pageUrl = c.req.query("url");
+  if (!pageUrl || !SC_URL_RE.test(pageUrl)) {
     return c.json({ error: "Missing or invalid SoundCloud URL" }, 400);
   }
+
+  const resolvedDownloadUrl: string = pageUrl;
 
   const safeBase = `/tmp/sc_dl_${Date.now()}`;
 
@@ -1409,7 +1559,7 @@ soundcloudRouter.get("/download", async (c) => {
     const timer = setTimeout(() => controller.abort(), 300_000);
     try {
       await ytDlp.execPromise([
-        url,
+        resolvedDownloadUrl,
         "-f", "bestaudio[protocol=https][ext=mp3]/bestaudio[protocol=http][ext=mp3]/bestaudio[ext=mp3]/bestaudio[ext=m4a]/bestaudio",
         "-o", `${safeBase}.%(ext)s`,
         "--no-playlist",
@@ -1462,6 +1612,57 @@ soundcloudRouter.get("/download", async (c) => {
 });
 
 /**
+ * GET /api/soundcloud/playlists
+ * Curated SoundCloud sets (primary discovery playlists — replaces YouTube catalog in mobile).
+ */
+soundcloudRouter.get("/playlists", async (c) => {
+  if (
+    soundcloudCuratedPlaylistsCache &&
+    Date.now() < soundcloudCuratedPlaylistsCache.expiresAt
+  ) {
+    c.header("Cache-Control", "public, max-age=900");
+    return c.json({ data: soundcloudCuratedPlaylistsCache.results });
+  }
+  const results = await buildSoundcloudCuratedPlaylists();
+  soundcloudCuratedPlaylistsCache = {
+    results,
+    expiresAt: Date.now() + SOUNDcloud_CURATED_PLAYLISTS_TTL_MS,
+  };
+  c.header("Cache-Control", "public, max-age=900");
+  return c.json({ data: results });
+});
+
+/**
+ * GET /api/soundcloud/playlist-tracks?url=
+ * Flat track list for playlist-detail when opening a SoundCloud set URL.
+ */
+soundcloudRouter.get("/playlist-tracks", async (c) => {
+  const url = c.req.query("url")?.trim();
+  if (!url) return c.json({ error: { message: "Missing url", code: "MISSING_URL" } }, 400);
+  const normalized = normalizeSoundCloudUrl(url);
+  if (!normalized) return c.json({ error: { message: "Invalid SoundCloud URL", code: "INVALID_URL" } }, 400);
+  try {
+    const { tracks, playlistTitle, canonicalUrl } = await fetchSoundcloudPlaylistDump(normalized, 200);
+    if (tracks.length === 0) {
+      return c.json({ error: { message: "No tracks found", code: "NO_TRACKS" } }, 400);
+    }
+    const thumb = tracks[0]?.thumbnailUrl ?? "";
+    return c.json({
+      data: {
+        tracks,
+        playlistTitle,
+        thumbnailUrl: thumb,
+        canonicalUrl,
+        playlistId: scPlaylistStableId(canonicalUrl),
+      },
+    });
+  } catch (error) {
+    console.error("[SoundCloud] playlist-tracks:", error);
+    return c.json({ error: { message: "Failed to fetch playlist", code: "FETCH_FAILED" } }, 500);
+  }
+});
+
+/**
  * POST /api/soundcloud/import-playlist
  * Import all tracks from a SoundCloud playlist URL using yt-dlp flat-playlist dump.
  */
@@ -1474,60 +1675,26 @@ soundcloudRouter.post("/import-playlist", async (c) => {
     const normalized = normalizeSoundCloudUrl(url);
     if (!normalized) return c.json({ error: { message: "Invalid SoundCloud URL", code: "INVALID_URL" } }, 400);
 
-    // Expand short URLs to canonical form
     let canonicalUrl = normalized;
     if (normalized.includes("on.soundcloud.com")) {
       canonicalUrl = await expandShortUrl(normalized);
     }
 
     const isPlaylist = canonicalUrl.includes("/sets/");
+    const { tracks: rows, playlistTitle } = await fetchSoundcloudPlaylistDump(normalized, 500);
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 60_000);
-    let output = "";
-    try {
-      output = await ytDlp.execPromise([
-        canonicalUrl,
-        "--dump-json",
-        "--flat-playlist",
-        "--quiet",
-        "--no-warnings",
-      ], {}, controller.signal);
-      clearTimeout(timer);
-    } catch (e: any) {
-      clearTimeout(timer);
-      output = e.stderr ?? "";
-      if (!output) throw new Error(`yt-dlp failed: ${e.message}`);
-    }
-
-    const tracks = output.trim().split("\n").filter(Boolean).map((line) => {
-      try {
-        const j = JSON.parse(line);
-        const thumbs: Array<{ url: string }> = j.thumbnails ?? [];
-        const artwork = thumbs.length > 0
-          ? thumbs[thumbs.length - 1].url
-          : "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=300&fit=crop";
-        return {
-          id: `soundcloud-${j.id ?? Date.now()}`,
-          title: (j.title as string) ?? "Unknown",
-          artist: (j.uploader ?? j.channel ?? "Unknown") as string,
-          artwork,
-          duration: (j.duration as number) ?? 0,
-          soundcloudUrl: (j.webpage_url ?? j.url ?? canonicalUrl) as string,
-          source: "soundcloud" as const,
-        };
-      } catch { return null; }
-    }).filter((t): t is NonNullable<typeof t> => t !== null);
+    const tracks = rows.map((t) => ({
+      id: `soundcloud-${t.videoId}`,
+      title: t.title,
+      artist: t.channelName,
+      artwork: t.thumbnailUrl,
+      duration: 0,
+      soundcloudUrl: t.soundcloudUrl,
+      source: "soundcloud" as const,
+    }));
 
     if (tracks.length === 0) {
       return c.json({ error: { message: "No tracks found", code: "NO_TRACKS" } }, 400);
-    }
-
-    // Extract playlist title from URL path for sets
-    let playlistTitle = "Playlist";
-    if (isPlaylist) {
-      const parts = canonicalUrl.split("/sets/");
-      if (parts[1]) playlistTitle = parts[1].replace(/-/g, " ").replace(/\?.*/, "");
     }
 
     return c.json({ data: { tracks, isPlaylist: isPlaylist || tracks.length > 1, playlistTitle } });
