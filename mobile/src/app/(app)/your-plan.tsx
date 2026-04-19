@@ -23,12 +23,12 @@ import {
 import type { LucideIcon } from 'lucide-react-native';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import { VybePlusWordmark } from '@/components/VybePlusWordmark';
-import { OLED_BLACK, VIBRANT_BLUE, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
+import { OLED_BLACK, MACHINED_CYAN, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
 
 const CTA_BUTTON_HEIGHT = 56;
 const CTA_CONTAINER_PADDING = 16;
 
-const CYAN_BORDER = 'rgba(0,229,255,0.45)' as const;
+const CYAN_BORDER = 'rgba(0,255,255,0.42)' as const;
 
 const BENEFIT_ROWS: Array<{ key: string; Icon: LucideIcon; text: string }> = [
   { key: 'ads', Icon: X, text: 'No ads' },
@@ -95,7 +95,7 @@ function PricingCard({
         planStyles.pricingCard,
         {
           borderWidth: isSelected ? 2 : 1,
-          borderColor: isSelected ? VIBRANT_BLUE : CYAN_BORDER,
+          borderColor: isSelected ? MACHINED_CYAN : CYAN_BORDER,
         },
       ]}
     >
@@ -310,8 +310,8 @@ const planStyles = StyleSheet.create({
   },
   crownRingPlus: {
     borderWidth: 1,
-    borderColor: VIBRANT_BLUE,
-    backgroundColor: 'rgba(0,229,255,0.08)',
+    borderColor: MACHINED_CYAN,
+    backgroundColor: 'rgba(0,255,255,0.08)',
   },
   crownRingFree: {
     borderWidth: 1,
@@ -420,11 +420,11 @@ const planStyles = StyleSheet.create({
     paddingVertical: 5,
     borderBottomLeftRadius: 10,
     borderWidth: 1,
-    borderColor: VIBRANT_BLUE,
-    backgroundColor: 'rgba(0,229,255,0.12)',
+    borderColor: MACHINED_CYAN,
+    backgroundColor: 'rgba(0,255,255,0.12)',
   },
   savingsPillText: {
-    color: VIBRANT_BLUE,
+    color: MACHINED_CYAN,
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 0.4,
@@ -454,7 +454,7 @@ const planStyles = StyleSheet.create({
     width: 26,
     height: 26,
     borderRadius: 13,
-    backgroundColor: VIBRANT_BLUE,
+    backgroundColor: MACHINED_CYAN,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -515,10 +515,10 @@ const planStyles = StyleSheet.create({
     height: CTA_BUTTON_HEIGHT,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: VIBRANT_BLUE,
+    backgroundColor: MACHINED_CYAN,
     borderRadius: 28,
     borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.85)',
+    borderColor: 'rgba(0,255,255,0.85)',
   },
   ctaSolidText: {
     color: OLED_BLACK,

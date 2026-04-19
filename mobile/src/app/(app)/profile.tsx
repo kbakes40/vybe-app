@@ -23,7 +23,7 @@ import { VybePlusWordmark } from '@/components/VybePlusWordmark';
 import { MINI_PLAYER_HEIGHT } from './_layout';
 import { Track } from '@/types/music';
 import { authClient } from '@/lib/auth/auth-client';
-import { VIBRANT_BLUE, OLED_BLACK } from '@/constants/machinedTheme';
+import { MACHINED_CYAN, OLED_BLACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -200,7 +200,7 @@ export default function ProfileScreen() {
               />
             ) : (
               <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                <VybeIcon size={72} backgroundColor="transparent" />
+                <Text style={styles.avatarV}>V</Text>
               </View>
             )}
 
@@ -357,10 +357,10 @@ const styles = StyleSheet.create({
   accountKicker: {
     flex: 1,
     textAlign: 'center',
-    color: 'rgba(255,255,255,0.92)',
-    fontSize: 12,
+    color: 'rgba(255,255,255,0.96)',
+    fontSize: 11,
     fontWeight: '900',
-    letterSpacing: 3.5,
+    letterSpacing: 4,
   },
   profileBlock: {
     alignItems: 'center',
@@ -373,18 +373,24 @@ const styles = StyleSheet.create({
     height: 108,
     borderRadius: 54,
     borderWidth: 2,
-    borderColor: VIBRANT_BLUE,
+    borderColor: MACHINED_CYAN,
   },
   avatarPlaceholder: {
     backgroundColor: 'rgba(255,255,255,0.06)',
     alignItems: 'center',
     justifyContent: 'center',
   },
+  avatarV: {
+    fontSize: 44,
+    fontWeight: '900',
+    color: NAV_BAR_PURPLE,
+    ...Platform.select({ ios: { fontFamily: 'Georgia' }, default: {} }),
+  },
   displayName: {
     color: '#fff',
-    fontSize: 22,
-    fontWeight: '800',
-    letterSpacing: -0.4,
+    fontSize: 26,
+    fontWeight: '900',
+    letterSpacing: -0.6,
     marginTop: 18,
     ...Platform.select({
       ios: { fontVariant: ['tabular-nums'] },

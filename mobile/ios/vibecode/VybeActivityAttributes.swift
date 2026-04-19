@@ -22,6 +22,8 @@ public struct VybeActivityAttributes: ActivityAttributes {
         public var artistName: String
         /// HTTPS artwork URL for compact Dynamic Island leading art (may be empty).
         public var artworkURL: String
+        /// Up to 3 short lines for the expanded island feed (keep each ≤ 60 chars for payload limits).
+        public var recentPosts: [String]
 
         public init(
             progress: Double,
@@ -29,7 +31,8 @@ public struct VybeActivityAttributes: ActivityAttributes {
             isComplete: Bool = false,
             trackTitle: String = "",
             artistName: String = "",
-            artworkURL: String = ""
+            artworkURL: String = "",
+            recentPosts: [String] = []
         ) {
             self.progress = progress
             self.statusText = statusText
@@ -37,6 +40,7 @@ public struct VybeActivityAttributes: ActivityAttributes {
             self.trackTitle = trackTitle
             self.artistName = artistName
             self.artworkURL = artworkURL
+            self.recentPosts = recentPosts
         }
     }
 

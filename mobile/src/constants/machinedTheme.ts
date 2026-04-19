@@ -1,5 +1,8 @@
 /** Global machined cyan system + nav purple accents — Search, Discover, Library, Social, Settings, tabs. */
 
+/** Spec UI_ALIGNMENT: primary machined cyan (replaces legacy “DaVinci” teal in account surfaces). */
+export const MACHINED_CYAN = '#00FFFF';
+/** Legacy app cyan — prefer {@link MACHINED_CYAN} on Account / Settings / Plan. */
 export const VIBRANT_BLUE = '#00E5FF';
 /** Tab bar / account list iconography — unified purple (not “DaVinci blue”). */
 export const NAV_BAR_PURPLE = '#8B5CF6';

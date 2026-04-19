@@ -11,6 +11,24 @@ import { NativeModules, Platform } from 'react-native';
  *
  * @see mobile/ios/vibecode/VybeActivityAttributes.swift
  */
+
+/** Activity Feed lines mirrored into Live Activity `recentPosts` (each ≤ 60 chars for ActivityKit payload limits). */
+export const VYBE_LIVE_ACTIVITY_FEED_POSTS: readonly string[] = [
+  'DaVinci · Machined Cyan 2.1 — tighter vault handoffs.',
+  'Krak Coffee · Winter roast — Vybe Alerts partner taps.',
+  'STAK · Stacked plates pop-up — RSVP this weekend.',
+] as const;
+
+let _liveActivityFeedRotate = 0;
+
+/** Returns the top 3 feed strings, capped at 60 chars; rotates order each call so expanded island updates “cycle” visually. */
+export function takeLiveActivityFeedSnapshot(): string[] {
+  const capped = VYBE_LIVE_ACTIVITY_FEED_POSTS.map((s) => (s.length > 60 ? s.slice(0, 60) : s));
+  const n = _liveActivityFeedRotate % 3;
+  _liveActivityFeedRotate += 1;
+  return [...capped.slice(n), ...capped.slice(0, n)];
+}
+
 export interface VybeDownloadActivityStartPayload {
   /** `VybeActivityAttributes.trackTitle` */
   trackTitle: string;
@@ -26,7 +44,7 @@ export interface VybeDownloadActivityStartPayload {
 
 type VybeDownloadActivityNativeModule = {
   startActivity: (trackTitle: string, artistName: string, artworkUrl: string) => Promise<void> | void;
-  updateProgress: (progress: number, statusText: string) => void;
+  updateProgress: (progress: number, statusText: string, recentPosts: string[]) => void;
   endActivity: (success: boolean) => void;
 };
 

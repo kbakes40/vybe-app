@@ -1,20 +1,30 @@
 import React from 'react';
+import { View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { NAV_BAR_PURPLE } from '@/constants/machinedTheme';
 
-/** Corporate-minimal list affordance — single purple mark (no iOS chevron). */
-export function ListDisclosureMark({ size = 14 }: { size?: number }) {
-  const h = Math.round(size * 1.14);
+/**
+ * Corporate-minimal list affordance — primary purple “V” (nav visualizer mark),
+ * not an iOS chevron.
+ */
+export function ListDisclosureMark({ size = 15 }: { size?: number }) {
+  const h = Math.round(size * 1.05);
   return (
-    <Svg width={size} height={h} viewBox="0 0 14 16" accessibilityIgnoresInvertColors>
-      <Path
-        d="M4 2 L10 8 L4 14"
-        stroke={NAV_BAR_PURPLE}
-        strokeWidth={2.25}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        fill="none"
-      />
-    </Svg>
+    <View
+      accessibilityRole="image"
+      accessibilityLabel="More"
+      style={{ width: 22, height: 22, alignItems: 'center', justifyContent: 'center' }}
+    >
+      <Svg width={size} height={h} viewBox="0 0 16 16">
+        <Path
+          d="M3 3 L8 13 L13 3"
+          stroke={NAV_BAR_PURPLE}
+          strokeWidth={2.35}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="none"
+        />
+      </Svg>
+    </View>
   );
 }

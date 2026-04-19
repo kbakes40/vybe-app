@@ -69,7 +69,7 @@ import { useUserSettingsStore } from '@/stores/userSettingsStore';
 import { MINI_PLAYER_HEIGHT } from './_layout';
 import { useVybePopup } from '@/components/VybePopup';
 import { ShadowNeonSwitch } from '@/components/ShadowNeonSwitch';
-import { VIBRANT_BLUE, OLED_BLACK, NAVY_TRACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
+import { MACHINED_CYAN, OLED_BLACK, NAVY_TRACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
 import { ListDisclosureMark } from '@/components/account/ListDisclosureMark';
 
 const STROKE = 1.5;
@@ -152,7 +152,7 @@ function SettingsSection({
   return (
     <View style={styles.sectionWrap}>
       <Text style={styles.sectionTitle}>{title.toUpperCase()}</Text>
-      <View style={styles.shadowCard}>{children}</View>
+      <View style={styles.machinedPanel}>{children}</View>
     </View>
   );
 }
@@ -276,9 +276,9 @@ function ShadowSliderRow({
             bump();
             onValueChange(v);
           }}
-          minimumTrackTintColor={VIBRANT_BLUE}
+          minimumTrackTintColor={MACHINED_CYAN}
           maximumTrackTintColor={NAVY_TRACK}
-          thumbTintColor={VIBRANT_BLUE}
+          thumbTintColor={MACHINED_CYAN}
         />
       </View>
     </View>
@@ -537,29 +537,27 @@ export default function SettingsScreen() {
           />
         </SettingsSection>
 
-        <SettingsSection title="Devices & status">
-          <View style={[styles.row, styles.rowBorder, { alignItems: 'flex-start' }]}>
+        <SettingsSection title="Connected Devices">
+          <View style={[styles.row, styles.rowBorder, styles.deviceRow]}>
             <View style={styles.rowIcon}>
               <CategoryIcon category="account"><Wifi /></CategoryIcon>
             </View>
             <View style={styles.rowBody}>
-              <Text style={styles.deviceRowText} numberOfLines={5}>
-                <Text style={styles.rowTitle}>Steve Jobs&apos; Left Toe (iPhone 15 Pro Max)</Text>
-                <Text style={styles.deviceStatusInline}> - LOGIC ACTIVE</Text>
+              <Text style={styles.rowTitle} numberOfLines={3}>
+                Steve Jobs&apos; Left Toe (iPhone 15 Pro Max)
               </Text>
             </View>
             <View style={styles.activeBadge}>
               <Text style={styles.activeBadgeText}>LOGIC ACTIVE</Text>
             </View>
           </View>
-          <View style={[styles.row, styles.rowBorder, { alignItems: 'flex-start' }]}>
+          <View style={[styles.row, styles.rowBorder, styles.deviceRow]}>
             <View style={styles.rowIcon}>
               <CategoryIcon category="account"><Wifi /></CategoryIcon>
             </View>
             <View style={styles.rowBody}>
-              <Text style={styles.deviceRowText} numberOfLines={5}>
-                <Text style={styles.rowTitle}>Louis 🔐🔐🏴‍☠️ (iPhone 14 Pro Max)</Text>
-                <Text style={styles.deviceStatusInline}> - NATIVE PILL ACTIVE</Text>
+              <Text style={styles.rowTitle} numberOfLines={3}>
+                {'Louis 🔐🔐🏴☠️ (iPhone 14 Pro Max)'}
               </Text>
             </View>
             <View style={styles.activeBadge}>
@@ -1060,7 +1058,7 @@ function VybeSystemFooter() {
     color: interpolateColor(
       tint.value,
       [0, 1],
-      ['rgba(255,255,255,0.22)', VIBRANT_BLUE],
+      ['rgba(255,255,255,0.22)', MACHINED_CYAN],
     ),
   }));
 
@@ -1123,7 +1121,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: OLED_BLACK,
     borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.22)',
+    borderColor: 'rgba(0,255,255,0.24)',
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -1139,7 +1137,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   cancelBtn: {
-    color: VIBRANT_BLUE,
+    color: MACHINED_CYAN,
     fontSize: 15,
     fontWeight: '700',
     marginLeft: 10,
@@ -1159,12 +1157,15 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     textTransform: 'uppercase',
   },
-  shadowCard: {
+  machinedPanel: {
     backgroundColor: OLED_BLACK,
-    borderRadius: 16,
+    borderRadius: 14,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.14)',
+    borderColor: 'rgba(0,255,255,0.22)',
+  },
+  deviceRow: {
+    alignItems: 'center',
   },
   row: {
     flexDirection: 'row',
@@ -1205,15 +1206,6 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
     flexShrink: 1,
   },
-  deviceRowText: {
-    flexShrink: 1,
-  },
-  deviceStatusInline: {
-    color: VIBRANT_BLUE,
-    fontSize: 16,
-    fontWeight: '800',
-    letterSpacing: -0.15,
-  },
   rowSubtitle: {
     color: '#666666',
     fontSize: 13,
@@ -1235,19 +1227,19 @@ const styles = StyleSheet.create({
   },
   activeBadge: {
     borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.55)',
-    backgroundColor: 'rgba(0,229,255,0.08)',
-    paddingHorizontal: 7,
-    paddingVertical: 6,
+    borderColor: MACHINED_CYAN,
+    backgroundColor: 'rgba(0,255,255,0.14)',
+    paddingHorizontal: 8,
+    paddingVertical: 7,
     borderRadius: 6,
-    alignSelf: 'flex-start',
-    maxWidth: 118,
+    alignSelf: 'center',
+    maxWidth: 132,
   },
   activeBadgeText: {
-    color: VIBRANT_BLUE,
-    fontSize: 8,
+    color: MACHINED_CYAN,
+    fontSize: 9,
     fontWeight: '900',
-    letterSpacing: 0.35,
+    letterSpacing: 0.45,
     textAlign: 'center',
   },
   sliderRow: {
@@ -1270,11 +1262,11 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.45)',
-    backgroundColor: 'rgba(0,229,255,0.1)',
+    borderColor: 'rgba(0,255,255,0.5)',
+    backgroundColor: 'rgba(0,255,255,0.1)',
   },
   hqBadgeText: {
-    color: VIBRANT_BLUE,
+    color: MACHINED_CYAN,
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 0.8,
@@ -1331,7 +1323,7 @@ const styles = StyleSheet.create({
     width: 22,
     left: '50%',
     marginLeft: -11,
-    backgroundColor: VIBRANT_BLUE,
+    backgroundColor: MACHINED_CYAN,
     opacity: 0.35,
   },
 });

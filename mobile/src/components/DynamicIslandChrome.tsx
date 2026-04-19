@@ -14,6 +14,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { usePlaybackController } from '@/stores/playbackController';
 import { VYBE_WAVE_PATH, VYBE_WAVE_MAGENTA_LEG } from '@/constants/vybeLogoPaths';
+import { islandAlignedTraceTop } from '@/constants/iosIslandLayout';
 
 const VIBRANT_BLUE = '#00E5FF';
 const OUTER_GLOW = '#00B0FF';
@@ -142,6 +143,7 @@ export function DynamicIslandChrome() {
 
   const w = 96;
   const h = 22;
+  const traceTop = islandAlignedTraceTop(insets.top, h);
 
   return (
     <Animated.View
@@ -159,7 +161,7 @@ export function DynamicIslandChrome() {
         pointerEvents="none"
         style={{
           position: 'absolute',
-          top: insets.top + 2,
+          top: traceTop,
           left: 0,
           right: 0,
           alignItems: 'center',

@@ -5,9 +5,9 @@ import React
 /// Download progress Live Activity — renders in the Dynamic Island + Lock
 /// Screen via the `VybeDownloadWidget` extension target.
 ///
-/// JS bridge (unchanged for compatibility with downloadsStore):
-///   startActivity(title, artist)
-///   updateProgress(progress, statusText)
+/// JS bridge (`VybeDownloadActivityModule.m`):
+///   startActivity(title, artist, artworkURL)
+///   updateProgress(progress, statusText, recentPosts)
 ///   endActivity(success)
 ///
 /// On iOS 16.1+ this uses real ActivityKit. On older iOS or when Live
@@ -30,6 +30,28 @@ class VybeDownloadActivityModule: NSObject {
   static var _lastArtistName: String = ""
   static var _lastArtworkURL: String = ""
 
+  /// Default expanded-island feed (≤60 chars each); JS may override via `updateProgress`.
+  private static let kDefaultIslandFeed: [String] = [
+    "DaVinci · Machined Cyan 2.1 — tighter vault handoffs.",
+    "Krak Coffee · Winter roast — Vybe Alerts partner taps.",
+    "STAK · Stacked plates pop-up — RSVP this weekend.",
+  ].map { String($0.prefix(60)) }
+
+  static var _lastRecentPosts: [String] = kDefaultIslandFeed
+
+  /// Coerce RN `NSArray` of strings → max 3 lines, each capped at 60 UTF-16 chars.
+  private static func parsePostsArray(_ raw: NSArray) -> [String] {
+    var out: [String] = []
+    out.reserveCapacity(3)
+    for i in 0..<min(raw.count, 8) {
+      guard let s = raw[i] as? String else { continue }
+      let t = String(s.prefix(60))
+      if !t.isEmpty { out.append(t) }
+      if out.count >= 3 { break }
+    }
+    return out
+  }
+
   // Monotonic token bumped by every startActivity/endActivity call. The
   // delayed end task re-checks this before actually tearing down — if the
   // token changed, a new download took over the pill and we MUST NOT end.
@@ -48,6 +70,7 @@ class VybeDownloadActivityModule: NSObject {
     Self._lastTrackTitle = trackTitle
     Self._lastArtistName = artistName
     Self._lastArtworkURL = art
+    Self._lastRecentPosts = Self.kDefaultIslandFeed
     Self._endToken &+= 1
 
     Task { @MainActor in
@@ -69,7 +92,8 @@ class VybeDownloadActivityModule: NSObject {
         isComplete: false,
         trackTitle: trackTitle,
         artistName: artistName,
-        artworkURL: art
+        artworkURL: art,
+        recentPosts: Self._lastRecentPosts
       )
       do {
         let activity = try Activity<VybeActivityAttributes>.request(
@@ -84,9 +108,15 @@ class VybeDownloadActivityModule: NSObject {
     }
   }
 
-  @objc func updateProgress(_ progress: Double, statusText: String) {
+  @objc func updateProgress(_ progress: Double, statusText: String, recentPosts: NSArray?) {
     guard #available(iOS 16.1, *) else { return }
     Task { @MainActor in
+      if let arr = recentPosts, arr.count > 0 {
+        let parsed = Self.parsePostsArray(arr)
+        if !parsed.isEmpty {
+          Self._lastRecentPosts = parsed
+        }
+      }
       guard let activity = Self._currentActivity as? Activity<VybeActivityAttributes> else { return }
       let clamped = max(0.0, min(1.0, progress))
       let state = VybeActivityAttributes.DownloadState(
@@ -95,7 +125,8 @@ class VybeDownloadActivityModule: NSObject {
         isComplete: clamped >= 0.999,
         trackTitle: Self._lastTrackTitle,
         artistName: Self._lastArtistName,
-        artworkURL: Self._lastArtworkURL
+        artworkURL: Self._lastArtworkURL,
+        recentPosts: Self._lastRecentPosts
       )
       await activity.update(using: state)
     }
@@ -123,7 +154,8 @@ class VybeDownloadActivityModule: NSObject {
         isComplete: success,
         trackTitle: Self._lastTrackTitle,
         artistName: Self._lastArtistName,
-        artworkURL: Self._lastArtworkURL
+        artworkURL: Self._lastArtworkURL,
+        recentPosts: Self._lastRecentPosts
       )
       await activity.update(using: finalState)
       try? await Task.sleep(nanoseconds: 1_600_000_000)
@@ -146,6 +178,7 @@ class VybeDownloadActivityModule: NSObject {
     _lastTrackTitle = trackTitle
     _lastArtistName = artistName
     _lastArtworkURL = artworkURL
+    _lastRecentPosts = kDefaultIslandFeed
     _endToken &+= 1
     Task { @MainActor in
       if #available(iOS 16.2, *), _currentActivity as? Activity<VybeActivityAttributes> != nil {
@@ -155,7 +188,8 @@ class VybeDownloadActivityModule: NSObject {
       let attributes = VybeActivityAttributes(trackTitle: trackTitle, artistName: artistName, artworkURL: artworkURL)
       let initialState = VybeActivityAttributes.DownloadState(
         progress: 0.0, statusText: "Starting…", isComplete: false,
-        trackTitle: trackTitle, artistName: artistName, artworkURL: artworkURL
+        trackTitle: trackTitle, artistName: artistName, artworkURL: artworkURL,
+        recentPosts: _lastRecentPosts
       )
       do {
         let activity = try Activity<VybeActivityAttributes>.request(
@@ -176,7 +210,8 @@ class VybeDownloadActivityModule: NSObject {
       let state = VybeActivityAttributes.DownloadState(
         progress: clamped, statusText: statusText,
         isComplete: clamped >= 0.999,
-        trackTitle: _lastTrackTitle, artistName: _lastArtistName, artworkURL: _lastArtworkURL
+        trackTitle: _lastTrackTitle, artistName: _lastArtistName, artworkURL: _lastArtworkURL,
+        recentPosts: _lastRecentPosts
       )
       await activity.update(using: state)
     }
@@ -193,7 +228,8 @@ class VybeDownloadActivityModule: NSObject {
         progress: success ? 1.0 : 0.0,
         statusText: success ? "Downloaded" : "Failed",
         isComplete: success,
-        trackTitle: _lastTrackTitle, artistName: _lastArtistName, artworkURL: _lastArtworkURL
+        trackTitle: _lastTrackTitle, artistName: _lastArtistName, artworkURL: _lastArtworkURL,
+        recentPosts: _lastRecentPosts
       )
       await activity.update(using: finalState)
       try? await Task.sleep(nanoseconds: 1_600_000_000)

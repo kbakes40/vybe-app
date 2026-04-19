@@ -259,7 +259,8 @@ export default function AppLayout() {
     tabLeaf === 'library' ||
     tabLeaf === 'discover' ||
     tabLeaf === 'profile' ||
-    tabLeaf === 'social';
+    tabLeaf === 'social' ||
+    tabLeaf === 'plan';
   const pathNorm = String(pathname ?? '/').replace(/\/$/, '') || '/';
   const isTabPath =
     pathNorm === '/' ||
@@ -268,7 +269,8 @@ export default function AppLayout() {
     pathNorm === '/library' ||
     pathNorm === '/discover' ||
     pathNorm === '/profile' ||
-    pathNorm === '/social';
+    pathNorm === '/social' ||
+    pathNorm === '/plan';
   const isTabScreen = segs.includes('(tabs)') || isKnownTabLeaf || isTabPath;
 
   const miniPlayerBottom = isTabScreen

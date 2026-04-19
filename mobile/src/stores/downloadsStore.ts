@@ -5,7 +5,11 @@ import * as FileSystem from 'expo-file-system';
 import { NativeModules, Platform } from 'react-native';
 import { Track } from '@/types/music';
 import { getShadowSyncDir, shadowSyncFilename } from './storageSettingsStore';
-import { getVybeDownloadActivityModule, startVybeDownloadLiveActivity } from '@/lib/audio/PlaybackController';
+import {
+  getVybeDownloadActivityModule,
+  startVybeDownloadLiveActivity,
+  takeLiveActivityFeedSnapshot,
+} from '@/lib/audio/PlaybackController';
 
 // ── Native background downloader (iOS only) ─────────────────────────────────
 // Uses URLSession.background so downloads keep running — and the Dynamic
@@ -83,7 +87,7 @@ function _laFlush(): void {
   _laPending = null;
   _laLastSentAt = Date.now();
   try {
-    getVybeDownloadActivityModule()?.updateProgress(progress, statusText);
+    getVybeDownloadActivityModule()?.updateProgress(progress, statusText, takeLiveActivityFeedSnapshot());
   } catch {}
 }
 

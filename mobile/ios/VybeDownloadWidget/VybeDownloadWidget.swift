@@ -53,6 +53,55 @@ private struct CompactAlbumArt: View {
 
 // MARK: - Expanded marquee line (horizontal scroll illusion)
 
+/// Brand / activity lines in the expanded Dynamic Island (max 3, each ≤ 60 chars).
+@available(iOS 16.1, *)
+private struct IslandFeedCarousel: View {
+    let posts: [String]
+
+    private var lines: [String] {
+        if posts.isEmpty {
+            return [
+                "DaVinci · Machined Cyan 2.1 — tighter vault handoffs.",
+                "Krak Coffee · Winter roast — Vybe Alerts partner taps.",
+                "STAK · Stacked plates pop-up — RSVP this weekend.",
+            ].map { String($0.prefix(60)) }
+        }
+        return Array(posts.prefix(3)).map { String($0.prefix(60)) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                lineView(line)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func lineView(_ line: String) -> some View {
+        Group {
+            if #available(iOSApplicationExtension 17.0, *) {
+                Text(line)
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.9))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // ContentTransition has no .push(from:) — that API lives on AnyTransition.
+                    // .opacity is the cleanest swap for a Text content-change animation here.
+                    .contentTransition(.opacity)
+            } else {
+                Text(line)
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white.opacity(0.9))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+}
+
 @available(iOS 16.1, *)
 private struct MachinedMarqueeLine: View {
     let text: String
@@ -122,6 +171,7 @@ struct VybeDownloadWidget: Widget {
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 8) {
+                        IslandFeedCarousel(posts: context.state.recentPosts)
                         MachinedMarqueeLine(
                             text: displayTitle(context),
                             font: .system(size: 15, weight: .semibold)
@@ -135,8 +185,12 @@ struct VybeDownloadWidget: Widget {
                             .progressViewStyle(.linear)
                             .tint(MachinedPalette.cyan)
                     }
-                    .padding(10)
+                    .padding(.top, 38)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 10)
+                    .frame(minHeight: 160, alignment: .top)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.84), value: context.state.recentPosts)
                     .overlay(
                         TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: false)) { timeline in
                             // Triangle-wave breathe on a 1.3s cycle: opacity 0.8 ↔ 1.0.

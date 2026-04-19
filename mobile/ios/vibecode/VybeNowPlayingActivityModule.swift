@@ -49,6 +49,7 @@ class VybeNowPlayingActivityModule: RCTEventEmitter {
     info[MPMediaItemPropertyArtist] = artistName
     info[MPMediaItemPropertyPlaybackDuration] = duration
     info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
+    info[MPNowPlayingInfoPropertyMediaType] = NSNumber(value: MPMediaType.music.rawValue)
     // Drop the previous track's artwork the moment the URL changes so the
     // Dynamic Island doesn't flash stale art while the new image downloads.
     if artworkUrl != currentArtworkURL {
@@ -69,9 +70,12 @@ class VybeNowPlayingActivityModule: RCTEventEmitter {
   ) {
     guard isActive else { return }
     var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+    info[MPMediaItemPropertyTitle] = trackName
+    info[MPMediaItemPropertyArtist] = artistName
     info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
     info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
     if total > 0 { info[MPMediaItemPropertyPlaybackDuration] = total }
+    info[MPNowPlayingInfoPropertyMediaType] = NSNumber(value: MPMediaType.music.rawValue)
     MPNowPlayingInfoCenter.default().nowPlayingInfo = info
   }
 
@@ -125,13 +129,14 @@ class VybeNowPlayingActivityModule: RCTEventEmitter {
 
   private func ensurePlaybackSession() {
     let session = AVAudioSession.sharedInstance()
-    if session.category == .playback { return }
     do {
-      try session.setCategory(.playback, mode: .default, options: [])
+      if session.category != .playback {
+        try session.setCategory(.playback, mode: .default, options: [])
+      }
       try session.setActive(true)
-      NSLog("[VybeNowPlaying] AVAudioSession set to .playback")
+      NSLog("[VybeNowPlaying] AVAudioSession playback active")
     } catch {
-      NSLog("[VybeNowPlaying] AVAudioSession setCategory(.playback) failed: \(error.localizedDescription)")
+      NSLog("[VybeNowPlaying] AVAudioSession activation failed: \(error.localizedDescription)")
     }
   }
 

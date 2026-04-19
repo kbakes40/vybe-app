@@ -7,7 +7,8 @@ RCT_EXTERN_METHOD(startActivity:(NSString *)trackTitle
                   artworkURL:(NSString *)artworkURL)
 
 RCT_EXTERN_METHOD(updateProgress:(double)progress
-                  statusText:(NSString *)statusText)
+                  statusText:(NSString *)statusText
+                  recentPosts:(NSArray *_Nullable)recentPosts)
 
 RCT_EXTERN_METHOD(endActivity:(BOOL)success)
 

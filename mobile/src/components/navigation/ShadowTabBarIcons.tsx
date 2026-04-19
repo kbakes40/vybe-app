@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Platform, StyleSheet } from 'react-native';
-import Svg, { Path, Circle, Line } from 'react-native-svg';
+import Svg, { Path, Circle, Line, Rect } from 'react-native-svg';
 import { Radar } from 'lucide-react-native';
 import Animated, {
   Easing,
@@ -305,6 +305,52 @@ export function ShadowSparkleIcon({ size, color }: IconBase) {
         strokeWidth={SHADOW_TAB_STROKE}
         strokeLinejoin="round"
         strokeLinecap="round"
+      />
+    </Svg>
+  );
+}
+
+/** Vault / visualizer — vertical bars (activity tab standard). */
+export function ShadowVaultWaveIcon({ size, color }: IconBase) {
+  const s = size;
+  return (
+    <Svg width={s} height={s} viewBox="0 0 24 24" fill="none">
+      <Rect x={5} y={11} width={2.5} height={7} rx={1} fill={color} />
+      <Rect x={9.25} y={7} width={2.5} height={11} rx={1} fill={color} />
+      <Rect x={13.5} y={9} width={2.5} height={9} rx={1} fill={color} />
+      <Rect x={17.75} y={6} width={2.5} height={12} rx={1} fill={color} />
+    </Svg>
+  );
+}
+
+/** Plan / grid — 2×2 cells (Your Plan tab). */
+export function ShadowPlanGridIcon({ size, color }: IconBase) {
+  const s = size;
+  const u = 7.5;
+  const g = 2.5;
+  const o = 4;
+  return (
+    <Svg width={s} height={s} viewBox="0 0 24 24" fill="none">
+      <Rect x={o} y={o} width={u} height={u} rx={1.5} stroke={color} strokeWidth={SHADOW_TAB_STROKE} />
+      <Rect x={o + u + g} y={o} width={u} height={u} rx={1.5} stroke={color} strokeWidth={SHADOW_TAB_STROKE} />
+      <Rect x={o} y={o + u + g} width={u} height={u} rx={1.5} stroke={color} strokeWidth={SHADOW_TAB_STROKE} />
+      <Rect x={o + u + g} y={o + u + g} width={u} height={u} rx={1.5} stroke={color} strokeWidth={SHADOW_TAB_STROKE} />
+    </Svg>
+  );
+}
+
+/** Profile tab — bold V mark (unified purple stroke from parent `color`). */
+export function ShadowProfileVybeVIcon({ size, color }: IconBase) {
+  const s = size;
+  return (
+    <Svg width={s} height={s} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M6 5 L12 19 L18 5"
+        stroke={color}
+        strokeWidth={SHADOW_TAB_STROKE + 0.35}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
       />
     </Svg>
   );

@@ -18,12 +18,13 @@ import {
   Trash2,
   Mail,
   UserRound,
+  Wifi,
 } from 'lucide-react-native';
 import Svg, { Path } from 'react-native-svg';
 import { authClient } from '@/lib/auth/auth-client';
 import { clearSessionBearerToken } from '@/lib/auth/sessionBearer';
 import { useVybePopup } from '@/components/VybePopup';
-import { OLED_BLACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
+import { OLED_BLACK, MACHINED_CYAN, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
 
 // Mock accounts data
 const MOCK_ACCOUNTS: Array<{ id: string; name: string; email: string; image: string; isCurrent: boolean }> = [];
@@ -281,6 +282,35 @@ export default function AccountsScreen() {
         contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
         showsVerticalScrollIndicator={false}
       >
+        <View style={{ marginTop: 16, paddingHorizontal: 16 }}>
+          <Text style={acctStyles.sectionLabel}>CONNECTED DEVICES</Text>
+          <View style={acctStyles.connectedPanel}>
+            <View style={acctStyles.deviceRow}>
+              <Wifi size={18} color={NAV_BAR_PURPLE} strokeWidth={2} />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={acctStyles.deviceTitle} numberOfLines={2}>
+                  Steve Jobs&apos; Left Toe (iPhone 15 Pro Max)
+                </Text>
+              </View>
+              <View style={acctStyles.statusBadge}>
+                <Text style={acctStyles.statusBadgeText}>LOGIC ACTIVE</Text>
+              </View>
+            </View>
+            <View style={acctStyles.deviceDivider} />
+            <View style={acctStyles.deviceRow}>
+              <Wifi size={18} color={NAV_BAR_PURPLE} strokeWidth={2} />
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={acctStyles.deviceTitle} numberOfLines={2}>
+                  {'Louis 🔐🔐🏴☠️ (iPhone 14 Pro Max)'}
+                </Text>
+              </View>
+              <View style={acctStyles.statusBadge}>
+                <Text style={acctStyles.statusBadgeText}>NATIVE PILL ACTIVE</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
         {/* Accounts List */}
         <View className="mt-4">
           <Text className="text-white/50 text-xs uppercase tracking-wider px-5 mb-3 font-medium">
@@ -410,7 +440,7 @@ const acctStyles = StyleSheet.create({
     borderRadius: 14,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.2)',
+    borderColor: 'rgba(0,255,255,0.22)',
     backgroundColor: OLED_BLACK,
   },
   addPanel: {
@@ -418,6 +448,53 @@ const acctStyles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.18)',
+    borderColor: 'rgba(0,255,255,0.2)',
+  },
+  sectionLabel: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 2.2,
+    marginBottom: 10,
+  },
+  connectedPanel: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(0,255,255,0.22)',
+    backgroundColor: OLED_BLACK,
+    overflow: 'hidden',
+  },
+  deviceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+  deviceDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    marginLeft: 42,
+  },
+  deviceTitle: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+  },
+  statusBadge: {
+    borderWidth: 1,
+    borderColor: MACHINED_CYAN,
+    backgroundColor: 'rgba(0,255,255,0.14)',
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 6,
+    maxWidth: 120,
+  },
+  statusBadgeText: {
+    color: MACHINED_CYAN,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+    textAlign: 'center',
   },
 });
