@@ -13,7 +13,10 @@ export const authClient = createAuthClient({
   baseURL: process.env.EXPO_PUBLIC_BACKEND_URL! as string,
   plugins: [
     expoClient({
-      scheme: "vibecode",
+      // Must match `expo.scheme` in mobile/app.json — using anything else
+      // makes Expo's Linking module log "scheme 'vibecode' does not appear
+      // in the list of possible URI schemes" on every navigation/auth event.
+      scheme: "vybe",
       storagePrefix: "vybe",
       storage: SecureStore,
     }),

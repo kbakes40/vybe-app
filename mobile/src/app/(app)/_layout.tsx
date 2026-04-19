@@ -126,7 +126,7 @@ export default function AppLayout() {
     return () => sub.remove();
   }, []);
 
-  // Handle vibecode://import?url=... and vibecode://downloads deep links
+  // Handle vybe://import?url=... and vybe://downloads deep links
   useEffect(() => {
     let handledInitial = false;
     let lastHandledUrl: string | null = null;
@@ -142,7 +142,7 @@ export default function AppLayout() {
       try {
         const parsed = new URL(url);
         const host = parsed.host || parsed.pathname.replace(/^\/+/, '').split('/')[0];
-        // Hard-block any vibecode://downloads deep link — stale pills from
+        // Hard-block any vybe://downloads deep link — stale pills from
         // older widget builds may still emit this. Ignore it entirely.
         if (host === 'downloads') return;
         const target = parsed.searchParams.get('url');
