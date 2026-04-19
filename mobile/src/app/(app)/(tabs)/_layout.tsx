@@ -10,9 +10,10 @@ import {
 import {
   ShadowHomeIcon,
   ShadowLibraryIcon,
-  ShadowProfileIcon,
+  ShadowPlanGridIcon,
+  ShadowProfileVybeVIcon,
   ShadowSearchIcon,
-  ShadowSparkleIcon,
+  ShadowVaultWaveIcon,
   ShadowTabIconShell,
   SHADOW_TAB_ACTIVE,
   SHADOW_TAB_INACTIVE,
@@ -24,6 +25,7 @@ import { TAB_BAR_HEIGHT } from '@/constants/Layout';
 import { useKeyboardChromeStore } from '@/stores/keyboardChromeStore';
 import { ShadowMachinedTabBar } from '@/components/navigation/ShadowMachinedTabBar';
 import { useTabBarBloomStore } from '@/stores/tabBarBloomStore';
+import { NAV_BAR_PURPLE } from '@/constants/machinedTheme';
 
 const VYBE_TAB_ICON = require('../../../../assets/images/icon.png');
 
@@ -385,6 +387,38 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
+          name="social"
+          options={{
+            title: 'Activity',
+            tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="social" />,
+            tabBarIcon: ({ focused, size }) => {
+              const dim = size ?? ICON_SIZE;
+              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              return (
+                <ShadowTabIconShell focused={focused} pressRoute="social">
+                  <ShadowVaultWaveIcon size={dim} color={c} />
+                </ShadowTabIconShell>
+              );
+            },
+          }}
+        />
+        <Tabs.Screen
+          name="plan"
+          options={{
+            title: 'Your Plan',
+            tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="plan" />,
+            tabBarIcon: ({ focused, size }) => {
+              const dim = size ?? ICON_SIZE;
+              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              return (
+                <ShadowTabIconShell focused={focused} pressRoute="plan">
+                  <ShadowPlanGridIcon size={dim} color={c} />
+                </ShadowTabIconShell>
+              );
+            },
+          }}
+        />
+        <Tabs.Screen
           name="library"
           options={{
             title: 'Your Library',
@@ -413,26 +447,10 @@ export default function TabLayout() {
             tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="profile" />,
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
-              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              const c = focused ? NAV_BAR_PURPLE : SHADOW_TAB_INACTIVE;
               return (
                 <ShadowTabIconShell focused={focused} pressRoute="profile">
-                  <ShadowProfileIcon size={dim} color={c} />
-                </ShadowTabIconShell>
-              );
-            },
-          }}
-        />
-        <Tabs.Screen
-          name="social"
-          options={{
-            title: 'Social',
-            tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="social" />,
-            tabBarIcon: ({ focused, size }) => {
-              const dim = size ?? ICON_SIZE;
-              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
-              return (
-                <ShadowTabIconShell focused={focused} pressRoute="social">
-                  <ShadowSparkleIcon size={dim} color={c} />
+                  <ShadowProfileVybeVIcon size={dim} color={c} />
                 </ShadowTabIconShell>
               );
             },
@@ -446,7 +464,11 @@ export default function TabLayout() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    // No solid backgroundColor — the outer GestureHandlerRootView paints black.
+    // Keeping this transparent lets the root-level <DynamicIsland /> (zIndex 9999)
+    // render over every tab screen instead of being painted over by an opaque
+    // tab container. Individual tabs should keep their own backgrounds transparent too.
+    backgroundColor: 'transparent',
   },
   // Tab button style - only handles layout, NOT icon size
   tabButton: {
