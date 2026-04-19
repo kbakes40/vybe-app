@@ -1,31 +1,31 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { View, StyleSheet, AppState, Linking, Text, Pressable } from 'react-native';
 import { Stack, usePathname, useRouter, useSegments } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NowPlayingSheet } from '@/components/NowPlayingSheet';
+import { MiniPlayer } from '@/components/MiniPlayer';
 import { AirPlayPill } from '@/components/AirPlayPill';
 import { usePlaybackController } from '@/stores/playbackController';
 import { SoundCloudWebViewPool, SoundCloudWebViewPoolRef } from '@/components/SoundCloudWebViewPool';
 import { YouTubeWebViewPool, YouTubeWebViewPoolRef } from '@/components/YouTubeWebViewPool';
 import { PlaybackDebugOverlay } from '@/components/PlaybackDebugOverlay';
 import { PiPVideoOverlay } from '@/components/PiPVideoOverlay';
+import { ShadowPlaybackToast } from '@/components/ShadowPlaybackToast';
+import { DavinciDynamicsOverlay } from '@/components/DavinciDynamicsOverlay';
 import { useSignalTracker } from '@/hooks/useSignalTracker';
 import { useDiscoveryRefresh } from '@/hooks/useDiscoveryRefresh';
 import { authClient } from '@/lib/auth/auth-client';
 import { configurePurchases, getCustomerInfo, isPremiumActive } from '@/lib/purchases';
 import { useSubscriptionStore, setVipEmail } from '@/stores/subscriptionStore';
-import * as Clipboard from 'expo-clipboard';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming } from 'react-native-reanimated';
 import { X } from 'lucide-react-native';
 
-import {
-  MINI_PLAYER_HEIGHT,
-  TAB_BAR_BASE_HEIGHT,
-  MINI_PLAYER_TAB_FLUSH_OVERLAP_PX,
-} from '@/constants/miniPlayer';
+import { MINI_PLAYER_HEIGHT, MINI_PLAYER_TAB_FLUSH_OVERLAP_PX } from '@/constants/miniPlayer';
+import { TAB_BAR_HEIGHT, BOTTOM_DOCK_HEIGHT } from '@/constants/Layout';
 
 // Re-export for screens that already import from this layout file
-export { MINI_PLAYER_HEIGHT, TAB_BAR_BASE_HEIGHT };
+export { MINI_PLAYER_HEIGHT, TAB_BAR_HEIGHT, BOTTOM_DOCK_HEIGHT };
 
 // Global refs to the warm WebView pools
 export let warmSoundCloudRef: React.RefObject<SoundCloudWebViewPoolRef | null> | null = null;
@@ -53,8 +53,10 @@ const PLATFORM_META: Record<MusicPlatform, { label: string; color: string; symbo
 export default function AppLayout() {
   // Unified playback store — mini player mirrors the same `currentTrack` as `MiniPlayer` / `NowPlayingSheet`.
   const currentTrack = usePlaybackController((s) => s.currentTrack);
+  const playbackRevision = usePlaybackController((s) => s.playbackRevision);
   const insets = useSafeAreaInsets();
-  const showMiniPlayer = currentTrack != null;
+  /** Keep now-playing shell mounted so MMKV-hydrated metadata can show on cold start. */
+  const mountNowPlayingChrome = true;
   const soundcloudPoolRef = useRef<SoundCloudWebViewPoolRef>(null);
   const youtubePoolRef = useRef<YouTubeWebViewPoolRef>(null);
   const segments = useSegments();
@@ -253,11 +255,8 @@ export default function AppLayout() {
     pathNorm === '/social';
   const isTabScreen = segs.includes('(tabs)') || isKnownTabLeaf || isTabPath;
 
-  // Tab bar height (only applies on tab screens)
-  const tabBarHeight = TAB_BAR_BASE_HEIGHT + insets.bottom;
-
   const miniPlayerBottom = isTabScreen
-    ? Math.max(0, tabBarHeight - MINI_PLAYER_TAB_FLUSH_OVERLAP_PX)
+    ? Math.max(0, TAB_BAR_HEIGHT + insets.bottom - MINI_PLAYER_TAB_FLUSH_OVERLAP_PX)
     : Math.max(insets.bottom, 0);
 
   return (
@@ -265,7 +264,7 @@ export default function AppLayout() {
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: '#0A0A0A' },
+          contentStyle: { backgroundColor: '#000000' },
         }}
       >
         <Stack.Screen name="(tabs)" />
@@ -273,8 +272,12 @@ export default function AppLayout() {
           name="nowPlaying"
           options={{
             presentation: 'transparentModal',
-            animation: 'none',
+            animation: 'fade',
+            headerShown: false,
+            headerTransparent: true,
+            headerShadowVisible: false,
             contentStyle: { backgroundColor: 'transparent' },
+            gestureEnabled: true,
           }}
         />
         <Stack.Screen
@@ -307,6 +310,9 @@ export default function AppLayout() {
             animation: 'slide_from_right',
             gestureEnabled: true,
             fullScreenGestureEnabled: true,
+            headerShown: false,
+            headerTransparent: true,
+            contentStyle: { backgroundColor: '#000000' },
           }}
         />
         <Stack.Screen
@@ -387,12 +393,8 @@ export default function AppLayout() {
             animation: 'slide_from_right',
           }}
         />
-        <Stack.Screen
-          name="discover-onboarding"
-          options={{
-            animation: 'slide_from_right',
-          }}
-        />
+        {/* discover-onboarding disabled — users no longer walk through the
+            genres/moods/artists setup. Feed renders from default seeds. */}
         <Stack.Screen
           name="vybe-originals"
           options={{
@@ -427,7 +429,7 @@ export default function AppLayout() {
       />
 
       {/* Global mini player — floats above tab bar; zIndex ensures it stacks above (tabs) stack. */}
-      {showMiniPlayer ? (
+      {mountNowPlayingChrome ? (
         <View
           pointerEvents="box-none"
           style={{
@@ -436,17 +438,37 @@ export default function AppLayout() {
             right: 0,
             top: 0,
             bottom: 0,
-            zIndex: 9999,
-            elevation: 9999,
+            zIndex: 1002,
+            elevation: 1002,
           }}
         >
           <NowPlayingSheet miniPlayerBottom={miniPlayerBottom} />
         </View>
       ) : null}
 
+      {mountNowPlayingChrome ? (
+        <View
+          key={`mini-${currentTrack?.id ?? 'none'}-${playbackRevision}`}
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            top: 0,
+            bottom: 0,
+            zIndex: 1000,
+            elevation: 1000,
+          }}
+        >
+          <MiniPlayer bottomLift={miniPlayerBottom} />
+        </View>
+      ) : null}
+
       {/* Playback Debug Overlay - only visible when debug mode is enabled */}
       <PlaybackDebugOverlay />
       <PiPVideoOverlay />
+      <ShadowPlaybackToast />
+      <DavinciDynamicsOverlay />
 
       {/* Floating AirPlay pill — appears top-right while AirPlay is active so
           the user stays on their current screen (no forced full-screen player) */}
@@ -535,6 +557,6 @@ export default function AppLayout() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#000000',
   },
 });

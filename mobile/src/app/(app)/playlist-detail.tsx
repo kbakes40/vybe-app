@@ -14,16 +14,23 @@ import {
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
-import { Svg, Circle, Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
+import { Svg, Circle } from 'react-native-svg';
 import { FlashList, type ListRenderItemInfo } from '@shopify/flash-list';
+import {
+  buildPlaylistDetailFlashRows,
+  HouseAdLinkSheet,
+  MainstreetTeesBannerRow,
+  useEasterEggAdViewabilityHandler,
+  HOUSE_AD_VIEWABILITY,
+  HOUSE_AD_URLS,
+  type PlaylistDetailListItem,
+} from '@/components/HouseAds';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import {
   ChevronLeft,
   Play,
-  Download,
   Share2,
   MoreVertical,
   Music,
@@ -35,11 +42,16 @@ import {
   Sparkles,
   User,
   FileText,
-  CloudDownload,
-  Shirt,
 } from 'lucide-react-native';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
-import Animated, { SharedValue, useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
+import Animated, {
+  SharedValue,
+  useAnimatedStyle,
+  useAnimatedScrollHandler,
+  useSharedValue,
+  interpolate,
+  Extrapolation,
+} from 'react-native-reanimated';
 import { normalizeYoutubePlaylistTracksPayload } from '@/lib/youtubePlaylistTracksNormalize';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useDownloadsStore, downloadYouTubeTrack, downloadSoundCloudTrack } from '@/stores/downloadsStore';
@@ -66,15 +78,21 @@ function DeleteAction({ progress, onPress }: { progress: SharedValue<number>; on
     </Animated.View>
   );
 }
-import { usePlaylistHeroColors } from '@/lib/usePlaylistHeroColors';
 import { api } from '@/lib/api/api';
 import { createMMKVCache, TTL } from '@/lib/mmkv-cache';
 import { Track } from '@/types/music';
-import { PLAYLIST_DOCKED_PADDING_BOTTOM } from '@/constants/Layout';
-import { radialBackdropForPlaylistName } from '@/lib/vybePlaylistBackdrop';
+import { stackScreenContentContainerPaddingBottom } from '@/constants/Layout';
+import {
+  DECADES_70S_PLAYLIST_ID,
+  DECADES_90S_PLAYLIST_ID,
+  buildMainstreetThreadsVaultTrack,
+} from '@/constants/decadesVault';
+import { HahaVendingSilhouette } from '@/components/easterEggs/HahaVendingSilhouette';
 import { DownloadButton, GhostSweepRing } from '@/components/DownloadButton';
+import { MachinedCloudIcon } from '@/components/MachinedCloudIcon';
 import { useUserPlaylistStore } from '@/stores/userPlaylistStore';
 import { PlaylistDetailTrackRow } from '@/components/PlaylistDetailTrackRow';
+import { PlaylistDiscoverMoreRow } from '@/components/PlaylistDiscoverMoreRow';
 import { preResolveSoundcloudStreamUrl } from '@/lib/soundcloudStreamPreloadCache';
 import { preResolveYoutubeVideoId } from '@/lib/youtubeResolvePreloadCache';
 
@@ -86,10 +104,21 @@ const discoverMMKV = createMMKVCache('vybe-discover');
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const HALF = SCREEN_WIDTH / 2;
 
-/** Partner branding — opens in browser */
-const MAINSTREET_TEES_URL = 'https://mainstreettees.com/';
+/** Taller editorial hero — bleeds under status bar when header is transparent */
+const HERO_HEIGHT = Math.round(SCREEN_WIDTH * 0.95);
 
 const ACTION_SIZE = 48;
+
+const AnimatedFlashList = Animated.createAnimatedComponent(FlashList<PlaylistDetailListItem>);
+
+function upgradePlaylistArtworkUrl(url: string): string {
+  if (!url) return url;
+  const m = url.match(/i\.ytimg\.com\/vi\/([^/]+)\//);
+  if (m?.[1]) return `https://i.ytimg.com/vi/${m[1]}/maxresdefault.jpg`;
+  return url.replace(/\/(hqdefault|mqdefault|sddefault)\.jpg/i, '/maxresdefault.jpg');
+}
+
+const SHADOW_MAGENTA = '#FF00FF';
 
 /** Determinate thin progress ring (Shadow) for batch download */
 function ShadowProgressRing({ size, progress }: { size: number; progress: number }) {
@@ -177,39 +206,19 @@ function toTrack(t: PlaylistTrack, playlist: CuratedPlaylist): Track {
   };
 }
 
-function VybeMusicBadge() {
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-      <View style={{
-        width: 22, height: 22, backgroundColor: '#FF0000', borderRadius: 11,
-        alignItems: 'center', justifyContent: 'center',
-      }}>
-        <View style={{
-          width: 0, height: 0,
-          borderLeftWidth: 7, borderTopWidth: 4.5, borderBottomWidth: 4.5,
-          borderLeftColor: '#fff', borderTopColor: 'transparent', borderBottomColor: 'transparent',
-          marginLeft: 2,
-        }} />
-      </View>
-      <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15, marginLeft: 8 }}>
-        Vybe Music
-      </Text>
-    </View>
-  );
-}
-
 type PlaylistDetailListHeaderProps = {
   playlist: CuratedPlaylist;
   tracks: Track[];
   durationStr: string;
-  heroGlow: string;
   insetsTop: number;
   artworks: string[];
   downloadingAll: boolean;
   downloadAllProgress: number;
+  scrollY: SharedValue<number>;
   onBack: () => void;
   onDownloadAll: () => void;
   onPlayAll: () => void;
+  onShuffle: () => void;
   onShare: () => void;
   onOpenMore: () => void;
 };
@@ -218,57 +227,100 @@ function PlaylistDetailListHeader({
   playlist,
   tracks,
   durationStr,
-  heroGlow,
   insetsTop,
   artworks,
   downloadingAll,
   downloadAllProgress,
+  scrollY,
   onBack,
   onDownloadAll,
   onPlayAll,
+  onShuffle,
   onShare,
   onOpenMore,
 }: PlaylistDetailListHeaderProps) {
+  const heroScaleStyle = useAnimatedStyle(() => {
+    const y = scrollY.value;
+    const scale = interpolate(y, [0, 240], [1, 1.1], Extrapolation.CLAMP);
+    return { transform: [{ scale }] };
+  });
+
+  const heroBlurStyle = useAnimatedStyle(() => {
+    const y = scrollY.value;
+    const opacity = interpolate(y, [0, 48, 200], [0, 0.4, 0.92], Extrapolation.CLAMP);
+    return { opacity };
+  });
+
+  const upgradedArtworks = artworks.map(upgradePlaylistArtworkUrl);
+  const primaryThumb = upgradedArtworks[0] ?? upgradePlaylistArtworkUrl(playlist.thumbnailUrl);
+
+  const editorialAuthor =
+    tracks.length === 0
+      ? 'VYBE'
+      : [...new Set(tracks.map((t) => t.artist))].length <= 2
+        ? [...new Set(tracks.map((t) => t.artist))].join(' · ').toUpperCase()
+        : 'VARIOUS ARTISTS';
+
   return (
     <>
-      <View style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH, position: 'relative' }}>
-        {artworks.length >= 4 ? (
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: SCREEN_WIDTH, height: SCREEN_WIDTH }}>
-            {artworks.map((uri, i) => (
-              <Image
-                key={i}
-                source={{ uri }}
-                style={{ width: HALF, height: HALF }}
-                contentFit="cover"
-                cachePolicy="memory-disk"
-                transition={150}
-              />
-            ))}
-          </View>
-        ) : artworks.length > 0 ? (
-          <Image
-            source={{ uri: artworks[0] }}
-            style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH }}
-            contentFit="cover"
-            cachePolicy="memory-disk"
-            transition={150}
-          />
-        ) : (
-          <View style={{ width: SCREEN_WIDTH, height: SCREEN_WIDTH, backgroundColor: '#1C1C1C', alignItems: 'center', justifyContent: 'center' }}>
-            <Music size={80} color="rgba(255,255,255,0.2)" />
-          </View>
-        )}
+      <View style={{ width: SCREEN_WIDTH, height: HERO_HEIGHT, overflow: 'hidden', backgroundColor: '#000' }}>
+        <Animated.View style={[{ width: SCREEN_WIDTH, height: HERO_HEIGHT }, heroScaleStyle]}>
+          {upgradedArtworks.length >= 4 ? (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', width: SCREEN_WIDTH, height: HERO_HEIGHT }}>
+              {upgradedArtworks.slice(0, 4).map((uri, i) => (
+                <Image
+                  key={i}
+                  source={{ uri }}
+                  style={{ width: HALF, height: HERO_HEIGHT / 2 }}
+                  contentFit="cover"
+                  cachePolicy="memory-disk"
+                  transition={180}
+                />
+              ))}
+            </View>
+          ) : primaryThumb ? (
+            <Image
+              source={{ uri: primaryThumb }}
+              style={{ width: SCREEN_WIDTH, height: HERO_HEIGHT }}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={180}
+            />
+          ) : (
+            <View
+              style={{
+                width: SCREEN_WIDTH,
+                height: HERO_HEIGHT,
+                backgroundColor: '#0A0A0A',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Music size={72} color="rgba(255,255,255,0.12)" />
+            </View>
+          )}
+        </Animated.View>
+
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFillObject,
+            heroBlurStyle,
+            { backgroundColor: 'rgba(0,0,0,0.22)' },
+          ]}
+        />
 
         <LinearGradient
-          colors={['rgba(0,0,0,0.78)', 'rgba(0,0,0,0.22)', 'transparent']}
-          locations={[0, 0.42, 1]}
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 170, zIndex: 1 }}
+          colors={['rgba(0,0,0,0.55)', 'transparent']}
+          locations={[0, 0.35]}
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 140, zIndex: 1 }}
           pointerEvents="none"
         />
 
         <LinearGradient
-          colors={['transparent', `${heroGlow}55`, '#0A0A0A'] as unknown as readonly [string, string, ...string[]]}
-          style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 160 }}
+          colors={['transparent', '#000000']}
+          locations={[0.15, 1]}
+          style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: HERO_HEIGHT * 0.55, zIndex: 2 }}
           pointerEvents="none"
         />
 
@@ -276,13 +328,13 @@ function PlaylistDetailListHeader({
           onPress={onBack}
           style={{
             position: 'absolute',
-            top: insetsTop + 8,
-            left: 16,
-            zIndex: 10,
-            width: 40,
-            height: 40,
-            borderRadius: 20,
-            backgroundColor: 'rgba(0,0,0,0.55)',
+            top: insetsTop + 6,
+            left: 14,
+            zIndex: 12,
+            width: 42,
+            height: 42,
+            borderRadius: 21,
+            backgroundColor: 'rgba(0,0,0,0.45)',
             alignItems: 'center',
             justifyContent: 'center',
           }}
@@ -291,125 +343,87 @@ function PlaylistDetailListHeader({
         </Pressable>
       </View>
 
-      <View style={{ marginTop: 12, paddingHorizontal: 16 }}>
-        <View
+      <View style={{ paddingHorizontal: 20, marginTop: 18, backgroundColor: '#000000' }}>
+        <Text
           style={{
-            borderRadius: 14,
-            overflow: 'hidden',
-            borderWidth: StyleSheet.hairlineWidth,
-            borderColor: 'rgba(217, 70, 239, 0.22)',
+            color: '#FFFFFF',
+            fontSize: 32,
+            fontWeight: '900',
+            letterSpacing: -0.8,
+            marginBottom: 12,
           }}
+          numberOfLines={2}
+          ellipsizeMode="tail"
         >
-          <BlurView intensity={52} tint="dark" style={StyleSheet.absoluteFillObject} />
-          <View style={{ paddingHorizontal: 18, paddingVertical: 14 }}>
-            <Text
-              style={{
-                color: '#fff',
-                fontSize: 26,
-                fontWeight: '800',
-                letterSpacing: -0.5,
-                marginBottom: 12,
-              }}
-              numberOfLines={2}
-              ellipsizeMode="tail"
-            >
-              {playlist.name}
-            </Text>
+          {playlist.name}
+        </Text>
 
-            <Pressable
-              onPress={() => {
-                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                Linking.openURL(MAINSTREET_TEES_URL).catch(() => {});
-              }}
-              style={({ pressed }) => [
-                {
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 10,
-                  paddingVertical: 10,
-                  paddingHorizontal: 12,
-                  marginBottom: 12,
-                  borderRadius: 10,
-                  backgroundColor: 'rgba(0, 0, 0, 0.35)',
-                  borderWidth: 1,
-                  borderColor: 'rgba(245, 158, 11, 0.35)',
-                },
-                pressed && { opacity: 0.88 },
-              ]}
-            >
-              <Shirt size={20} color="#D946EF" strokeWidth={2.2} />
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: 'rgba(252, 231, 243, 0.95)', fontSize: 10, fontWeight: '800', letterSpacing: 2 }}>
-                  MAINSTREET TEES
-                </Text>
-                <Text style={{ color: 'rgba(244, 244, 245, 0.72)', fontSize: 12, fontWeight: '600', marginTop: 2 }}>
-                  Premium apparel · Vybe collab
-                </Text>
-              </View>
-              <Text style={{ color: '#FBBF24', fontSize: 11, fontWeight: '800' }}>Shop</Text>
-            </Pressable>
-
-            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
-              <VybeMusicBadge />
-              <Text
-                style={{
-                  color: 'rgba(255,255,255,0.45)',
-                  fontSize: 13,
-                  marginLeft: 10,
-                  flexShrink: 1,
-                }}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {`${tracks.length} songs · ${durationStr}`}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        <View style={{ height: 16 }} />
-
-        {/* Action bar — fixed row height; Play expands, circular actions stay full size */}
-        <View
+        <Text
           style={{
-            height: 60,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 16,
-            marginTop: 4,
+            color: SHADOW_MAGENTA,
+            fontSize: 12,
+            fontWeight: '700',
+            letterSpacing: 2,
+            textTransform: 'uppercase',
+            marginBottom: 22,
           }}
+          numberOfLines={2}
         >
+          {`${editorialAuthor}  ·  ${tracks.length} SONGS  ·  ${durationStr.toUpperCase()}`}
+        </Text>
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 }}>
           <Pressable
             onPress={onPlayAll}
             style={{
               flex: 1,
               minWidth: 0,
-              height: ACTION_SIZE,
-              borderRadius: ACTION_SIZE / 2,
-              backgroundColor: 'rgba(255,255,255,0.9)',
+              height: 52,
+              borderRadius: 26,
+              backgroundColor: '#FFFFFF',
               alignItems: 'center',
               justifyContent: 'center',
               flexDirection: 'row',
               ...Platform.select({
                 ios: {
-                  shadowColor: '#8B5CF6',
-                  shadowOffset: { width: 0, height: 4 },
-                  shadowOpacity: 0.4,
-                  shadowRadius: 14,
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 6 },
+                  shadowOpacity: 0.35,
+                  shadowRadius: 12,
                 },
-                android: {
-                  elevation: 10,
-                },
+                android: { elevation: 8 },
                 default: {},
               }),
             }}
           >
-            <Play size={20} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 3 }} />
-            <Text style={{ color: '#0A0A0A', fontWeight: '800', fontSize: 15, marginLeft: 8, letterSpacing: 0.35 }}>
-              Play All
+            <Play size={22} color="#000000" fill="#000000" style={{ marginLeft: 2 }} />
+            <Text style={{ color: '#000000', fontWeight: '800', fontSize: 16, marginLeft: 10, letterSpacing: 0.2 }}>
+              Play
             </Text>
           </Pressable>
 
+          <Pressable
+            onPress={onShuffle}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              height: 52,
+              borderRadius: 26,
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.35)',
+              backgroundColor: 'transparent',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexDirection: 'row',
+              gap: 8,
+            }}
+          >
+            <Shuffle size={20} color="#FFFFFF" strokeWidth={2.2} />
+            <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 15, letterSpacing: 0.3 }}>Shuffle</Text>
+          </Pressable>
+        </View>
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20, marginBottom: 8 }}>
           <Pressable
             onPress={onDownloadAll}
             disabled={downloadingAll}
@@ -424,12 +438,12 @@ function PlaylistDetailListHeader({
           >
             {downloadingAll ? (
               downloadAllProgress <= 0.02 ? (
-                <GhostSweepRing size={24} />
+                <GhostSweepRing size={22} />
               ) : (
-                <ShadowProgressRing size={24} progress={downloadAllProgress} />
+                <ShadowProgressRing size={22} progress={downloadAllProgress} />
               )
             ) : (
-              <Download size={20} color="#FFFFFF" strokeWidth={2} />
+              <MachinedCloudIcon size={22} strokeWidth={2} />
             )}
           </Pressable>
 
@@ -463,8 +477,17 @@ function PlaylistDetailListHeader({
         </View>
       </View>
 
-      <View style={{ marginTop: 28, paddingHorizontal: 4 }}>
-        <Text style={{ color: 'rgba(255,255,255,0.42)', fontSize: 12, fontWeight: '600', letterSpacing: 0.6, marginLeft: 12, marginBottom: 6 }}>
+      <View style={{ marginTop: 22, paddingHorizontal: 4, backgroundColor: '#000000' }}>
+        <Text
+          style={{
+            color: 'rgba(255,255,255,0.38)',
+            fontSize: 11,
+            fontWeight: '700',
+            letterSpacing: 1.4,
+            marginLeft: 12,
+            marginBottom: 8,
+          }}
+        >
           TRACKS
         </Text>
       </View>
@@ -491,6 +514,7 @@ export default function PlaylistDetailScreen() {
   const [downloadAllProgress, setDownloadAllProgress] = useState(0);
   const [moreOpen, setMoreOpen] = useState(false);
   const [creditsOpen, setCreditsOpen] = useState(false);
+  const [mainstreetSheetOpen, setMainstreetSheetOpen] = useState(false);
   // Track per-row progress during Download All so each row can render its
   // own live % without using the per-button DownloadButton state machine.
   const [batchActiveId, setBatchActiveId] = useState<string | null>(null);
@@ -559,7 +583,45 @@ export default function PlaylistDetailScreen() {
     void load();
   }, [id]);
 
-  const tracks = playlist ? playlist.tracks.map(t => toTrack(t, playlist)) : [];
+  const tracks = useMemo(() => {
+    if (!playlist) return [] as Track[];
+    const base = playlist.tracks.map((t) => toTrack(t, playlist));
+    if (playlist.playlistId !== DECADES_70S_PLAYLIST_ID) return base;
+    const egg = buildMainstreetThreadsVaultTrack(`ytm-pl-${playlist.playlistId}`);
+    const at = Math.min(6, base.length);
+    const out = [...base];
+    out.splice(at, 0, egg);
+    return out;
+  }, [playlist]);
+
+  const playlistTitleForAds = playlist?.name?.trim() || routePlaylistName?.trim() || '';
+  const flashListData = useMemo(
+    () => buildPlaylistDetailFlashRows(tracks, playlistTitleForAds, id || undefined),
+    [tracks, playlistTitleForAds, id],
+  );
+
+  const mergedFlashData = useMemo((): PlaylistDetailListItem[] => {
+    if (!(recommended.length > 0 || recommendedLoading)) return flashListData;
+    const tail: PlaylistDetailListItem[] = [{ type: 'discover-header' }];
+    if (recommendedLoading && recommended.length === 0) {
+      tail.push(
+        { type: 'discover-skeleton', id: 'd-sk-0' },
+        { type: 'discover-skeleton', id: 'd-sk-1' },
+        { type: 'discover-skeleton', id: 'd-sk-2' },
+      );
+    } else {
+      for (const t of recommended) {
+        tail.push({ type: 'discover-track', track: t });
+      }
+    }
+    tail.push({ type: 'discover-fade' });
+    return [...flashListData, ...tail];
+  }, [flashListData, recommended, recommendedLoading]);
+
+  const { onViewableItemsChanged, resetFired } = useEasterEggAdViewabilityHandler();
+  useEffect(() => {
+    resetFired();
+  }, [id, resetFired]);
 
   // Warm disk+memory cache for hero + every row thumbnail (no FastImage native dep).
   useEffect(() => {
@@ -649,13 +711,15 @@ export default function PlaylistDetailScreen() {
     return () => { cancelled = true; };
   }, [playlist?.name]);
 
-  // Warm first 5 recommended SoundCloud streams + artwork (instant tap).
+  // Pre-warm SoundCloud streams + artwork for Discover More (instant tap / scroll).
   useEffect(() => {
     if (recommended.length === 0) return;
-    for (const t of recommended.slice(0, 5)) {
+    for (const t of recommended.slice(0, 20)) {
       if (t.soundcloudUrl) preResolveSoundcloudStreamUrl(t.soundcloudUrl);
+      const ytid = t.youtubeMusicId ?? t.youtubeId;
+      if (ytid) preResolveYoutubeVideoId(ytid);
     }
-    const arts = recommended.slice(0, 8).map(t => t.artwork).filter(Boolean);
+    const arts = recommended.slice(0, 12).map(t => t.artwork).filter(Boolean);
     void Image.prefetch(arts);
   }, [recommended]);
 
@@ -676,16 +740,28 @@ export default function PlaylistDetailScreen() {
   // starts in the background, the MiniPlayer shows at the bottom, and the
   // user stays on whatever screen they were on (matches Spotify's behavior
   // and keeps Apple TV / AirPlay from being interrupted by a black screen).
-  const handlePlayAll = useCallback(() => {
-    if (tracks.length === 0) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    playTrack(tracks[0], tracks);
-  }, [tracks, playTrack]);
+  const playableTracks = useMemo(
+    () => tracks.filter((t) => !t.externalHandoffUrl?.trim()),
+    [tracks],
+  );
 
-  const handlePlayTrack = useCallback((track: Track) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    playTrack(track, tracks);
-  }, [tracks, playTrack]);
+  const handlePlayAll = useCallback(() => {
+    if (playableTracks.length === 0) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    playTrack(playableTracks[0]!, playableTracks);
+  }, [playableTracks, playTrack]);
+
+  const handlePlayTrack = useCallback(
+    (track: Track) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      if (track.externalHandoffUrl?.trim()) {
+        void Linking.openURL(track.externalHandoffUrl.trim());
+        return;
+      }
+      playTrack(track, playableTracks.length > 0 ? playableTracks : tracks);
+    },
+    [tracks, playableTracks, playTrack],
+  );
 
   const handleShare = useCallback(async () => {
     if (!playlist) return;
@@ -698,27 +774,27 @@ export default function PlaylistDetailScreen() {
 
   const addToQueue = usePlaybackController(s => s.addToQueue);
   const handleShuffle = useCallback(() => {
-    if (tracks.length === 0) return;
+    if (playableTracks.length === 0) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setMoreOpen(false);
     // Cap the shuffle queue at 30 so we don't choke playback when a
     // 50+ track playlist tries to spin up crossfade prefetch + /info
     // round-trips in parallel. User still gets 30 varied tracks queued,
     // plenty for a listening session.
-    const shuffled = [...tracks].sort(() => Math.random() - 0.5).slice(0, 30);
+    const shuffled = [...playableTracks].sort(() => Math.random() - 0.5).slice(0, 30);
     // Defer the playTrack call a tick so the ripple/haptic animations
     // get a frame to render before the blocking audio-session setup.
     requestAnimationFrame(() => {
       playTrack(shuffled[0], shuffled);
     });
-  }, [tracks, playTrack]);
+  }, [playableTracks, playTrack]);
 
   const handleAddAllToQueue = useCallback(() => {
-    if (tracks.length === 0) return;
+    if (playableTracks.length === 0) return;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setMoreOpen(false);
-    tracks.forEach(t => addToQueue(t));
-  }, [tracks, addToQueue]);
+    playableTracks.forEach((t) => addToQueue(t));
+  }, [playableTracks, addToQueue]);
 
   const handleDownloadAllRecommended = useCallback(async () => {
     if (recDownloadingAll || recommended.length === 0) return;
@@ -755,6 +831,7 @@ export default function PlaylistDetailScreen() {
     const toDownload = tracks
       .filter(
         t =>
+          !t.externalHandoffUrl?.trim() &&
           !isTrackDownloaded(t.id) &&
           !!(t.youtubeId || t.youtubeMusicId || t.soundcloudUrl),
       )
@@ -801,18 +878,18 @@ export default function PlaylistDetailScreen() {
   }, [playlist, tracks, downloadingAll, isTrackDownloaded]);
 
   const handleAddPlaylistToLibrary = useCallback(() => {
-    if (!playlist || tracks.length === 0) return;
+    if (!playlist || playableTracks.length === 0) return;
     const { playlists, createPlaylist, addTracksToPlaylist } = useUserPlaylistStore.getState();
     const libName = `Library · ${playlist.name}`;
     const existing = playlists.find(p => p.name === libName);
     if (existing) {
-      addTracksToPlaylist(existing.id, tracks);
+      addTracksToPlaylist(existing.id, playableTracks);
     } else {
-      createPlaylist(libName, tracks);
+      createPlaylist(libName, playableTracks);
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setMoreOpen(false);
-  }, [playlist, tracks]);
+  }, [playlist, playableTracks]);
 
   const handleAddToVybeMix = useCallback(() => {
     setMoreOpen(false);
@@ -821,25 +898,24 @@ export default function PlaylistDetailScreen() {
   }, [router]);
 
   const handleGoToArtist = useCallback(() => {
-    const first = tracks[0];
+    const first = playableTracks[0];
     if (!first) return;
     setMoreOpen(false);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.push(`/(app)/artist/${encodeURIComponent(first.artistId)}` as never);
-  }, [tracks, router]);
+  }, [playableTracks, router]);
 
-  const bottomPadding = PLAYLIST_DOCKED_PADDING_BOTTOM + insets.bottom;
+  const listPadBottom = stackScreenContentContainerPaddingBottom(insets.bottom);
 
-  const vibeRadial = useMemo(
-    () => radialBackdropForPlaylistName(playlist?.name ?? ''),
-    [playlist?.name],
-  );
+  const scrollY = useSharedValue(0);
+  const onScroll = useAnimatedScrollHandler({
+    onScroll: (e) => {
+      scrollY.value = e.contentOffset.y;
+    },
+  });
 
   // Build 2x2 collage artwork from first 4 tracks
   const artworks = playlist?.tracks.slice(0, 4).map(t => t.thumbnailUrl) ?? [];
-  // Dominant-color palette pulled from the first track's thumbnail so the
-  // fade into the track list matches the artwork.
-  const heroColors = usePlaylistHeroColors(artworks[0]);
 
   const durationStr = useMemo(() => {
     const totalMins = Math.round(tracks.length * 3.5);
@@ -850,18 +926,175 @@ export default function PlaylistDetailScreen() {
 
   const artworkSig = artworks.join('|');
 
-  const renderPlaylistTrack = useCallback(
-    ({ item }: ListRenderItemInfo<Track>) => (
-      <PlaylistDetailTrackRow
-        track={item}
-        isActive={currentTrack?.id === item.id}
-        isBatchTarget={batchActiveId === item.id}
-        batchProgress={batchProgress}
-        onPress={handlePlayTrack}
-      />
-    ),
-    [currentTrack?.id, batchActiveId, batchProgress, handlePlayTrack],
+  const renderPlaylistRow = useCallback(
+    ({ item }: ListRenderItemInfo<PlaylistDetailListItem>) => {
+      if (item.type === 'house-ad' && item.kind === 'mainstreet') {
+        return (
+          <MainstreetTeesBannerRow
+            graffitiNeonBorder={!!item.easterEgg}
+            onOpenSheet={() => setMainstreetSheetOpen(true)}
+          />
+        );
+      }
+      if (item.type === 'discover-header') {
+        return (
+          <View style={{ marginBottom: 6, paddingHorizontal: 4 }}>
+            <View style={{ borderTopWidth: 1, borderColor: '#FFFFFF10', marginBottom: 14 }} />
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text
+                  style={{
+                    fontWeight: '900',
+                    letterSpacing: 2,
+                    color: 'rgba(255,255,255,0.4)',
+                    fontSize: 11,
+                  }}
+                >
+                  DISCOVER MORE
+                </Text>
+                <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12, marginTop: 8 }}>
+                  Vybe Waves · matched to this playlist
+                </Text>
+              </View>
+              {recommended.length > 0 ? (
+                <Pressable
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    handleDownloadAllRecommended();
+                  }}
+                  disabled={recDownloadingAll}
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 20,
+                    borderWidth: 1,
+                    borderColor: 'rgba(255,255,255,0.22)',
+                    backgroundColor: 'transparent',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  {recDownloadingAll ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <MachinedCloudIcon size={20} strokeWidth={2.2} />
+                  )}
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+        );
+      }
+      if (item.type === 'discover-skeleton') {
+        if (id === DECADES_90S_PLAYLIST_ID) {
+          return (
+            <View key={item.id} style={{ marginBottom: 12, alignItems: 'center' }}>
+              <HahaVendingSilhouette />
+            </View>
+          );
+        }
+        return (
+          <View
+            style={{
+              height: 72,
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingHorizontal: 10,
+              marginBottom: 6,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: '#FFFFFF10',
+              backgroundColor: 'rgba(10,10,10,0.5)',
+            }}
+          >
+            <View style={{ width: 52, height: 52, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.06)' }} />
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <View style={{ height: 14, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.06)', width: '72%', marginBottom: 8 }} />
+              <View style={{ height: 12, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.05)', width: '48%' }} />
+            </View>
+          </View>
+        );
+      }
+      if (item.type === 'discover-fade') {
+        return (
+          <View style={{ height: 52, marginBottom: 4, marginHorizontal: -8 }}>
+            <LinearGradient
+              colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.55)', '#000000']}
+              locations={[0, 0.5, 1]}
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
+          </View>
+        );
+      }
+      if (item.type === 'discover-track') {
+        const { track } = item;
+        const row = (
+          <PlaylistDiscoverMoreRow
+            track={track}
+            isBatchTarget={batchActiveId === track.id}
+            batchProgress={batchProgress}
+            onPress={(t) => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              playTrack(t, recommended);
+            }}
+          />
+        );
+        if (!isTrackDownloaded(track.id)) return row;
+        return (
+          <ReanimatedSwipeable
+            friction={2}
+            rightThreshold={60}
+            renderRightActions={(progress) => (
+              <DeleteAction
+                progress={progress}
+                onPress={() => {
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                  removeDownload(track.id);
+                }}
+              />
+            )}
+            onSwipeableWillOpen={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
+          >
+            {row}
+          </ReanimatedSwipeable>
+        );
+      }
+      if (item.type !== 'track') return null;
+      const { track } = item;
+      return (
+        <PlaylistDetailTrackRow
+          track={track}
+          isActive={currentTrack?.id === track.id}
+          isBatchTarget={batchActiveId === track.id}
+          batchProgress={batchProgress}
+          onPress={handlePlayTrack}
+        />
+      );
+    },
+    [
+      id,
+      currentTrack?.id,
+      batchActiveId,
+      batchProgress,
+      handlePlayTrack,
+      recommended,
+      recDownloadingAll,
+      handleDownloadAllRecommended,
+      playTrack,
+      isTrackDownloaded,
+      removeDownload,
+    ],
   );
+
+  const flashKeyExtractor = useCallback((item: PlaylistDetailListItem) => {
+    if (item.type === 'house-ad') return item.id;
+    if (item.type === 'discover-header') return 'discover-header';
+    if (item.type === 'discover-fade') return 'discover-fade';
+    if (item.type === 'discover-skeleton') return item.id;
+    if (item.type === 'discover-track') return `discover-${item.track.id}`;
+    return item.track.id;
+  }, []);
 
   const listHeader = useMemo(() => {
     if (!playlist) return <View />;
@@ -870,17 +1103,18 @@ export default function PlaylistDetailScreen() {
         playlist={playlist}
         tracks={tracks}
         durationStr={durationStr}
-        heroGlow={heroColors.glow}
         insetsTop={insets.top}
         artworks={artworks}
         downloadingAll={downloadingAll}
         downloadAllProgress={downloadAllProgress}
+        scrollY={scrollY}
         onBack={() => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
           router.back();
         }}
         onDownloadAll={handleDownloadAll}
         onPlayAll={handlePlayAll}
+        onShuffle={handleShuffle}
         onShare={handleShare}
         onOpenMore={() => {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -892,7 +1126,7 @@ export default function PlaylistDetailScreen() {
     playlist,
     tracks,
     durationStr,
-    heroColors.glow,
+    scrollY,
     insets.top,
     artworkSig,
     downloadingAll,
@@ -900,158 +1134,12 @@ export default function PlaylistDetailScreen() {
     router,
     handleDownloadAll,
     handlePlayAll,
+    handleShuffle,
     handleShare,
   ]);
 
-  const listFooter = useMemo(() => {
-    if (!(recommended.length > 0 || recommendedLoading)) return null;
-    return (
-      <View
-        style={{
-          marginTop: 8,
-          marginHorizontal: 4,
-          paddingBottom: 24,
-          paddingTop: 12,
-          borderWidth: 0.5,
-          borderColor: 'rgba(212, 175, 55, 0.4)',
-          borderRadius: 14,
-          backgroundColor: 'rgba(255,255,255,0.02)',
-        }}
-      >
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4, paddingHorizontal: 12 }}>
-          <View
-            style={{
-              width: 28,
-              height: 28,
-              borderRadius: 8,
-              backgroundColor: 'rgba(255,255,255,0.1)',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginRight: 10,
-            }}
-          >
-            <Music size={14} color="rgba(255,255,255,0.92)" strokeWidth={2} />
-          </View>
-          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Recommended</Text>
-          <View style={{ flex: 1 }} />
-          {recommended.length > 0 ? (
-            <Pressable
-              onPress={handleDownloadAllRecommended}
-              disabled={recDownloadingAll}
-              style={{
-                width: 40, height: 40, borderRadius: 20,
-                backgroundColor: recDownloadingAll ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.14)',
-                alignItems: 'center', justifyContent: 'center',
-                marginRight: 4,
-              }}
-            >
-              {recDownloadingAll
-                ? <ActivityIndicator size="small" color="#fff" />
-                : <Download size={18} color="#fff" strokeWidth={2.5} />
-              }
-            </Pressable>
-          ) : null}
-        </View>
-        <Text style={{ color: '#999999', fontSize: 13, marginBottom: 14, paddingHorizontal: 12 }}>Similar tracks from Vybe Waves</Text>
-        {recommendedLoading && recommended.length === 0 ? (
-          <View style={{ paddingVertical: 16, paddingHorizontal: 12, gap: 10 }}>
-            {[0, 1, 2].map((i) => (
-              <View key={i} style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <View style={{ width: 52, height: 52, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.06)' }} />
-                <View style={{ flex: 1, marginLeft: 14, gap: 6 }}>
-                  <View style={{ height: 14, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.06)', width: '72%' }} />
-                  <View style={{ height: 12, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.05)', width: '48%' }} />
-                </View>
-              </View>
-            ))}
-          </View>
-        ) : (
-          recommended.map((track) => {
-            const isBatchTarget = batchActiveId === track.id;
-            const pct = Math.round(batchProgress * 100);
-            const isDownloaded = isTrackDownloaded(track.id);
-            const row = (
-              <Pressable
-                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, recommended); }}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  paddingVertical: 14,
-                  paddingHorizontal: 6,
-                  borderRadius: 10,
-                  borderWidth: 0.5,
-                  borderColor: 'rgba(212, 175, 55, 0.12)',
-                  backgroundColor: isBatchTarget ? 'rgba(139,92,246,0.12)' : 'transparent',
-                  marginBottom: 6,
-                }}
-              >
-                <Image
-                  source={{ uri: track.artwork }}
-                  style={{ width: 52, height: 52, borderRadius: 8 }}
-                  contentFit="cover"
-                  cachePolicy="memory-disk"
-                  recyclingKey={track.id}
-                  transition={120}
-                />
-                <View style={{ flex: 1, marginLeft: 14 }}>
-                  <Text style={{ color: '#FFFFFF', fontWeight: '600', fontSize: 15 }} numberOfLines={1}>{track.title}</Text>
-                  <Text style={{ color: '#999999', fontWeight: '400', fontSize: 13, marginTop: 3 }} numberOfLines={1}>{track.artist}</Text>
-                  {isBatchTarget ? (
-                    <View style={{ marginTop: 8, height: 3, borderRadius: 2, backgroundColor: 'rgba(139,92,246,0.2)', overflow: 'hidden' }}>
-                      <View style={{ height: 3, width: `${Math.max(2, pct)}%`, backgroundColor: '#8B5CF6' }} />
-                    </View>
-                  ) : null}
-                </View>
-                <View style={{ padding: 4, minWidth: 44, alignItems: 'center' }}>
-                  {isBatchTarget ? (
-                    <View style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, backgroundColor: 'rgba(139,92,246,0.2)' }}>
-                      <Text style={{ color: '#8B5CF6', fontSize: 11, fontWeight: '700' }}>{pct}%</Text>
-                    </View>
-                  ) : (
-                    <DownloadButton track={track} size={26} idleColor="rgba(255,255,255,0.88)" />
-                  )}
-                </View>
-              </Pressable>
-            );
-
-            if (!isDownloaded) return <View key={track.id}>{row}</View>;
-
-            return (
-              <ReanimatedSwipeable
-                key={track.id}
-                friction={2}
-                rightThreshold={60}
-                renderRightActions={(progress) => (
-                  <DeleteAction
-                    progress={progress}
-                    onPress={() => {
-                      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-                      removeDownload(track.id);
-                    }}
-                  />
-                )}
-                onSwipeableWillOpen={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)}
-              >
-                {row}
-              </ReanimatedSwipeable>
-            );
-          })
-        )}
-      </View>
-    );
-  }, [
-    recommended,
-    recommendedLoading,
-    batchActiveId,
-    batchProgress,
-    playTrack,
-    recDownloadingAll,
-    handleDownloadAllRecommended,
-    isTrackDownloaded,
-    removeDownload,
-  ]);
-
   if (loading) {
+    const is90sVault = id === DECADES_90S_PLAYLIST_ID;
     return (
       <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
         <Pressable
@@ -1072,11 +1160,16 @@ export default function PlaylistDetailScreen() {
           <ChevronLeft size={24} color="#fff" />
         </Pressable>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <ActivityIndicator color="#FF0000" size="large" />
+          <ActivityIndicator color={is90sVault ? '#00E5FF' : '#FF0000'} size="large" />
           {routePlaylistName ? (
             <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 15, marginTop: 16, paddingHorizontal: 32 }} numberOfLines={2}>
               Loading {routePlaylistName}…
             </Text>
+          ) : null}
+          {is90sVault ? (
+            <View style={{ marginTop: 24 }}>
+              <HahaVendingSilhouette compact />
+            </View>
           ) : null}
         </View>
       </View>
@@ -1097,31 +1190,30 @@ export default function PlaylistDetailScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
-      <Svg
-        width={SCREEN_WIDTH}
-        height={440}
-        style={{ position: 'absolute', top: 0, left: 0 }}
-        pointerEvents="none"
-      >
-        <Defs>
-          <RadialGradient id="plVibeRadial" cx="50%" cy="18%" r="75%">
-            <Stop offset="0%" stopColor={vibeRadial.center} stopOpacity={0.55} />
-            <Stop offset="100%" stopColor={vibeRadial.fade} stopOpacity={0} />
-          </RadialGradient>
-        </Defs>
-        <Rect x={0} y={0} width={SCREEN_WIDTH} height={440} fill="url(#plVibeRadial)" />
-      </Svg>
-      <FlashList
-        data={tracks}
-        keyExtractor={(item) => item.id}
-        renderItem={renderPlaylistTrack}
-        estimatedItemSize={130}
+    <View style={{ flex: 1, backgroundColor: '#000000' }}>
+      <AnimatedFlashList
+        data={mergedFlashData}
+        keyExtractor={flashKeyExtractor}
+        renderItem={renderPlaylistRow}
+        estimatedItemSize={72}
+        drawDistance={500}
         ListHeaderComponent={listHeader}
-        ListFooterComponent={listFooter}
-        extraData={`${currentTrack?.id ?? ''}-${batchActiveId ?? ''}-${batchProgress.toFixed(3)}`}
+        extraData={`${currentTrack?.id ?? ''}-${batchActiveId ?? ''}-${batchProgress.toFixed(3)}-${mergedFlashData.length}-${recommended.length}-${recommendedLoading ? 1 : 0}`}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: bottomPadding, paddingHorizontal: 8 }}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={HOUSE_AD_VIEWABILITY}
+        contentContainerStyle={{ paddingBottom: listPadBottom, paddingHorizontal: 8 }}
+      />
+
+      <HouseAdLinkSheet
+        visible={mainstreetSheetOpen}
+        onClose={() => setMainstreetSheetOpen(false)}
+        title="Mainstreet Tees × Vybe"
+        body="Streetwear drops and custom prints built for the vault. Tap below to open the shop."
+        url={HOUSE_AD_URLS.mainstreetTees}
+        ctaLabel="Open store"
       />
 
       {/* Only mount when open — pre-mounted sheet kept full-opacity children while "closed", so rows drew over the track list (zIndex -1 is unreliable). */}
@@ -1140,8 +1232,6 @@ export default function PlaylistDetailScreen() {
                 backgroundColor: '#121212',
               }}
             >
-              <BlurView intensity={90} tint="dark" style={StyleSheet.absoluteFill} />
-              <View style={{ backgroundColor: 'rgba(18,18,18,0.92)' }}>
                 <View style={{ width: 40, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, alignSelf: 'center', marginTop: 10, marginBottom: 10 }} />
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingBottom: 12 }}>
                   <Text
@@ -1164,7 +1254,15 @@ export default function PlaylistDetailScreen() {
                   style={styles.shadowSheetRow}
                   disabled={downloadingAll || tracks.length === 0}
                 >
-                  <CloudDownload size={22} color={downloadingAll || tracks.length === 0 ? 'rgba(255,255,255,0.35)' : '#fff'} strokeWidth={2} />
+                  {downloadingAll ? (
+                    <GhostSweepRing size={22} />
+                  ) : (
+                    <MachinedCloudIcon
+                      size={22}
+                      strokeWidth={2}
+                      disabled={tracks.length === 0}
+                    />
+                  )}
                   <Text style={[styles.shadowSheetLabel, (downloadingAll || tracks.length === 0) && { color: 'rgba(255,255,255,0.35)' }]}>
                     Sync All
                   </Text>
@@ -1217,7 +1315,6 @@ export default function PlaylistDetailScreen() {
               </View>
             </View>
           </View>
-        </View>
       ) : null}
 
       <Modal visible={creditsOpen} transparent animationType="fade" onRequestClose={() => setCreditsOpen(false)}>

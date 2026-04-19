@@ -17,7 +17,7 @@ import { DownloadButton } from '@/components/DownloadButton';
 import { useVybePopup } from '@/components/VybePopup';
 import { Track } from '@/types/music';
 import { usePlaylistHeroColors } from '@/lib/usePlaylistHeroColors';
-import { PLAYLIST_DOCKED_PADDING_BOTTOM } from '@/constants/Layout';
+import { stackScreenContentContainerPaddingBottom } from '@/constants/Layout';
 
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
 
@@ -195,7 +195,6 @@ function TrackDeleteAction({ progress, onPress }: { progress: SharedValue<number
 }
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const HERO_ART_SIDE_INSET = 60;
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 export default function MyPlaylistScreen() {
@@ -350,13 +349,13 @@ export default function MyPlaylistScreen() {
     });
   };
 
-  const ARTWORK_SIZE = SCREEN_WIDTH - HERO_ART_SIDE_INSET * 2;
+  const ARTWORK_SIZE = SCREEN_WIDTH - 120;
 
   return (
     <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
       <ScrollView
         style={{ flex: 1, backgroundColor: '#0A0A0A' }}
-        contentContainerStyle={{ paddingBottom: PLAYLIST_DOCKED_PADDING_BOTTOM + insets.bottom }}
+        contentContainerStyle={{ paddingBottom: stackScreenContentContainerPaddingBottom(insets.bottom) }}
         showsVerticalScrollIndicator={false}
       >
         {/* Header gradient — dominant color from the playlist artwork → black. */}

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useDavinciDynamicsStore } from '@/stores/davinciDynamicsStore';
 
 /**
  * Playback Debug Store
@@ -214,8 +215,16 @@ export const usePlaybackDebugStore = create<PlaybackDebugState>()(
       },
 
       addDebugLog: (message, level = 'info') => {
+        useDavinciDynamicsStore.getState().push(`[PlaybackDebug] ${message}`, level);
+
         const { debugLogs, debugModeEnabled } = get();
-        if (!debugModeEnabled) return;
+        if (!debugModeEnabled) {
+          const prefix = '[PlaybackDebug]';
+          if (level === 'error') console.error(prefix, message);
+          else if (level === 'warn') console.warn(prefix, message);
+          else console.log(prefix, message);
+          return;
+        }
 
         const newLog = {
           timestamp: Date.now(),
@@ -223,11 +232,9 @@ export const usePlaybackDebugStore = create<PlaybackDebugState>()(
           level,
         };
 
-        // Keep last 20 logs
         const newLogs = [...debugLogs, newLog].slice(-20);
         set({ debugLogs: newLogs });
 
-        // Also console log for devs
         const prefix = '[PlaybackDebug]';
         if (level === 'error') {
           console.error(prefix, message);

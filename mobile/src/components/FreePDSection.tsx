@@ -1,10 +1,13 @@
 import React from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { ChevronRight, Music, RefreshCw } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Track } from '@/types/music';
 import { FreePDTrackCard } from './FreePDTrackCard';
 import { cn } from '@/lib/cn';
+import { MachinedGradientText } from '@/components/MachinedGradientText';
+import { VIBRANT_BLUE } from '@/constants/machinedTheme';
 
 interface FreePDSectionProps {
   tracks: Track[];
@@ -14,6 +17,10 @@ interface FreePDSectionProps {
   onSeeAll?: () => void;
   onDownload?: (track: Track) => void;
   className?: string;
+  /** Server-reported total; when set, "See all" hides if this list already shows every track. */
+  catalogTrackTotal?: number | null;
+  sectionTitle?: string;
+  sectionSubtitle?: string;
 }
 
 /**
@@ -28,6 +35,9 @@ export function FreePDSection({
   onSeeAll,
   onDownload,
   className,
+  catalogTrackTotal = null,
+  sectionTitle = 'Waves Archive',
+  sectionSubtitle = 'Ambient field recordings & calm stems',
 }: FreePDSectionProps) {
   const handleSeeAll = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -39,6 +49,10 @@ export function FreePDSection({
     onRetry?.();
   };
 
+  const showSeeAll =
+    Boolean(onSeeAll) &&
+    (catalogTrackTotal == null || tracks.length < catalogTrackTotal);
+
   // Loading skeleton
   if (isLoading) {
     return (
@@ -46,7 +60,7 @@ export function FreePDSection({
         {/* Header */}
         <View className="flex-row items-center justify-between px-5 mb-2">
           <View className="flex-row items-center">
-            <View className="w-5 h-5 bg-[#4CAF50]/30 rounded" />
+            <View className="w-5 h-5 rounded" style={{ backgroundColor: 'rgba(0,229,255,0.22)' }} />
             <View className="ml-2 w-28 h-6 bg-white/10 rounded" />
           </View>
         </View>
@@ -82,8 +96,10 @@ export function FreePDSection({
       <View className={cn('mt-8', className)}>
         {/* Header */}
         <View className="flex-row items-center px-5 mb-2">
-          <Music size={20} color="#4CAF50" />
-          <Text className="text-white text-xl font-bold ml-2">Royalty Free</Text>
+          <Music size={20} color={VIBRANT_BLUE} />
+          <MachinedGradientText neonGlow style={{ fontSize: 20, fontWeight: '800', marginLeft: 8, letterSpacing: 0.35 }}>
+            {sectionTitle}
+          </MachinedGradientText>
         </View>
         {/* Error message */}
         <View className="mx-5 bg-white/5 rounded-xl p-6 items-center">
@@ -93,7 +109,8 @@ export function FreePDSection({
           {onRetry ? (
             <Pressable
               onPress={handleRetry}
-              className="flex-row items-center bg-[#4CAF50] px-4 py-2 rounded-full"
+              className="flex-row items-center px-4 py-2 rounded-full"
+              style={{ backgroundColor: VIBRANT_BLUE }}
             >
               <RefreshCw size={16} color="#fff" />
               <Text className="text-white font-medium ml-2">Try Again</Text>
@@ -114,10 +131,12 @@ export function FreePDSection({
       {/* Section header */}
       <View className="flex-row items-center justify-between px-5 mb-2">
         <View className="flex-row items-center">
-          <Music size={20} color="#4CAF50" />
-          <Text className="text-white text-xl font-bold ml-2">Royalty Free</Text>
+          <Music size={20} color={VIBRANT_BLUE} />
+          <MachinedGradientText neonGlow style={{ fontSize: 20, fontWeight: '800', marginLeft: 8, letterSpacing: 0.35 }}>
+            {sectionTitle}
+          </MachinedGradientText>
         </View>
-        {onSeeAll ? (
+        {showSeeAll ? (
           <Pressable onPress={handleSeeAll} className="flex-row items-center">
             <Text className="text-white/60 text-sm mr-1">See all</Text>
             <ChevronRight size={16} color="rgba(255,255,255,0.6)" />
@@ -127,25 +146,22 @@ export function FreePDSection({
 
       {/* Subtitle */}
       <Text className="text-white/50 text-sm px-5 mb-4">
-        Clean audio you can download
+        {sectionSubtitle}
       </Text>
 
-      {/* Horizontal carousel */}
-      <ScrollView
+      <FlashList
+        data={tracks}
         horizontal
+        keyExtractor={(item) => item.id}
+        estimatedItemSize={176}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingHorizontal: 20 }}
-        style={{ flexGrow: 0 }}
-      >
-        {tracks.map(track => (
-          <FreePDTrackCard
-            key={track.id}
-            track={track}
-            queue={tracks}
-            onDownload={onDownload}
-          />
-        ))}
-      </ScrollView>
+        renderItem={({ item }) => (
+          <View style={{ marginRight: 16 }}>
+            <FreePDTrackCard track={item} queue={tracks} onDownload={onDownload} />
+          </View>
+        )}
+      />
     </View>
   );
 }

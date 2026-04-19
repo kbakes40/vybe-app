@@ -1,0 +1,28 @@
+{
+  "name": "Galeria",
+  "version": "2.0.0-rc.4",
+  "summary": "A native galeria.",
+  "description": "A native galeria.",
+  "license": "MIT",
+  "authors": "Fernando Rojo <frojo@sas.upenn.edu> (https://github.com/nandorojo)",
+  "homepage": "https://github.com/nandorojo/galeria#readme",
+  "platforms": {
+    "ios": "13.0"
+  },
+  "swift_versions": "5.4",
+  "source": {
+    "git": "https://github.com/nandorojo/galeria"
+  },
+  "static_framework": true,
+  "dependencies": {
+    "ExpoModulesCore": [],
+    "SDWebImage": []
+  },
+  "pod_target_xcconfig": {
+    "DEFINES_MODULE": "YES",
+    "SWIFT_COMPILATION_MODE": "wholemodule",
+    "OTHER_SWIFT_FLAGS": "$(inherited) "
+  },
+  "source_files": "**/*.{h,m,swift}",
+  "swift_version": "5.4"
+}

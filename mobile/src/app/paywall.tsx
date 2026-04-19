@@ -24,6 +24,7 @@ import {
   isPremiumActive,
   VybePackages,
 } from '@/lib/purchases';
+import { VybePlusWordmark } from '@/components/VybePlusWordmark';
 
 type PlanType = 'monthly' | 'lifetime';
 
@@ -31,7 +32,7 @@ const BENEFITS = [
   { icon: Shield, text: 'No ads, ever' },
   { icon: SkipForward, text: 'Unlimited skips' },
   { icon: Headphones, text: 'High quality & lossless audio' },
-  { icon: Download, text: 'Offline downloads' },
+  { icon: Download, text: 'Import to Vault' },
   { icon: Sparkles, text: 'Early access to AI releases' },
   { icon: Music, text: 'Advanced discovery controls' },
   { icon: Zap, text: 'Support independent music' },
@@ -112,7 +113,7 @@ export default function PaywallScreen() {
       } else {
         showVybePopup({
           title: 'No Purchase Found',
-          message: 'No previous VYBE Plus subscription was found on this account.',
+          message: 'No previous Vybe+ subscription was found on this account.',
           type: 'info',
         });
       }
@@ -171,9 +172,11 @@ export default function PaywallScreen() {
             >
               <Sparkles size={36} color="#fff" />
             </LinearGradient>
-            <Text className="text-white text-3xl font-bold mb-1">VYBE Plus</Text>
+            <View className="items-center mb-1">
+              <VybePlusWordmark variant="hero" />
+            </View>
             <Text className="text-white/50 text-base text-center mb-6">
-              Unlock the full experience
+              Unlock the Vault — the full Vybe+ experience
             </Text>
           </View>
 

@@ -1,0 +1,6 @@
+module react_native_live_activities {
+  umbrella header "react-native-live-activities-umbrella.h"
+
+  export *
+  module * { export * }
+}

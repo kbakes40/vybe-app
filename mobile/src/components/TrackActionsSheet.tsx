@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, Modal, TextInput, Alert } from 'react-native';
-import { Image } from 'expo-image';
+import { View, Text, Pressable, Modal, Alert } from 'react-native';
+import { VybeTextInput } from '@/components/VybeTextInput';
+import { ShadowArtworkImage } from '@/components/ShadowArtworkImage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Heart, Share2, Plus, X, ListPlus, Trash2 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -90,7 +91,7 @@ export function TrackActionsSheet({ track, visible, onClose }: Props) {
 
           {/* Header — track info */}
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 18, borderBottomWidth: 0.5, borderBottomColor: 'rgba(255,255,255,0.08)' }}>
-            <Image source={{ uri: track.artwork }} style={{ width: 52, height: 52, borderRadius: 6 }} contentFit="cover" />
+            <ShadowArtworkImage source={{ uri: track.artwork }} style={{ width: 52, height: 52, borderRadius: 6 }} contentFit="cover" />
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }} numberOfLines={1}>{track.title}</Text>
               <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 13, marginTop: 2 }} numberOfLines={1}>{track.artist}</Text>
@@ -119,7 +120,7 @@ export function TrackActionsSheet({ track, visible, onClose }: Props) {
               {downloaded ? (
                 <ActionRow
                   icon={<Trash2 size={22} color="#EF4444" />}
-                  label="Remove Download"
+                  label="Remove from Vault"
                   onPress={() => {
                     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
                     removeDownload(track.id);
@@ -139,13 +140,13 @@ export function TrackActionsSheet({ track, visible, onClose }: Props) {
 
               {creatingNew ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TextInput
+                  <VybeTextInput
                     value={newName}
                     onChangeText={setNewName}
                     placeholder="Playlist name"
-                    placeholderTextColor="rgba(255,255,255,0.4)"
                     autoFocus
-                    style={{ flex: 1, backgroundColor: '#222', color: '#fff', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15 }}
+                    variant="default"
+                    style={{ flex: 1, backgroundColor: '#222', borderColor: 'rgba(255,255,255,0.12)', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15 }}
                   />
                   <Pressable onPress={handleCreate} style={{ marginLeft: 10, backgroundColor: '#7C3AED', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 8 }}>
                     <Text style={{ color: '#fff', fontWeight: '600' }}>Create</Text>

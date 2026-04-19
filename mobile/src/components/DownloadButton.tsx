@@ -1,8 +1,10 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { View, Pressable, Animated, StyleSheet, Easing } from 'react-native';
+import { View, Pressable, Animated, StyleSheet, Easing, Platform } from 'react-native';
 import { Svg, Circle, Path } from 'react-native-svg';
 import { XCircle } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import { VIBRANT_BLUE, NEON_IOS_SHADOW } from '@/constants/machinedTheme';
+import { MachinedCloudIcon } from '@/components/MachinedCloudIcon';
 import { downloadYouTubeTrack, downloadSoundCloudTrack, useDownloadsStore, enqueueDownload } from '@/stores/downloadsStore';
 import { ensurePrefetchListeners, usePrefetchStore } from '@/stores/prefetchStore';
 import { Track } from '@/types/music';
@@ -31,18 +33,19 @@ export function ShadowSavedMark({ size }: { size: number }) {
         width: size,
         height: size,
         borderRadius: size / 2,
-        backgroundColor: SHADOW.pillBg,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: SHADOW.pillBorder,
+        backgroundColor: 'rgba(4,14,22,0.94)',
+        borderWidth: 1,
+        borderColor: VIBRANT_BLUE,
         alignItems: 'center',
         justifyContent: 'center',
+        ...(Platform.OS === 'ios' ? NEON_IOS_SHADOW : { elevation: 10 }),
       }}
     >
       <Svg width={glyph} height={glyph} viewBox="0 0 24 24">
         <Path
           d="M5.5 12.5 L10 17 L18.5 8.5"
           fill="none"
-          stroke={SHADOW.vStroke}
+          stroke={VIBRANT_BLUE}
           strokeWidth={stroke}
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -114,6 +117,11 @@ interface DownloadButtonProps {
   size?: number;
   onDownloadComplete?: () => void;
   /**
+   * `ghost` — OLED outline (transparent fill, thin white ring) + light haptic on enqueue.
+   * `brand` — source-colored ring (default).
+   */
+  chrome?: 'brand' | 'ghost';
+  /**
    * Accent color for the idle download icon (arrow + ring border).
    * If omitted, auto-derives from the track's source:
    *  - youtube / youtube_music → #FF0000 (red)
@@ -123,7 +131,7 @@ interface DownloadButtonProps {
   idleColor?: string;
 }
 
-export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor }: DownloadButtonProps) {
+export function DownloadButton({ track, size = 28, onDownloadComplete, chrome = 'brand', idleColor }: DownloadButtonProps) {
   const isTrackDownloaded = useDownloadsStore(s => s.isTrackDownloaded);
   const downloaded = isTrackDownloaded(track.id);
   const prefetchReady = usePrefetchStore(s => s.byTrackId[track.id]?.ready ?? false);
@@ -210,7 +218,9 @@ export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor
     const hasSc = !!track.soundcloudUrl;
     if (!hasYt && !hasSc) return;
 
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    void Haptics.impactAsync(
+      chrome === 'ghost' ? Haptics.ImpactFeedbackStyle.Light : Haptics.ImpactFeedbackStyle.Medium,
+    );
     setIsDownloading(true);
     setProgress(0);
     setFailed(false);
@@ -246,7 +256,7 @@ export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor
         }
       }
     });
-  }, [track, isDownloading, downloaded, animating, runCompletionAnimation, onDownloadComplete]);
+  }, [track, isDownloading, downloaded, animating, runCompletionAnimation, onDownloadComplete, chrome]);
 
   // ── Render helpers ────────────────────────────────────────────────────────
 
@@ -375,40 +385,16 @@ export function DownloadButton({ track, size = 28, onDownloadComplete, idleColor
       );
     }
 
-    // Idle
-    const derivedColor =
-      idleColor ??
-      (track.source === 'youtube' || track.source === 'youtube_music'
-        ? '#FF0000'
-        : track.source === 'soundcloud'
-          ? '#FF7700'
-          : 'rgba(255,255,255,0.75)');
-    // Fade the ring border 20% lower than the arrow for a softer edge.
-    const borderColor = derivedColor.startsWith('rgba')
-      ? 'rgba(255,255,255,0.35)'
-      : derivedColor;
+    // Idle — glowing machined cyan cloud (#00E5FF) for all vault / sync affordances
+    const cloudSize = Math.max(18, Math.round(size * 0.82));
     return (
       <Pressable
         onPress={handleDownload}
-        accessibilityLabel="Keep offline"
+        accessibilityLabel="Import to Vault"
         style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       >
-        <View style={{
-          width: size, height: size, borderRadius: size / 2,
-          borderWidth: 1.5, borderColor,
-          alignItems: 'center', justifyContent: 'center',
-        }}>
-          <View style={{ alignItems: 'center' }}>
-            <View style={{ width: 1.5, height: size * 0.27, backgroundColor: derivedColor, borderRadius: 1 }} />
-            <View style={{
-              width: 0, height: 0,
-              borderLeftWidth: size * 0.18, borderRightWidth: size * 0.18, borderTopWidth: size * 0.18,
-              borderLeftColor: 'transparent', borderRightColor: 'transparent',
-              borderTopColor: derivedColor,
-            }} />
-          </View>
-        </View>
+        <MachinedCloudIcon size={cloudSize} strokeWidth={1.65} />
       </Pressable>
     );
   };

@@ -1,0 +1,1 @@
+../../../../../node_modules/react-native-enriched/ios/generated/RNEnrichedTextInputViewSpec/ComponentDescriptors.h

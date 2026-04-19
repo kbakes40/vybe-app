@@ -1,23 +1,41 @@
 {
   "expo": {
-    "name": "vibecode",
-    "slug": "vibecode",
-    "scheme": "vibecode",
+    "name": "Vybe",
+    "slug": "vybe",
+    "scheme": "vybe",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
+    "backgroundColor": "#000000",
     "newArchEnabled": false,
+    "icon": "./assets/images/icon.png",
+    "splash": {
+      "image": "./assets/images/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.vibecode.vybe",
-      "appleTeamId": "FCXP585VH2"
+      "appleTeamId": "FCXP585VH2",
+      "backgroundColor": "#000000"
     },
     "android": {
       "edgeToEdgeEnabled": true,
-      "package": "com.vibecode.vybe"
+      "package": "com.vibecode.vybe",
+      "softwareKeyboardLayoutMode": "pan",
+      "backgroundColor": "#000000",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#000000"
+      }
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-asset",
+      "expo-video",
+      "expo-web-browser",
+      "react-native-edge-to-edge"
     ],
     "experiments": {
       "typedRoutes": true

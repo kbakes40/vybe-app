@@ -21,6 +21,7 @@ import {
 } from 'lucide-react-native';
 import Svg, { Path } from 'react-native-svg';
 import { authClient } from '@/lib/auth/auth-client';
+import { clearSessionBearerToken } from '@/lib/auth/sessionBearer';
 import { useVybePopup } from '@/components/VybePopup';
 
 // Mock accounts data
@@ -242,12 +243,8 @@ export default function AccountsScreen() {
           text: 'Sign Out All',
           style: 'destructive',
           onPress: async () => {
-            try {
-              await authClient.signOut();
-              router.replace('/sign-in');
-            } catch (error) {
-              console.error('Sign out error:', error);
-            }
+            await authClient.signOut();
+            await clearSessionBearerToken();
           },
         },
       ]

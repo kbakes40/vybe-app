@@ -71,7 +71,7 @@ export const useUserPlaylistStore = create<UserPlaylistState>()(
     }),
     {
       name: 'vybe-user-playlists',
-      storage: mmkvStorage,
+      storage: mmkvStorage as never,
     }
   )
 );

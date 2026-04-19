@@ -1,20 +1,30 @@
 import React, { useRef } from 'react';
-import { View, Text, Pressable, ScrollView, ActivityIndicator, Modal } from 'react-native';
+import { View, Text, Pressable, ScrollView, ActivityIndicator, Modal, StyleSheet, type TextStyle } from 'react-native';
 import ReanimatedSwipeable, { SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, { SharedValue, useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
-import { ChevronLeft, Download, Trash2, FileAudio, HardDrive, Music, Upload, Share2, Cloud, Settings } from 'lucide-react-native';
+import { ChevronLeft, Download, Trash2, FileAudio, HardDrive, Music, Share2, Cloud, Settings } from 'lucide-react-native';
 import { useDownloadsStore, formatFileSize, DownloadedTrack } from '@/stores/downloadsStore';
 import { useStorageSettingsStore } from '@/stores/storageSettingsStore';
 import { usePlaybackController } from '@/stores/playbackController';
-import { MINI_PLAYER_HEIGHT } from './_layout';
 import { useVybePopup } from '@/components/VybePopup';
+import { VaultImportCard } from '@/components/VaultImportCard';
+import { stackScreenContentContainerPaddingBottom } from '@/constants/Layout';
+import { VIBRANT_BLUE, GRAPHITE_GREY } from '@/constants/machinedTheme';
+
+const VAULT_ROW_TITLE: TextStyle = {
+  color: VIBRANT_BLUE,
+  fontWeight: '600',
+  fontSize: 14,
+  textShadowColor: 'rgba(0,229,255,0.5)',
+  textShadowOffset: { width: 0, height: 0 },
+  textShadowRadius: 8,
+};
 
 // ─── TrackRow ────────────────────────────────────────────────────────────────
 
@@ -82,9 +92,11 @@ function TrackRow({ track, isActive, onPlay, onDelete, onShare }: TrackRowProps)
         style={{
           flexDirection: 'row',
           alignItems: 'center',
-          backgroundColor: isActive ? 'rgba(139,92,246,0.15)' : '#1A1A1A',
+          backgroundColor: isActive ? 'rgba(0,229,255,0.08)' : '#000000',
           borderRadius: 10,
           padding: 12,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: isActive ? 'rgba(0,229,255,0.35)' : 'rgba(255,255,255,0.06)',
         }}
       >
         {track.artwork ? (
@@ -94,31 +106,31 @@ function TrackRow({ track, isActive, onPlay, onDelete, onShare }: TrackRowProps)
             contentFit="cover"
           />
         ) : (
-          <View style={{ width: 50, height: 50, backgroundColor: 'rgba(139,92,246,0.2)', borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
-            <Music size={24} color="#8B5CF6" />
+          <View style={{ width: 50, height: 50, backgroundColor: 'rgba(0,229,255,0.12)', borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
+            <Music size={24} color={VIBRANT_BLUE} />
           </View>
         )}
 
         <View style={{ flex: 1, marginLeft: 12 }}>
-          <Text style={{ color: isActive ? '#8B5CF6' : '#fff', fontWeight: '600', fontSize: 14 }} numberOfLines={1}>
+          <Text style={VAULT_ROW_TITLE} numberOfLines={1}>
             {track.title}
           </Text>
-          <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13, marginTop: 1 }} numberOfLines={1}>
+          <Text style={{ color: GRAPHITE_GREY, fontSize: 13, marginTop: 1 }} numberOfLines={1}>
             {track.artist}
           </Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>
+            <Text style={{ color: GRAPHITE_GREY, fontSize: 11 }}>
               {formatFileSize(track.fileSize)}
             </Text>
-            <Text style={{ color: 'rgba(255,255,255,0.3)', marginHorizontal: 4 }}>•</Text>
-            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>
+            <Text style={{ color: GRAPHITE_GREY, marginHorizontal: 4 }}>•</Text>
+            <Text style={{ color: GRAPHITE_GREY, fontSize: 11 }}>
               {track.fileFormat}
             </Text>
             {track.isUserImported && (
               <>
-                <Text style={{ color: 'rgba(255,255,255,0.3)', marginHorizontal: 4 }}>•</Text>
-                <View style={{ backgroundColor: 'rgba(139,92,246,0.2)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                  <Text style={{ color: '#8B5CF6', fontSize: 10 }}>Imported</Text>
+                <Text style={{ color: GRAPHITE_GREY, marginHorizontal: 4 }}>•</Text>
+                <View style={{ backgroundColor: 'rgba(0,229,255,0.12)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, borderWidth: 1, borderColor: 'rgba(0,229,255,0.35)' }}>
+                  <Text style={{ color: VIBRANT_BLUE, fontSize: 10, fontWeight: '700' }}>Imported</Text>
                 </View>
               </>
             )}
@@ -163,8 +175,7 @@ export default function DownloadsScreen() {
   const [exportPhase, setExportPhase] = React.useState<'idle' | 'copying' | 'sharing'>('idle');
   const [folderModalVisible, setFolderModalVisible] = React.useState(false);
 
-  const showMiniPlayer = !!currentTrack;
-  const bottomPadding = insets.bottom + (showMiniPlayer ? MINI_PLAYER_HEIGHT : 0) + 40;
+  const bottomPadding = stackScreenContentContainerPaddingBottom(insets.bottom);
   const totalStorage = getTotalStorageUsed();
   const userImported = downloads.filter(d => d.isUserImported);
   const otherDownloads = downloads.filter(d => !d.isUserImported);
@@ -279,7 +290,7 @@ export default function DownloadsScreen() {
     setExportPhase('sharing');
     try {
       await Sharing.shareAsync(exportDir, {
-        dialogTitle: 'Save to iCloud Drive',
+        dialogTitle: 'Export Vault to iCloud Drive',
         UTI: 'public.folder',
       });
     } catch {
@@ -290,7 +301,7 @@ export default function DownloadsScreen() {
           await Sharing.shareAsync(filePath, {
             mimeType: isMP3 ? 'audio/mpeg' : 'audio/mp4',
             UTI: isMP3 ? 'public.mp3' : 'public.mpeg-4-audio',
-            dialogTitle: 'Save to iCloud Drive',
+            dialogTitle: 'Export Vault to iCloud Drive',
           });
         } catch {}
       }
@@ -303,8 +314,8 @@ export default function DownloadsScreen() {
   const handleClearAll = () => {
     if (downloads.length === 0) return;
     showVybePopup({
-      title: 'Clear All Downloads',
-      message: 'Remove all downloads? This will delete all files from your device.',
+      title: 'Purge Vault',
+      message: 'Remove all Vault assets? Files are deleted from this device.',
       type: 'warning',
       actions: [
         { text: 'Cancel', style: 'cancel' },
@@ -321,29 +332,42 @@ export default function DownloadsScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
-      <LinearGradient colors={['#1a1a2e', '#0F0F0F', '#0A0A0A']} style={{ flex: 1 }}>
-        {/* Header */}
+    <View style={{ flex: 1, backgroundColor: '#000000' }}>
+        {/* Header — Vault command center */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: insets.top + 8, paddingBottom: 12 }}>
           <Pressable onPress={() => { if (router.canGoBack()) router.back(); else router.replace('/(app)/(tabs)' as never); }} style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}>
             <ChevronLeft size={28} color="#fff" />
           </Pressable>
-          <View style={{ flex: 1, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }}>
-            <Download size={20} color="#8B5CF6" />
-            <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginLeft: 8 }}>Downloads</Text>
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <Text style={{ color: 'rgba(34,211,238,0.9)', fontSize: 10, fontWeight: '800', letterSpacing: 2 }}>VYBE+</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+              <Download size={18} color={VIBRANT_BLUE} />
+              <Text style={{ color: '#fff', fontSize: 17, fontWeight: '900', marginLeft: 8, letterSpacing: -0.3 }}>VAULT</Text>
+            </View>
           </View>
           <View style={{ width: 40 }} />
         </View>
 
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20, paddingBottom: bottomPadding }}>
-          {/* Storage Summary */}
-          <View style={{ backgroundColor: '#1A1A1A', borderRadius: 12, padding: 16, marginBottom: 20 }}>
+          {/* Storage Summary — machined panel */}
+          <View style={{
+            backgroundColor: 'rgba(10,10,12,0.96)',
+            borderRadius: 14,
+            padding: 16,
+            marginBottom: 20,
+            borderWidth: 1,
+            borderColor: 'rgba(0,229,255,0.35)',
+            shadowColor: VIBRANT_BLUE,
+            shadowOffset: { width: 0, height: 0 },
+            shadowOpacity: 0.2,
+            shadowRadius: 12,
+          }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <HardDrive size={20} color="#8B5CF6" />
+                <HardDrive size={20} color={VIBRANT_BLUE} />
                 <Text style={{ color: '#fff', fontWeight: '600', marginLeft: 8 }}>Storage Used</Text>
               </View>
-              <Text style={{ color: '#8B5CF6', fontWeight: '700' }}>{formatFileSize(totalStorage)}</Text>
+              <Text style={{ color: VIBRANT_BLUE, fontWeight: '700' }}>{formatFileSize(totalStorage)}</Text>
             </View>
             {/* Storage location row */}
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.07)' }}>
@@ -365,8 +389,8 @@ export default function DownloadsScreen() {
               </Pressable>
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
-              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13 }}>
-                {downloads.length} {downloads.length === 1 ? 'track' : 'tracks'} offline
+              <Text style={{ color: GRAPHITE_GREY, fontSize: 13 }}>
+                {downloads.length} {downloads.length === 1 ? 'asset' : 'assets'} secured in Vault
               </Text>
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 {downloads.length > 0 && (
@@ -380,10 +404,10 @@ export default function DownloadsScreen() {
                   ) : (
                     <Pressable
                       onPress={handleExportAll}
-                      style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(99,102,241,0.12)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
+                      style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,229,255,0.1)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(0,229,255,0.25)' }}
                     >
-                      <Share2 size={13} color="#6366F1" />
-                      <Text style={{ color: '#6366F1', fontSize: 12, fontWeight: '700', marginLeft: 5 }}>Export All</Text>
+                      <Share2 size={13} color={VIBRANT_BLUE} />
+                      <Text style={{ color: VIBRANT_BLUE, fontSize: 12, fontWeight: '700', marginLeft: 5 }}>Export All</Text>
                     </Pressable>
                   )
                 )}
@@ -400,30 +424,23 @@ export default function DownloadsScreen() {
             </View>
           </View>
 
-          {/* Import Button */}
-          <Pressable onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/(app)/import-audio' as never); }} style={{ marginBottom: 24 }}>
-            <LinearGradient
-              colors={['#8B5CF6', '#7C3AED']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 12 }}
-            >
-              <Upload size={24} color="#fff" />
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={{ color: '#fff', fontWeight: '700' }}>Import Audio</Text>
-                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>Add files from iCloud Drive or your device</Text>
-              </View>
-            </LinearGradient>
-          </Pressable>
+          <VaultImportCard
+            spacious
+            subtitle="Ingest from iCloud Drive or on-device storage"
+            onPress={() => {
+              router.push('/(app)/import-audio' as never);
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+          />
 
           {downloads.length === 0 ? (
             <View style={{ alignItems: 'center', paddingVertical: 48 }}>
-              <View style={{ width: 80, height: 80, backgroundColor: '#1A1A1A', borderRadius: 40, alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
-                <FileAudio size={40} color="rgba(255,255,255,0.3)" />
+              <View style={{ width: 80, height: 80, backgroundColor: 'rgba(0,229,255,0.1)', borderRadius: 40, alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
+                <FileAudio size={40} color={VIBRANT_BLUE} />
               </View>
-              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '600', marginBottom: 8 }}>No Downloads Yet</Text>
-              <Text style={{ color: 'rgba(255,255,255,0.5)', textAlign: 'center', paddingHorizontal: 32 }}>
-                Import audio files or download tracks to listen offline.
+              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800', marginBottom: 8 }}>Vault clear</Text>
+              <Text style={{ color: GRAPHITE_GREY, textAlign: 'center', paddingHorizontal: 32 }}>
+                Import to Vault or pull tracks from Vybe — assets stay local, zero cloud lock-in.
               </Text>
             </View>
           ) : (
@@ -431,9 +448,9 @@ export default function DownloadsScreen() {
               {userImported.length > 0 && (
                 <View style={{ marginBottom: 24 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-                    <FileAudio size={15} color="#8B5CF6" />
+                    <FileAudio size={15} color={VIBRANT_BLUE} />
                     <Text style={{ color: '#fff', fontWeight: '600', marginLeft: 6 }}>Imported</Text>
-                    <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, marginLeft: 6 }}>({userImported.length})</Text>
+                    <Text style={{ color: GRAPHITE_GREY, fontSize: 13, marginLeft: 6 }}>({userImported.length})</Text>
                   </View>
                   {userImported.map(track => (
                     <TrackRow
@@ -451,9 +468,9 @@ export default function DownloadsScreen() {
               {otherDownloads.length > 0 && (
                 <View>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-                    <Download size={15} color="#4CAF50" />
+                    <Download size={15} color={VIBRANT_BLUE} />
                     <Text style={{ color: '#fff', fontWeight: '600', marginLeft: 6 }}>Downloaded</Text>
-                    <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, marginLeft: 6 }}>({otherDownloads.length})</Text>
+                    <Text style={{ color: GRAPHITE_GREY, fontSize: 13, marginLeft: 6 }}>({otherDownloads.length})</Text>
                   </View>
                   {otherDownloads.map(track => (
                     <TrackRow
@@ -468,7 +485,7 @@ export default function DownloadsScreen() {
                 </View>
               )}
 
-              <Text style={{ color: 'rgba(255,255,255,0.25)', fontSize: 12, textAlign: 'center', marginTop: 24 }}>
+              <Text style={{ color: GRAPHITE_GREY, fontSize: 12, textAlign: 'center', marginTop: 24 }}>
                 Swipe left on a track to delete it
               </Text>
             </>
@@ -493,8 +510,8 @@ export default function DownloadsScreen() {
               <View style={{ paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
                   <Cloud size={22} color="#0A84FF" />
-                  <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginLeft: 10 }}>
-                    Save to iCloud Drive
+                  <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800', marginLeft: 10 }}>
+                    Vault → iCloud Drive
                   </Text>
                 </View>
                 <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13 }}>
@@ -539,7 +556,6 @@ export default function DownloadsScreen() {
             </View>
           </View>
         </Modal>
-      </LinearGradient>
     </View>
   );
 }

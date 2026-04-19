@@ -1,37 +1,30 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, Pressable, Modal, Text } from 'react-native';
+import { View, StyleSheet, Pressable, Modal, Text, Image } from 'react-native';
 import { Tabs, useRouter } from 'expo-router';
-import { Home, Search, Library, Compass, Download, Play, Music, Radio, Headphones, Disc, User, Sparkles } from 'lucide-react-native';
+import { Download, Play, Headphones, Disc } from 'lucide-react-native';
+import {
+  VybeVideoNeonIcon,
+  VybeMusicNeonIcon,
+  VybeWavesNeonIcon,
+} from '@/assets/icons/VybeNeonSourceIcons';
+import {
+  ShadowHomeIcon,
+  ShadowLibraryIcon,
+  ShadowProfileIcon,
+  ShadowSearchIcon,
+  ShadowSparkleIcon,
+  ShadowTabIconShell,
+  SHADOW_TAB_ACTIVE,
+  SHADOW_TAB_INACTIVE,
+} from '@/components/navigation/ShadowTabBarIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Circle, Path, Defs, LinearGradient, Stop, Rect } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 import type { BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
-import { TAB_BAR_BASE_HEIGHT } from '@/constants/miniPlayer';
+import { TAB_BAR_HEIGHT } from '@/constants/Layout';
+import { useKeyboardChromeStore } from '@/stores/keyboardChromeStore';
+import { ShadowMachinedTabBar } from '@/components/navigation/ShadowMachinedTabBar';
 
-// ── Source icons (streaming brand colors, neutral shapes — no brand logos) ──
-function YouTubeIcon() {
-  return (
-    <View style={{ width: 36, height: 36, backgroundColor: '#FF0000', borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
-      <Play size={20} color="#fff" fill="#fff" />
-    </View>
-  );
-}
-
-function YouTubeMusicIcon() {
-  return (
-    <View style={{ width: 36, height: 36, backgroundColor: '#FF0000', borderRadius: 18, alignItems: 'center', justifyContent: 'center' }}>
-      <Music size={20} color="#fff" strokeWidth={2.5} />
-    </View>
-  );
-}
-
-function SoundCloudIcon() {
-  return (
-    <View style={{ width: 36, height: 36, backgroundColor: '#FF5500', borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
-      <Radio size={20} color="#fff" strokeWidth={2.5} />
-    </View>
-  );
-}
+const VYBE_TAB_ICON = require('../../../../assets/images/icon.png');
 
 function SpotifyIcon() {
   return (
@@ -49,42 +42,26 @@ function AppleMusicIcon() {
   );
 }
 
-// Standard tab bar height (content area, excluding safe area)
-const TAB_BAR_CONTENT_HEIGHT = TAB_BAR_BASE_HEIGHT;
-
 // Fixed icon size - THE ONLY PLACE ICON SIZE IS DEFINED
 const ICON_SIZE = 28;
 
 /**
- * Custom tab bar button with premium haptic feedback
- * - Medium impact on new tab selection
- * - Light impact when reselecting current tab
- *
- * CRITICAL: This ONLY handles haptics and forwards children as-is.
- * It does NOT modify icon styles, size, or add any wrappers around the icon.
+ * Tab bar button — Shadow theme uses light haptic on every press.
+ * Forwards children unchanged (icons + labels come from `screenOptions`).
  */
 function HapticTabButton(props: BottomTabBarButtonProps) {
-  const { children, onPress, accessibilityState, ...rest } = props;
-  const isSelected = accessibilityState?.selected ?? false;
-
-  const handlePress = (e: Parameters<NonNullable<typeof onPress>>[0]) => {
-    // Trigger haptic FIRST
-    if (isSelected) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } else {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
-    // Immediately forward the original onPress
-    onPress?.(e);
-  };
+  const { children, onPress, ...rest } = props;
 
   return (
     <Pressable
       {...rest}
-      onPress={handlePress}
+      unstable_pressDelay={0}
+      onPressIn={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }}
+      onPress={onPress}
       style={styles.tabButton}
     >
-      {/* Render children as-is, untouched - NO modifications */}
       {children}
     </Pressable>
   );
@@ -96,16 +73,22 @@ function SearchTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: 
 
   const handlePress = (e: Parameters<NonNullable<typeof onPress>>[0]) => {
     if (isSelected) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       onAlreadySelected?.();
     } else {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       onPress?.(e);
     }
   };
 
   return (
-    <Pressable {...rest} onPress={handlePress} style={styles.tabButton}>
+    <Pressable
+      {...rest}
+      unstable_pressDelay={0}
+      onPressIn={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }}
+      onPress={handlePress}
+      style={styles.tabButton}
+    >
       {children}
     </Pressable>
   );
@@ -122,16 +105,22 @@ function LibraryTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?:
     lastTapRef.current = now;
 
     if (isDoubleTap) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       onAlreadySelected?.();
     } else {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       if (!isSelected) onPress?.(e);
     }
   };
 
   return (
-    <Pressable {...rest} onPress={handlePress} style={styles.tabButton}>
+    <Pressable
+      {...rest}
+      unstable_pressDelay={0}
+      onPressIn={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }}
+      onPress={handlePress}
+      style={styles.tabButton}
+    >
       {children}
     </Pressable>
   );
@@ -140,8 +129,24 @@ function LibraryTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?:
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const keyboardVisible = useKeyboardChromeStore((s) => s.keyboardVisible);
   const [showViewMenu, setShowViewMenu] = useState(false);
   const [showSearchMenu, setShowSearchMenu] = useState(false);
+
+  const tabBarChrome = keyboardVisible
+    ? {
+        display: 'none' as const,
+        height: 0,
+        opacity: 0,
+        paddingTop: 0,
+        paddingBottom: 0,
+        borderTopWidth: 0,
+      }
+    : {
+        height: TAB_BAR_HEIGHT + insets.bottom,
+        paddingTop: 10,
+        paddingBottom: Math.max(8, insets.bottom > 0 ? insets.bottom - 2 : 8),
+      };
 
   return (
     <View style={styles.container}>
@@ -225,7 +230,7 @@ export default function TabLayout() {
               }}
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16 }}
             >
-              <YouTubeIcon />
+              <VybeVideoNeonIcon size={36} />
               <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>Vybe Video</Text>
             </Pressable>
             <Pressable
@@ -236,7 +241,7 @@ export default function TabLayout() {
               }}
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16 }}
             >
-              <YouTubeMusicIcon />
+              <VybeMusicNeonIcon size={36} />
               <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>Vybe Music</Text>
             </Pressable>
             <Pressable
@@ -247,7 +252,7 @@ export default function TabLayout() {
               }}
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16 }}
             >
-              <SoundCloudIcon />
+              <VybeWavesNeonIcon size={36} />
               <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>Vybe Waves</Text>
             </Pressable>
             <Pressable
@@ -277,26 +282,34 @@ export default function TabLayout() {
       </Modal>
 
       <Tabs
+        tabBar={(tabProps) => <ShadowMachinedTabBar {...tabProps} />}
         screenOptions={{
           headerShown: false,
+          lazy: true,
+          freezeOnBlur: true,
           tabBarShowLabel: false,
-          // Tab bar style - height explicitly locked
           tabBarStyle: {
-            backgroundColor: '#121212',
-            borderTopWidth: 0,
-            elevation: 0,
-            height: TAB_BAR_CONTENT_HEIGHT + insets.bottom,
-            paddingTop: 10,
-            paddingBottom: insets.bottom,
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            backgroundColor: '#000000',
+            borderTopWidth: 0.5,
+            borderTopColor: '#ffffff15',
+            zIndex: 1000,
+            elevation: 1000,
             alignItems: 'center',
             justifyContent: 'center',
+            ...tabBarChrome,
           },
-          tabBarActiveTintColor: '#FFFFFF',
-          tabBarInactiveTintColor: '#B3B3B3',
-          // Icon container size - explicitly locked
+          tabBarActiveTintColor: SHADOW_TAB_ACTIVE,
+          tabBarInactiveTintColor: SHADOW_TAB_INACTIVE,
           tabBarIconStyle: {
             width: ICON_SIZE,
             height: ICON_SIZE,
+            marginTop: 0,
+            marginBottom: 0,
+            alignSelf: 'center',
           },
         }}
       >
@@ -305,13 +318,15 @@ export default function TabLayout() {
           options={{
             title: 'Home',
             tabBarButton: (props) => <HapticTabButton {...props} />,
-            tabBarIcon: ({ color, size }) => (
-              <Home
-                color={color}
-                size={size}
-                strokeWidth={2}
-              />
-            ),
+            tabBarIcon: ({ focused, size }) => {
+              const dim = size ?? ICON_SIZE;
+              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              return (
+                <ShadowTabIconShell focused={focused}>
+                  <ShadowHomeIcon size={dim} color={c} />
+                </ShadowTabIconShell>
+              );
+            },
           }}
         />
         <Tabs.Screen
@@ -321,13 +336,15 @@ export default function TabLayout() {
             tabBarButton: (props) => (
               <SearchTabButton {...props} onAlreadySelected={() => setShowSearchMenu(true)} />
             ),
-            tabBarIcon: ({ color, size }) => (
-              <Search
-                color={color}
-                size={size}
-                strokeWidth={2}
-              />
-            ),
+            tabBarIcon: ({ focused, size }) => {
+              const dim = size ?? ICON_SIZE;
+              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              return (
+                <ShadowTabIconShell focused={focused}>
+                  <ShadowSearchIcon size={dim} color={c} />
+                </ShadowTabIconShell>
+              );
+            },
           }}
         />
         <Tabs.Screen
@@ -335,13 +352,23 @@ export default function TabLayout() {
           options={{
             title: 'Discover',
             tabBarButton: (props) => <HapticTabButton {...props} />,
-            tabBarIcon: ({ color, size }) => (
-              <Compass
-                color={color}
-                size={size}
-                strokeWidth={2}
-              />
-            ),
+            tabBarIcon: ({ focused, size }) => {
+              const dim = size ?? ICON_SIZE;
+              return (
+                <ShadowTabIconShell focused={focused}>
+                  <Image
+                    source={VYBE_TAB_ICON}
+                    style={{
+                      width: dim,
+                      height: dim,
+                      borderRadius: Math.max(6, dim * 0.22),
+                      opacity: focused ? 1 : 0.72,
+                    }}
+                    resizeMode="cover"
+                  />
+                </ShadowTabIconShell>
+              );
+            },
           }}
         />
         <Tabs.Screen
@@ -354,13 +381,15 @@ export default function TabLayout() {
                 onAlreadySelected={() => setShowViewMenu(true)}
               />
             ),
-            tabBarIcon: ({ color, size }) => (
-              <Library
-                color={color}
-                size={size}
-                strokeWidth={2}
-              />
-            ),
+            tabBarIcon: ({ focused, size }) => {
+              const dim = size ?? ICON_SIZE;
+              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              return (
+                <ShadowTabIconShell focused={focused}>
+                  <ShadowLibraryIcon size={dim} color={c} />
+                </ShadowTabIconShell>
+              );
+            },
           }}
         />
         <Tabs.Screen
@@ -368,9 +397,15 @@ export default function TabLayout() {
           options={{
             title: 'Profile',
             tabBarButton: (props) => <HapticTabButton {...props} />,
-            tabBarIcon: ({ color, size }) => (
-              <User color={color} size={size} strokeWidth={2} />
-            ),
+            tabBarIcon: ({ focused, size }) => {
+              const dim = size ?? ICON_SIZE;
+              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              return (
+                <ShadowTabIconShell focused={focused}>
+                  <ShadowProfileIcon size={dim} color={c} />
+                </ShadowTabIconShell>
+              );
+            },
           }}
         />
         <Tabs.Screen
@@ -378,14 +413,17 @@ export default function TabLayout() {
           options={{
             title: 'Social',
             tabBarButton: (props) => <HapticTabButton {...props} />,
-            tabBarIcon: ({ color, size }) => (
-              <Sparkles color={color} size={size} strokeWidth={2} />
-            ),
+            tabBarIcon: ({ focused, size }) => {
+              const dim = size ?? ICON_SIZE;
+              const c = focused ? SHADOW_TAB_ACTIVE : SHADOW_TAB_INACTIVE;
+              return (
+                <ShadowTabIconShell focused={focused}>
+                  <ShadowSparkleIcon size={dim} color={c} />
+                </ShadowTabIconShell>
+              );
+            },
           }}
         />
-        <Tabs.Screen name="two" options={{ href: null }} />
-        <Tabs.Screen name="library 2" options={{ href: null }} />
-        <Tabs.Screen name="library 3" options={{ href: null }} />
       </Tabs>
     </View>
   );
@@ -394,12 +432,14 @@ export default function TabLayout() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#000000',
   },
   // Tab button style - only handles layout, NOT icon size
   tabButton: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 10,
+    minHeight: 48,
   },
 });

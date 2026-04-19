@@ -1,0 +1,6 @@
+module ExpoBrightness {
+  umbrella header "ExpoBrightness-umbrella.h"
+
+  export *
+  module * { export * }
+}

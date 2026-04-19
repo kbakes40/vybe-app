@@ -1,0 +1,2 @@
+${PODS_ROOT}/Target Support Files/ExpoSQLite/ExpoSQLite-xcframeworks.sh
+${PODS_ROOT}/../../node_modules/expo-sqlite/ios/crsqlite.xcframework

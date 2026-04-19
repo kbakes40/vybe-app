@@ -48,6 +48,26 @@ function commonYtdlpArgs(): string[] {
   ];
 }
 
+/**
+ * Same as `commonYtdlpArgs()` but WITHOUT cookies.
+ *
+ * EMPIRICAL FINDING (2026-04-19, /api/youtube/_test/:videoId A/B probes):
+ * On Railway's egress IP, sending YouTube cookies causes the response to
+ * contain ZERO playable audio formats — only storyboard images (sb0–sb3).
+ * The same `ios` player_client request WITHOUT cookies returns m4a/webm
+ * audio normally. The cookies are flagged as bot-suspicious server-side.
+ *
+ * So our default path is "no cookies + ios client". We only add cookies
+ * back when we hit a hard failure that *might* be auth-gated (age/region).
+ */
+function noCookieYtdlpArgs(): string[] {
+  return [
+    "--user-agent",
+    YTDLP_BROWSER_UA,
+    "--no-check-certificate",
+  ];
+}
+
 // Download the latest yt-dlp binary on every startup.
 // yt-dlp ships anti-bot bypass updates almost weekly; pinning to whatever was
 // already on /tmp means stale containers serve broken playback. Always pull
@@ -105,11 +125,28 @@ function setCachedUrl(videoId: string, url: string): void {
  * The `formats=missing_pot` extractor-arg tells yt-dlp to NOT filter out
  * formats that lack a PO token — critical for `tv`/`ios`/`tv_embedded`.
  */
-function getFastClients(): readonly string[] {
-  return ["tv", "ios", "tv_embedded"] as const;
+/**
+ * Resolver attempt = (player_client, whether to attach cookies).
+ *
+ * Cookie-less attempts go first because cookies trigger account-tier bot
+ * detection on Railway's IP (see noCookieYtdlpArgs() docs above). We keep
+ * a cookie-bearing attempt at the very end as a last-resort fallback for
+ * truly auth-gated content (age-restricted, region-locked, etc).
+ */
+type ResolveAttempt = { client: string; useCookies: boolean };
+function getFastAttempts(): readonly ResolveAttempt[] {
+  return [
+    { client: "ios", useCookies: false },
+    { client: "tv", useCookies: false },
+    { client: "tv_embedded", useCookies: false },
+  ] as const;
 }
-function getSlowClients(): readonly string[] {
-  return ["mweb", "web_safari"] as const;
+function getSlowAttempts(): readonly ResolveAttempt[] {
+  return [
+    { client: "mweb", useCookies: false },
+    { client: "web_safari", useCookies: false },
+    { client: "ios", useCookies: true },
+  ] as const;
 }
 const YTDLP_RESOLVE_FAST_TIMEOUT_MS = 10_000;
 const YTDLP_RESOLVE_SLOW_TIMEOUT_MS = 15_000;
@@ -117,7 +154,7 @@ const YTDLP_RESOLVE_SLOW_TIMEOUT_MS = 15_000;
 /** Run yt-dlp --get-url for a single player_client and return the CDN URL. */
 function tryResolveWithClient(
   videoId: string,
-  client: string,
+  attempt: ResolveAttempt,
   timeoutMs: number,
   externalSignal?: AbortSignal,
 ): { promise: Promise<string>; abort: () => void } {
@@ -127,6 +164,8 @@ function tryResolveWithClient(
     if (externalSignal.aborted) controller.abort();
     else externalSignal.addEventListener("abort", () => controller.abort(), { once: true });
   }
+
+  const baseArgs = attempt.useCookies ? commonYtdlpArgs() : noCookieYtdlpArgs();
 
   const promise = ytDlp
     .execPromise(
@@ -143,10 +182,10 @@ function tryResolveWithClient(
         "--socket-timeout",
         "8",
         "--extractor-args",
-        `youtube:player_client=${client};formats=missing_pot`,
+        `youtube:player_client=${attempt.client};formats=missing_pot`,
         "--js-runtimes",
         "node",
-        ...commonYtdlpArgs(),
+        ...baseArgs,
       ],
       {},
       controller.signal,
@@ -172,29 +211,30 @@ function tryResolveWithClient(
  * Phase 2: if every fast client fails, fall back to web/mweb sequentially.
  */
 async function resolveAudioUrl(videoId: string): Promise<string> {
-  const fastClients = getFastClients();
-  const slowClients = getSlowClients();
+  const fastAttempts = getFastAttempts();
+  const slowAttempts = getSlowAttempts();
+  const labelOf = (a: ResolveAttempt) => `${a.client}${a.useCookies ? "+cookies" : ""}`;
 
-  const attempts = fastClients.map((client) => {
+  const races = fastAttempts.map((attempt) => {
     const { promise, abort } = tryResolveWithClient(
       videoId,
-      client,
+      attempt,
       YTDLP_RESOLVE_FAST_TIMEOUT_MS,
     );
     return {
-      client,
+      attempt,
       abort,
-      promise: promise.then((url) => ({ client, url })),
+      promise: promise.then((url) => ({ attempt, url })),
     };
   });
 
   try {
-    const winner = await Promise.any(attempts.map((a) => a.promise));
-    for (const a of attempts) {
-      if (a.client !== winner.client) a.abort();
+    const winner = await Promise.any(races.map((r) => r.promise));
+    for (const r of races) {
+      if (r.attempt !== winner.attempt) r.abort();
     }
-    if (winner.client !== fastClients[0]) {
-      console.log(`[yt-dlp] resolve ${videoId}: fast-race won by player_client=${winner.client}`);
+    if (winner.attempt !== fastAttempts[0]) {
+      console.log(`[yt-dlp] resolve ${videoId}: fast-race won by ${labelOf(winner.attempt)}`);
     }
     return winner.url;
   } catch (e) {
@@ -205,20 +245,20 @@ async function resolveAudioUrl(videoId: string): Promise<string> {
   }
 
   let lastMsg = "";
-  for (const client of slowClients) {
+  for (const attempt of slowAttempts) {
     try {
       const { promise } = tryResolveWithClient(
         videoId,
-        client,
+        attempt,
         YTDLP_RESOLVE_SLOW_TIMEOUT_MS,
       );
       const url = await promise;
-      console.log(`[yt-dlp] resolve ${videoId}: slow fallback ok with player_client=${client}`);
+      console.log(`[yt-dlp] resolve ${videoId}: slow fallback ok with ${labelOf(attempt)}`);
       return url;
     } catch (e: any) {
       lastMsg = e.message ?? String(e);
       console.warn(
-        `[yt-dlp] resolve ${videoId} slow client=${client}:`,
+        `[yt-dlp] resolve ${videoId} slow ${labelOf(attempt)}:`,
         lastMsg.split("\n")[0]?.slice(0, 160),
       );
     }
@@ -397,7 +437,9 @@ youtubeRouter.get("/download/:videoId", async (c) => {
         "--print", "after_move:filepath",
         "--extractor-args", `youtube:player_client=${client};formats=missing_pot`,
         "--js-runtimes", "node",
-        ...commonYtdlpArgs(),
+        // Cookies are flagged as bot-suspicious on Railway IPs and cause
+        // YouTube to return only storyboards. Download path skips them too.
+        ...noCookieYtdlpArgs(),
       ], {}, controller.signal);
       clearTimeout(timer);
       const finalPath = output.trim().split("\n").pop()?.trim() ?? "";
@@ -612,7 +654,7 @@ async function searchYouTubeYtDlp(query: string, maxResults: number): Promise<Ar
           `youtube:player_client=${client};formats=missing_pot`,
           "--js-runtimes",
           "node",
-          ...commonYtdlpArgs(),
+          ...noCookieYtdlpArgs(),
         ],
         {},
         controller.signal,
@@ -694,7 +736,7 @@ async function getVideoInfo(videoId: string): Promise<{ title: string; channel: 
       const output = await ytDlp.execPromise([
         ...baseArgs,
         "--extractor-args", `youtube:player_client=${client};formats=missing_pot`,
-        ...commonYtdlpArgs(),
+        ...noCookieYtdlpArgs(),
       ]);
       const lines = output.trim().split("\n");
       if (lines.length < 3) throw new Error(`yt-dlp info returned insufficient output`);

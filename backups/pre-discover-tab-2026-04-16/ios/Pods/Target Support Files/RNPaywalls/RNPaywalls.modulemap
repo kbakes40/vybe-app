@@ -1,0 +1,6 @@
+module RNPaywalls {
+  umbrella header "RNPaywalls-umbrella.h"
+
+  export *
+  module * { export * }
+}

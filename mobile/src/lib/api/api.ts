@@ -1,5 +1,6 @@
 import { fetch } from "expo/fetch";
 import { authClient } from "../auth/auth-client";
+import { getSessionBearerToken } from "../auth/sessionBearer";
 
 // Response envelope type - all app routes return { data: T }
 interface ApiResponse<T> {
@@ -13,12 +14,17 @@ const request = async <T>(
   url: string,
   options: { method?: string; body?: string } = {}
 ): Promise<T> => {
+  const bearer = await getSessionBearerToken();
+  const getCookie = (authClient as { getCookie?: () => string }).getCookie;
+  const cookie = typeof getCookie === "function" ? getCookie() : "";
+
   const response = await fetch(`${apiBaseUrl}${url}`, {
     ...options,
     credentials: "include",
     headers: {
       ...(options.body ? { "Content-Type": "application/json" } : {}),
-      Cookie: authClient.getCookie(),
+      ...(cookie ? { Cookie: cookie } : {}),
+      ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
     },
   });
 
@@ -62,13 +68,17 @@ export const api = {
   patch: <T>(url: string, body: unknown) =>
     request<T>(url, { method: "PATCH", body: JSON.stringify(body) }),
   raw: async (url: string, init?: { method?: string; body?: string; headers?: Record<string, string> }) => {
+    const bearer = await getSessionBearerToken();
+    const getCookie = (authClient as { getCookie?: () => string }).getCookie;
+    const cookie = typeof getCookie === "function" ? getCookie() : "";
     return fetch(`${apiBaseUrl}${url}`, {
       method: init?.method,
       body: init?.body,
       credentials: "include",
       headers: {
         ...init?.headers,
-        Cookie: authClient.getCookie(),
+        ...(cookie ? { Cookie: cookie } : {}),
+        ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
       },
     });
   },

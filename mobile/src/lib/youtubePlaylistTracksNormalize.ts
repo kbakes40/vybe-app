@@ -1,3 +1,5 @@
+import { isDeadYoutubeQueueTitle } from '@/lib/queueSanitize';
+
 /**
  * Normalizes GET /api/youtube/playlist-tracks rows.
  * Server sends slim fields (id, artist, artwork, url); older payloads used videoId, channel, thumbnail.
@@ -21,5 +23,5 @@ export function normalizeYoutubePlaylistTracksPayload(data: unknown): Array<{
         duration: typeof raw.duration === 'number' ? raw.duration : 0,
       };
     })
-    .filter((t) => t.videoId.length > 0);
+    .filter((t) => t.videoId.length > 0 && !isDeadYoutubeQueueTitle(t.title));
 }

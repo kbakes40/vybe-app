@@ -1,20 +1,10 @@
-import React, { useMemo } from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  Pressable,
-  Dimensions,
-  Linking,
-  Platform,
-  StyleSheet,
-} from 'react-native';
+import React from 'react';
+import { View, Text, ScrollView, Pressable, Dimensions } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Svg, Defs, RadialGradient, Stop, Rect } from 'react-native-svg';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { stackScreenContentContainerPaddingBottom } from '@/constants/Layout';
 import {
   ChevronLeft,
   Play,
@@ -24,7 +14,6 @@ import {
   Clock,
   Music2,
   ChevronRight,
-  Shirt,
 } from 'lucide-react-native';
 import Animated, {
   useSharedValue,
@@ -34,22 +23,14 @@ import Animated, {
 import { getPlaylistById, getTracksFromPlaylist, playlists } from '@/data/mockData';
 import { usePlaybackController } from '@/stores/playbackController';
 import { TrackCard } from '@/components/TrackCard';
-import { PLAYLIST_DOCKED_PADDING_BOTTOM } from '@/constants/Layout';
-import { radialBackdropForPlaylistName } from '@/lib/vybePlaylistBackdrop';
-import * as Haptics from 'expo-haptics';
-
-const MAINSTREET_TEES_URL = 'https://mainstreettees.com/';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const ART_HORIZONTAL_INSET = 24;
-const ARTWORK_SIZE = SCREEN_WIDTH - ART_HORIZONTAL_INSET * 2;
-
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 export default function PlaylistScreen() {
+  const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const playTrack = usePlaybackController(s => s.playTrack);
 
   const playScale = useSharedValue(1);
@@ -58,22 +39,18 @@ export default function PlaylistScreen() {
   const playlistTracks = getTracksFromPlaylist(id ?? '');
   const relatedPlaylists = playlists.filter(p => p.id !== (id ?? '')).slice(0, 6);
 
-  const vibeRadial = useMemo(
-    () => radialBackdropForPlaylistName(playlist?.title ?? ''),
-    [playlist?.title],
-  );
-
-  const listBottomPad = PLAYLIST_DOCKED_PADDING_BOTTOM + insets.bottom;
-
   const playButtonStyle = useAnimatedStyle(() => ({
     transform: [{ scale: playScale.value }],
   }));
 
   if (!playlist) {
     return (
-      <View className="flex-1 bg-[#0A0A0A] items-center justify-center">
+      <SafeAreaView
+        edges={['top']}
+        style={{ flex: 1, backgroundColor: '#0A0A0A', alignItems: 'center', justifyContent: 'center' }}
+      >
         <Text className="text-white">Playlist not found</Text>
-      </View>
+      </SafeAreaView>
     );
   }
 
@@ -86,40 +63,28 @@ export default function PlaylistScreen() {
   };
 
   return (
-    <View className="flex-1 bg-[#0A0A0A]">
-      <Svg
-        width={SCREEN_WIDTH}
-        height={420}
-        style={StyleSheet.absoluteFillObject}
-        pointerEvents="none"
-      >
-        <Defs>
-          <RadialGradient id="mockPlRadial" cx="50%" cy="16%" r="72%">
-            <Stop offset="0%" stopColor={vibeRadial.center} stopOpacity={0.5} />
-            <Stop offset="100%" stopColor={vibeRadial.fade} stopOpacity={0} />
-          </RadialGradient>
-        </Defs>
-        <Rect x={0} y={0} width={SCREEN_WIDTH} height={420} fill="url(#mockPlRadial)" />
-      </Svg>
-
+    <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
       <ScrollView
-        className="flex-1"
-        contentContainerStyle={{ paddingBottom: listBottomPad }}
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: stackScreenContentContainerPaddingBottom(insets.bottom) }}
         showsVerticalScrollIndicator={false}
       >
+        {/* Header */}
         <LinearGradient
           colors={playlist.gradientColors ?? ['#1a1a2e', '#0A0A0A']}
-          style={{ paddingTop: insets.top }}
+          style={{ paddingTop: 0 }}
         >
+          {/* Back Button */}
           <Pressable
             onPress={() => router.back()}
             className="absolute top-0 left-4 w-10 h-10 rounded-full bg-black/30 items-center justify-center z-10"
-            style={{ marginTop: insets.top }}
+            style={{ marginTop: 8 }}
           >
             <ChevronLeft size={24} color="#fff" />
           </Pressable>
 
-          <View className="items-center pt-12 pb-6" style={{ paddingHorizontal: ART_HORIZONTAL_INSET }}>
+          {/* Playlist Artwork */}
+          <View className="items-center pt-12 pb-6 px-12">
             <View
               style={{
                 shadowColor: '#000',
@@ -132,8 +97,8 @@ export default function PlaylistScreen() {
               <Image
                 source={{ uri: playlist.artwork }}
                 style={{
-                  width: ARTWORK_SIZE,
-                  height: ARTWORK_SIZE,
+                  width: SCREEN_WIDTH - 120,
+                  height: SCREEN_WIDTH - 120,
                   borderRadius: 8,
                 }}
                 contentFit="cover"
@@ -141,65 +106,38 @@ export default function PlaylistScreen() {
             </View>
           </View>
 
-          <View style={{ paddingHorizontal: 20, paddingBottom: 12 }}>
-            <View
-              style={{
-                borderRadius: 14,
-                overflow: 'hidden',
-                borderWidth: StyleSheet.hairlineWidth,
-                borderColor: 'rgba(217, 70, 239, 0.2)',
-              }}
-            >
-              <BlurView intensity={48} tint="dark" style={StyleSheet.absoluteFillObject} />
-              <View style={{ padding: 16 }}>
-                <Text className="text-white text-2xl font-bold">{playlist.title}</Text>
-                <Text className="text-white/70 text-sm mt-1.5 leading-5">{playlist.description}</Text>
-
-                <Pressable
-                  onPress={() => {
-                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    Linking.openURL(MAINSTREET_TEES_URL).catch(() => {});
-                  }}
-                  style={({ pressed }) => [
-                    styles.mainstreetRow,
-                    pressed && { opacity: 0.9 },
-                  ]}
-                >
-                  <Shirt size={20} color="#D946EF" strokeWidth={2.2} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.mainstreetKicker}>MAINSTREET TEES</Text>
-                    <Text style={styles.mainstreetSub}>Premium apparel · Vybe collab</Text>
-                  </View>
-                  <Text style={{ color: '#FBBF24', fontSize: 11, fontWeight: '800' }}>Shop</Text>
-                </Pressable>
-
-                <View className="flex-row items-center mt-3 flex-wrap gap-2">
-                  <View
-                    style={{
-                      backgroundColor: '#8B5CF6',
-                      paddingHorizontal: 8,
-                      paddingVertical: 3,
-                      borderRadius: 4,
-                    }}
-                  >
-                    <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>
-                      {playlist.creator}
-                    </Text>
-                  </View>
-                  <View className="flex-row items-center">
-                    <Music2 size={12} color="rgba(255,255,255,0.4)" />
-                    <Text className="text-white/40 text-sm ml-1">{playlist.trackCount} songs</Text>
-                  </View>
-                  <View className="w-1 h-1 bg-white/20 rounded-full" />
-                  <Text className="text-white/40 text-sm">
-                    {Math.floor(playlist.duration / 3600)}h {Math.floor((playlist.duration % 3600) / 60)}m
-                  </Text>
-                </View>
+          {/* Playlist Info */}
+          <View className="px-5 pb-6">
+            <Text className="text-white text-2xl font-bold">{playlist.title}</Text>
+            <Text className="text-white/70 text-sm mt-1.5 leading-5">{playlist.description}</Text>
+            <View className="flex-row items-center mt-3 flex-wrap gap-2">
+              <View
+                style={{
+                  backgroundColor: '#8B5CF6',
+                  paddingHorizontal: 8,
+                  paddingVertical: 3,
+                  borderRadius: 4,
+                }}
+              >
+                <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700', letterSpacing: 0.5 }}>
+                  {playlist.creator}
+                </Text>
               </View>
+              <View className="flex-row items-center">
+                <Music2 size={12} color="rgba(255,255,255,0.4)" />
+                <Text className="text-white/40 text-sm ml-1">
+                  {playlist.trackCount} songs
+                </Text>
+              </View>
+              <View className="w-1 h-1 bg-white/20 rounded-full" />
+              <Text className="text-white/40 text-sm">
+                {Math.floor(playlist.duration / 3600)}h {Math.floor((playlist.duration % 3600) / 60)}m
+              </Text>
             </View>
           </View>
         </LinearGradient>
 
+        {/* Action Buttons */}
         <View className="flex-row items-center px-5 py-4 bg-[#0A0A0A]">
           <Pressable className="p-2">
             <Heart size={24} color="#fff" />
@@ -226,6 +164,7 @@ export default function PlaylistScreen() {
           </AnimatedPressable>
         </View>
 
+        {/* Track List */}
         <View>
           {playlistTracks.map((track, index) => (
             <TrackCard
@@ -237,6 +176,7 @@ export default function PlaylistScreen() {
           ))}
         </View>
 
+        {/* Playlist Duration */}
         <View className="px-5 py-3 flex-row items-center">
           <Clock size={14} color="rgba(255,255,255,0.3)" />
           <Text className="text-white/30 text-xs ml-1.5">
@@ -246,6 +186,7 @@ export default function PlaylistScreen() {
           </Text>
         </View>
 
+        {/* Recommended Playlists */}
         <View className="mt-4 mb-2">
           <Text className="text-white text-xl font-bold px-5 mb-1">Recommended Playlists</Text>
           <Text className="text-white/40 text-sm px-5 mb-4">Based on what you're listening to</Text>
@@ -298,42 +239,6 @@ export default function PlaylistScreen() {
           ))}
         </View>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  mainstreetRow: {
-    marginTop: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: 'rgba(0, 0, 0, 0.35)',
-    borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.35)',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#D946EF',
-        shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.35,
-        shadowRadius: 12,
-      },
-      android: { elevation: 8 },
-    }),
-  },
-  mainstreetKicker: {
-    color: 'rgba(252, 231, 243, 0.95)',
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 2,
-  },
-  mainstreetSub: {
-    color: 'rgba(244, 244, 245, 0.72)',
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-});

@@ -1,0 +1,1 @@
+../../../Target Support Files/react-native-bottom-tabs/react-native-bottom-tabs-umbrella.h

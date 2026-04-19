@@ -1,0 +1,29 @@
+{
+  "name": "ImageColors",
+  "version": "2.6.0",
+  "summary": "Fetch prominent colors from an image.",
+  "description": "Fetch prominent colors from an image.",
+  "license": "MIT",
+  "authors": "OsamaQarem <osamaqarem@gmail.com> (https://github.com/osamaqarem)",
+  "homepage": "https://github.com/osamaqarem/react-native-image-colors#readme",
+  "platforms": {
+    "ios": "13.4"
+  },
+  "swift_versions": "5.4",
+  "source": {
+    "git": "https://github.com/osamaqarem/react-native-image-colors"
+  },
+  "static_framework": true,
+  "dependencies": {
+    "ExpoModulesCore": [],
+    "SwiftDraw": [
+      "~> 0.27"
+    ]
+  },
+  "pod_target_xcconfig": {
+    "DEFINES_MODULE": "YES",
+    "SWIFT_COMPILATION_MODE": "wholemodule"
+  },
+  "source_files": "**/*.{h,m,swift}",
+  "swift_version": "5.4"
+}

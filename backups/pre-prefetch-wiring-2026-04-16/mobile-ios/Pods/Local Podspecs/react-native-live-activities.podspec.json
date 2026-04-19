@@ -1,0 +1,19 @@
+{
+  "name": "react-native-live-activities",
+  "version": "0.1.1",
+  "summary": "test",
+  "homepage": "https://github.com/elasoshi/react-native-live-activities#readme",
+  "license": "MIT",
+  "authors": "SHamsudeen Yusuf <shamoyusuf@gmail.com> (https://github.com/elasoshi)",
+  "platforms": {
+    "ios": "10.0"
+  },
+  "source": {
+    "git": "https://github.com/elasoshi/react-native-live-activities.git",
+    "tag": "0.1.1"
+  },
+  "source_files": "ios/**/*.{h,m,mm,swift}",
+  "dependencies": {
+    "React-Core": []
+  }
+}

@@ -1,0 +1,1 @@
+../../../Target Support Files/ExpoVideoThumbnails/ExpoVideoThumbnails-umbrella.h

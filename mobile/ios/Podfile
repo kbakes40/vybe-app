@@ -1,5 +1,19 @@
-require File.join(File.dirname(`node --print "require.resolve('expo/package.json')"`), "scripts/autolinking")
-require File.join(File.dirname(`node --print "require.resolve('react-native/package.json')"`), "scripts/react_native_pods")
+# Resolve packages from disk (next to this Podfile → app root → repo root).
+# Avoids `node require.resolve(...)` in backticks, which depends on the shell cwd
+# when CocoaPods runs and often breaks with "Cannot find module expo/package.json".
+def vybe_node_package_dir(name)
+  ios_dir = File.expand_path(__dir__)
+  app_root = File.expand_path('..', ios_dir)
+  roots = [app_root, File.expand_path('..', app_root)].uniq
+  roots.each do |root|
+    dir = File.join(root, 'node_modules', name)
+    return dir if File.file?(File.join(dir, 'package.json'))
+  end
+  raise "[Podfile] Missing `node_modules/#{name}` under #{roots.join(' or ')}. Install JS dependencies, then retry pod install."
+end
+
+require File.join(vybe_node_package_dir('expo'), 'scripts/autolinking')
+require File.join(vybe_node_package_dir('react-native'), 'scripts/react_native_pods')
 
 require 'json'
 podfile_properties = JSON.parse(File.read(File.join(__dir__, 'Podfile.properties.json'))) rescue {}
@@ -102,11 +116,6 @@ target 'vibecode' do
         # 70+ Pod targets. App doesn't use AppIntents, so skip the extraction.
         config.build_settings['APP_INTENTS_METADATA_EXTRACTION_ENABLED'] = 'NO'
         config.build_settings['APPINTENTS_DEPLOYMENT_POSTPROCESSING'] = 'NO'
-
-        # Xcode 16+: explicit Swift modules make clang scan for Pod .modulemap files
-        # in DerivedData before those targets have built, producing hundreds of
-        # "module map file ... not found" / false "Unable to resolve Foundation" errors.
-        config.build_settings['SWIFT_ENABLE_EXPLICIT_MODULES'] = 'NO'
       end
 
       if target.name == 'fmt'
@@ -137,18 +146,6 @@ target 'vibecode' do
           end
         end
       end
-    end
-
-    installer.aggregate_targets.each do |aggregate_target|
-      user_project = aggregate_target.user_project
-      next unless user_project
-
-      user_project.native_targets.each do |target|
-        target.build_configurations.each do |config|
-          config.build_settings['SWIFT_ENABLE_EXPLICIT_MODULES'] = 'NO'
-        end
-      end
-      user_project.save
     end
   end
 end

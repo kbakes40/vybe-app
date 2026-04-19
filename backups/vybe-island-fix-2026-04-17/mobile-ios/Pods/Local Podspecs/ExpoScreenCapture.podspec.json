@@ -1,0 +1,26 @@
+{
+  "name": "ExpoScreenCapture",
+  "version": "7.2.0",
+  "summary": "Protects screens in your app from being captured or recorded, and notifies if a screenshot is taken.",
+  "description": "Protects screens in your app from being captured or recorded, and notifies if a screenshot is taken.",
+  "license": "MIT",
+  "authors": "650 Industries, Inc.",
+  "homepage": "https://docs.expo.dev/versions/latest/sdk/screen-capture",
+  "platforms": {
+    "ios": "15.1"
+  },
+  "swift_versions": "5.4",
+  "source": {
+    "git": "https://github.com/expo/expo.git"
+  },
+  "static_framework": true,
+  "dependencies": {
+    "ExpoModulesCore": []
+  },
+  "pod_target_xcconfig": {
+    "DEFINES_MODULE": "YES",
+    "SWIFT_COMPILATION_MODE": "wholemodule"
+  },
+  "source_files": "**/*.{h,m,swift}",
+  "swift_version": "5.4"
+}

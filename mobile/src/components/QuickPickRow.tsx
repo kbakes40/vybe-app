@@ -10,7 +10,7 @@ import Animated, {
   cancelAnimation,
   Easing,
 } from 'react-native-reanimated';
-import { Image } from 'expo-image';
+import { ShadowArtworkImage } from '@/components/ShadowArtworkImage';
 import { MoreHorizontal } from 'lucide-react-native';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useDownloadsStore } from '@/stores/downloadsStore';
@@ -87,13 +87,14 @@ export const QuickPickRow = memo(function QuickPickRow({ track, onPress, onMore 
   return (
     <Animated.View style={animatedStyle}>
       <Pressable
+        unstable_pressDelay={0}
         onPress={onPress}
         onPressIn={() => { scale.value = withSpring(0.98); }}
         onPressOut={() => { scale.value = withSpring(1); }}
         style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12 }}
       >
         <View style={{ width: 54, height: 54, borderRadius: ART_RADIUS, overflow: 'hidden', backgroundColor: '#141416' }}>
-          <Image source={{ uri: track.artwork }} style={{ width: 54, height: 54 }} contentFit="cover" />
+          <ShadowArtworkImage source={{ uri: track.artwork }} style={{ width: 54, height: 54 }} contentFit="cover" />
           <View style={{ position: 'absolute', top: 4, right: 4 }}>
             <SourceCornerBadge source={track.source} compact />
           </View>

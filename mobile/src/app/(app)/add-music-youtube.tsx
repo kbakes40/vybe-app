@@ -13,6 +13,7 @@ import { X, Link2, Search, Play } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
 import { DownloadButton } from '@/components/DownloadButton';
 import { LoadingRing } from '@/components/LoadingRing';
+import { SHADOW_TEXT_INPUT_DEFAULTS } from '@/lib/shadowInput';
 import { usePlaybackController } from '@/stores/playbackController';
 import { Track } from '@/types/music';
 import { normalizeYoutubePlaylistTracksPayload } from '@/lib/youtubePlaylistTracksNormalize';
@@ -188,11 +189,12 @@ function PasteSection() {
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12, height: 44 }}>
           <Link2 size={14} color="rgba(255,255,255,0.3)" />
           <TextInput
+            {...SHADOW_TEXT_INPUT_DEFAULTS}
             value={url}
             onChangeText={(t) => { setUrl(t); clear(); }}
             placeholder="Paste URL here..."
-            placeholderTextColor="rgba(255,255,255,0.3)"
-            autoCapitalize="none" autoCorrect={false}
+            autoCapitalize="none"
+            autoCorrect={false}
             style={{ flex: 1, color: '#fff', fontSize: 13, marginLeft: 8 }}
           />
           {url.length > 0 && (
@@ -322,13 +324,15 @@ function SearchSection() {
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', paddingHorizontal: 12, height: 40 }}>
           <Search size={14} color="rgba(255,255,255,0.3)" />
           <TextInput
+            {...SHADOW_TEXT_INPUT_DEFAULTS}
             value={query}
             onChangeText={(t) => { setQuery(t); clearUrlResults(); }}
             onSubmitEditing={handleSearch}
             returnKeyType="search"
             placeholder="Search videos..."
-            placeholderTextColor="rgba(255,255,255,0.3)"
-            autoCapitalize="none" autoCorrect={false}
+            blurOnSubmit={false}
+            autoCapitalize="none"
+            autoCorrect={false}
             style={{ flex: 1, color: '#fff', fontSize: 13, marginLeft: 8 }}
           />
         </View>

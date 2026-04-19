@@ -1,0 +1,1 @@
+../../../../../node_modules/react-native-live-activities/ios/LiveActivities-Bridging-Header.h

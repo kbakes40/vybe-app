@@ -2,7 +2,8 @@ import React from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Play, Download } from 'lucide-react-native';
+import { Play } from 'lucide-react-native';
+import { MachinedCloudIcon } from '@/components/MachinedCloudIcon';
 import * as Haptics from 'expo-haptics';
 import Animated, {
   useSharedValue,
@@ -126,7 +127,7 @@ export function FreePDTrackCard({ track, queue, onDownload, className }: FreePDT
             className="absolute top-2 right-2 w-7 h-7 bg-black/60 rounded-full items-center justify-center"
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <Download size={14} color="#fff" />
+            <MachinedCloudIcon size={15} strokeWidth={2} />
           </Pressable>
         ) : null}
 

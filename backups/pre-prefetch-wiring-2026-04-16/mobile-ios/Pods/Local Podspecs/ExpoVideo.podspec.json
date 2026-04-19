@@ -1,0 +1,26 @@
+{
+  "name": "ExpoVideo",
+  "version": "2.1.9",
+  "summary": "A cross-platform, performant video component for React Native and Expo with Web support",
+  "description": "A cross-platform, performant video component for React Native and Expo with Web support",
+  "license": "MIT",
+  "authors": "650 Industries, Inc.",
+  "homepage": "https://docs.expo.dev/versions/latest/sdk/video/",
+  "platforms": {
+    "ios": "15.1",
+    "tvos": "15.1"
+  },
+  "swift_versions": "5.4",
+  "source": {
+    "git": "https://github.com/expo/expo.git"
+  },
+  "static_framework": true,
+  "dependencies": {
+    "ExpoModulesCore": []
+  },
+  "pod_target_xcconfig": {
+    "DEFINES_MODULE": "YES"
+  },
+  "source_files": "**/*.{h,m,swift}",
+  "swift_version": "5.4"
+}

@@ -10,6 +10,7 @@ import { usePlaybackController } from '@/stores/playbackController';
 import { useLikedSongsStore } from '@/stores/likedSongsStore';
 import { TrackCard } from '@/components/TrackCard';
 import { usePlaylistHeroColors } from '@/lib/usePlaylistHeroColors';
+import { stackScreenContentContainerPaddingBottom } from '@/constants/Layout';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -48,7 +49,7 @@ export default function LikedSongsScreen() {
     <View style={{ flex: 1, backgroundColor: '#0A0A0A' }}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: 140 }}
+        contentContainerStyle={{ paddingBottom: stackScreenContentContainerPaddingBottom(insets.bottom) }}
         showsVerticalScrollIndicator={false}
       >
         {/* Header gradient — dominant color from the latest liked song's

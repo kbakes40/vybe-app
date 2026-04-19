@@ -1,5 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, LayoutChangeEvent, Platform } from 'react-native';
+import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { View, Text, StyleSheet, LayoutChangeEvent, Platform, Pressable } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useShallow } from 'zustand/react/shallow';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -7,25 +9,39 @@ import Animated, {
   withSpring,
   withTiming,
   withRepeat,
+  withSequence,
+  withDelay,
+  interpolate,
+  interpolateColor,
+  Extrapolation,
   runOnJS,
   Easing,
 } from 'react-native-reanimated';
-import { Image } from 'expo-image';
+import { ShadowArtworkImage } from '@/components/ShadowArtworkImage';
 import { Svg, Rect } from 'react-native-svg';
-import { Play, Pause, SkipForward, Disc3, CloudDownload } from 'lucide-react-native';
+import { Play, Pause, SkipForward, Disc3 } from 'lucide-react-native';
+import { MachinedCloudIcon } from '@/components/MachinedCloudIcon';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { usePlaybackController } from '@/stores/playbackController';
+import { ensurePlaybackHydratedFromStorage } from '@/lib/storage';
+import { useKeyboardChromeStore } from '@/stores/keyboardChromeStore';
 import { openNowPlayingSheet } from '@/lib/openNowPlayingSheet';
 import { Track } from '@/types/music';
 import { downloadYouTubeTrack, downloadSoundCloudTrack, useDownloadsStore } from '@/stores/downloadsStore';
 import { usePlaybackDebugStore } from '@/stores/playbackDebugStore';
+import { useNowPlayingSheetStore } from '@/stores/nowPlayingSheetStore';
+import { sheetProgressSV } from '@/stores/nowPlayingSheetProgress';
 import { PlaybackDebugIndicator } from '@/components/PlaybackDebugOverlay';
 import { LoadingRing } from '@/components/LoadingRing';
 import * as Haptics from 'expo-haptics';
+import { MINI_PLAYER_HEIGHT, TAB_BAR_HEIGHT } from '@/constants/Layout';
 
 const AnimatedRect = Animated.createAnimatedComponent(Rect);
 
 const ICON_STROKE = 1.35;
+
+const PLACEHOLDER_ARTWORK =
+  'https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?w=128&h=128&fit=crop&q=60';
 
 function MiniPlayerSlimProgress() {
   const layoutW = useSharedValue(0);
@@ -68,14 +84,75 @@ function MiniPlayerSlimProgress() {
   );
 }
 
-export function MiniPlayer() {
-  const currentTrack = usePlaybackController(s => s.currentTrack);
-  const playbackState = usePlaybackController(s => s.playbackState);
-  const play = usePlaybackController(s => s.play);
-  const pause = usePlaybackController(s => s.pause);
-  const next = usePlaybackController(s => s.next);
-  const previous = usePlaybackController(s => s.previous);
-  const currentSource = usePlaybackController(s => s.currentSource);
+type MiniPlayerProps = {
+  /**
+   * Offset from the bottom of the sheet to the mini strip. On tab routes this should be
+   * `TAB_BAR_HEIGHT + insets.bottom` from `@/constants/Layout` / safe area; on stack routes, `insets.bottom` only.
+   */
+  bottomLift: number;
+};
+
+export function MiniPlayer({ bottomLift }: MiniPlayerProps) {
+  const insets = useSafeAreaInsets();
+  const sheetExpanded = useNowPlayingSheetStore((s) => s.isExpanded);
+  const keyboardVisible = useKeyboardChromeStore((s) => s.keyboardVisible);
+  const kbHiddenStyle = keyboardVisible
+    ? { opacity: 0, height: 0, overflow: 'hidden' as const }
+    : {};
+
+  const [, forceMetaRender] = useReducer((n: number) => n + 1, 0);
+
+  const {
+    currentTrack,
+    playbackState,
+    playbackRevision,
+    currentSource,
+    play,
+    pause,
+    next,
+    previous,
+  } = usePlaybackController(
+    useShallow((s) => ({
+      currentTrack: s.currentTrack,
+      playbackState: s.playbackState,
+      playbackRevision: s.playbackRevision,
+      currentSource: s.currentSource,
+      play: s.play,
+      pause: s.pause,
+      next: s.next,
+      previous: s.previous,
+    })),
+  );
+
+  useEffect(() => {
+    ensurePlaybackHydratedFromStorage();
+  }, []);
+
+  useEffect(
+    () =>
+      usePlaybackController.subscribe((state, prev) => {
+        if (
+          state.currentTrack?.id !== prev.currentTrack?.id ||
+          state.playbackRevision !== prev.playbackRevision ||
+          state.currentTrack?.title !== prev.currentTrack?.title ||
+          state.currentTrack?.artist !== prev.currentTrack?.artist ||
+          state.currentTrack?.artwork !== prev.currentTrack?.artwork
+        ) {
+          forceMetaRender();
+        }
+      }),
+    [],
+  );
+
+  const meta = useMemo(() => {
+    const t = currentTrack;
+    const id = t?.id ?? '';
+    const title = (t?.title?.trim() || 'Not Playing').trim();
+    const artist = (t?.artist?.trim() || 'Vybe System').trim();
+    const rawArt = t?.artwork?.trim();
+    const artworkUri = rawArt && rawArt.length > 0 ? rawArt : PLACEHOLDER_ARTWORK;
+    return { id, title, artist, artworkUri, hasRealTrack: !!t };
+  }, [currentTrack, playbackRevision]);
 
   const isTrackDownloaded = useDownloadsStore(s => s.isTrackDownloaded);
   const isImporting = useDownloadsStore(s => s.isImporting);
@@ -98,6 +175,14 @@ export function MiniPlayer() {
   const translateY = useSharedValue(0);
   const dragX = useSharedValue(0);
   const loadingRotation = useSharedValue(0);
+  /** 0 → resting Machined-Blue border; 1 → full bloom (glow + tint). */
+  const bloomSV = useSharedValue(0);
+  /** 1 → resting size; spring pop on track change using stiffness 200 / damping 20. */
+  const cardScaleSV = useSharedValue(1);
+  /** 0.35 → 1 pulse while `isPlaying`; parks at 0.35 when paused / idle. */
+  const heartbeatSV = useSharedValue(0.35);
+  /** 0 → hidden; 1 → POWERED_BY_DAVINCI subtext visible (fades in after track bloom settles). */
+  const davinciSubSV = useSharedValue(0);
 
   useEffect(() => {
     if (isLoading) {
@@ -117,7 +202,46 @@ export function MiniPlayer() {
     dragX.value = 0;
     translateY.value = 0;
     buttonScale.value = 1;
-  }, [currentTrack?.id]);
+  }, [currentTrack?.id, playbackRevision]);
+
+  // Track-change "Shadow Sexy" sequence: light haptic → spring pop →
+  // Machined-Blue glow bloom on the card border → settle. Spring physics
+  // (stiffness 200, damping 20) give the mechanical-snap feel without the
+  // cartoon bounce of default easings.
+  useEffect(() => {
+    if (!meta.hasRealTrack) {
+      bloomSV.value = withTiming(0, { duration: 220 });
+      davinciSubSV.value = withTiming(0, { duration: 220 });
+      return;
+    }
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    cardScaleSV.value = withSequence(
+      withSpring(1.018, { stiffness: 200, damping: 20, mass: 0.7 }),
+      withSpring(1, { stiffness: 200, damping: 20, mass: 0.7 }),
+    );
+    bloomSV.value = withSequence(
+      withTiming(1, { duration: 260, easing: Easing.out(Easing.cubic) }),
+      withTiming(0, { duration: 840, easing: Easing.inOut(Easing.quad) }),
+    );
+    davinciSubSV.value = withDelay(220, withTiming(1, { duration: 520 }));
+  }, [meta.id, meta.hasRealTrack]);
+
+  // Magenta heartbeat: pulses only while playing, parks at resting opacity
+  // when paused. Matches Dynamic Island physics so the two bars feel tied.
+  useEffect(() => {
+    if (isPlaying) {
+      heartbeatSV.value = withRepeat(
+        withSequence(
+          withTiming(1, { duration: 520 }),
+          withTiming(0.35, { duration: 620 }),
+        ),
+        -1,
+        true,
+      );
+    } else {
+      heartbeatSV.value = withTiming(0.35, { duration: 280 });
+    }
+  }, [isPlaying]);
 
   const navigateToNowPlaying = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -161,7 +285,7 @@ export function MiniPlayer() {
   };
 
   const handleDownload = async () => {
-    if (!currentTrack || isImporting) return;
+    if (!meta.hasRealTrack || !currentTrack || isImporting) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL!;
     const sc = (currentTrack as Track & { soundcloudUrl?: string }).soundcloudUrl;
@@ -226,6 +350,7 @@ export function MiniPlayer() {
   );
 
   const showDownload =
+    meta.hasRealTrack &&
     currentTrack &&
     (isYouTube || isYouTubeMusic) &&
     !isTrackDownloaded(currentTrack.id);
@@ -250,7 +375,32 @@ export function MiniPlayer() {
   });
 
   const containerAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: dragX.value }, { translateY: translateY.value }],
+    transform: [
+      { translateX: dragX.value },
+      { translateY: translateY.value },
+      { scale: cardScaleSV.value },
+    ],
+  }));
+
+  /** Border tint + iOS glow radius interpolated off `bloomSV`. */
+  const bloomBorderStyle = useAnimatedStyle(() => ({
+    borderColor: interpolateColor(
+      bloomSV.value,
+      [0, 1],
+      ['rgba(255,255,255,0.08)', '#00E5FF'],
+    ),
+    shadowColor: '#00E5FF',
+    shadowOpacity: bloomSV.value * 0.75,
+    shadowRadius: 4 + bloomSV.value * 14,
+  }));
+
+  const heartbeatAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: heartbeatSV.value,
+    transform: [{ scale: 0.85 + heartbeatSV.value * 0.25 }],
+  }));
+
+  const davinciSubAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: davinciSubSV.value * 0.9,
   }));
 
   const buttonAnimatedStyle = useAnimatedStyle(() => ({
@@ -261,19 +411,22 @@ export function MiniPlayer() {
     transform: [{ rotate: `${loadingRotation.value}deg` }],
   }));
 
-  if (!currentTrack) return null;
-
-  const playingFromLocalFile = !!currentTrack.audioUrl?.startsWith('file://');
+  const playingFromLocalFile =
+    meta.hasRealTrack && !!currentTrack?.audioUrl?.startsWith('file://');
 
   const cardBody = (
     <>
       <View style={styles.content}>
         <View style={styles.artworkContainer}>
-          <Image
-            source={{ uri: currentTrack.artwork }}
-            style={styles.artwork}
-            contentFit="cover"
-          />
+          <View style={styles.artworkShadowHost}>
+            <ShadowArtworkImage
+              key={`${meta.id}-${playbackRevision}-${meta.artworkUri}`}
+              recyclingKey={meta.id || 'vybe-mini-placeholder'}
+              source={{ uri: meta.artworkUri }}
+              style={styles.artwork}
+              contentFit="cover"
+            />
+          </View>
           {isLoading && (
             <View style={styles.loadingOverlay}>
               <Animated.View style={loadingAnimatedStyle}>
@@ -291,11 +444,16 @@ export function MiniPlayer() {
         </View>
 
         <View style={styles.trackInfo}>
-          <Text style={styles.trackTitle} numberOfLines={1}>
-            {currentTrack.title}
-          </Text>
-          <Text style={styles.artistName} numberOfLines={1}>
-            {currentTrack.artist}
+          <View style={styles.titleRow}>
+            <Text style={styles.trackTitle} numberOfLines={1} ellipsizeMode="tail">
+              {meta.title}
+            </Text>
+            {meta.hasRealTrack ? (
+              <Animated.View style={[styles.heartbeatDot, heartbeatAnimatedStyle]} />
+            ) : null}
+          </View>
+          <Text style={styles.artistName} numberOfLines={1} ellipsizeMode="tail">
+            {meta.artist}
           </Text>
         </View>
 
@@ -304,9 +462,9 @@ export function MiniPlayer() {
             <Animated.View
               style={[styles.controlButton, { opacity: isImporting ? 0.4 : 1 }]}
               accessibilityRole="button"
-              accessibilityLabel="Keep offline"
+              accessibilityLabel="Import to Vault"
             >
-              <CloudDownload size={19} color="rgba(255,255,255,0.92)" strokeWidth={ICON_STROKE} />
+              <MachinedCloudIcon size={19} strokeWidth={ICON_STROKE} disabled={isImporting} />
             </Animated.View>
           </GestureDetector>
         )}
@@ -344,39 +502,89 @@ export function MiniPlayer() {
     </>
   );
 
-  /** Solid chrome (#121212) matches tab bar — blur read as “floating glass” and let list show through. */
+  /** Solid chrome (#000) matches tab bar — Animated.View so the track-change bloom can tint the border. */
   const cardSurface = (
-    <View style={styles.cardSurface}>
+    <Animated.View style={[styles.cardSurface, bloomBorderStyle]}>
       {cardBody}
-    </View>
+      {meta.hasRealTrack ? (
+        <Animated.Text
+          numberOfLines={1}
+          style={[styles.davinciSubtext, davinciSubAnimatedStyle]}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+        >
+          POWERED_BY_DAVINCI
+        </Animated.Text>
+      ) : null}
+    </Animated.View>
   );
 
+  /** Pin above tab chrome: tab bar height + home indicator when parent passes tab-aware lift; else stack insets. */
+  const dockBottom =
+    bottomLift >= TAB_BAR_HEIGHT ? TAB_BAR_HEIGHT + insets.bottom : bottomLift;
+
+  /**
+   * Google Music cross-fade: mini reads the sheet's progress shared value every frame.
+   * - Progress 0 (collapsed)   → opacity 1 (fully visible above tab bar)
+   * - Progress 0.35 (mid drag) → opacity 0.12 (quick dip so the sheet reads as taking over)
+   * - Progress ~1 (expanded)   → opacity 0 (hidden behind the full player)
+   */
+  const sheetFadeStyle = useAnimatedStyle(() => {
+    if (!meta.hasRealTrack) return { opacity: 1 };
+    return {
+      opacity: interpolate(
+        sheetProgressSV.value,
+        [0, 0.1, 0.65, 1],
+        [1, 1, 0.12, 0],
+        Extrapolation.CLAMP,
+      ),
+    };
+  });
+
   return (
-    <View style={styles.outer} pointerEvents="box-none">
+    <Animated.View
+      pointerEvents={keyboardVisible || sheetExpanded ? 'none' : 'auto'}
+      style={[styles.container, { bottom: dockBottom }, sheetFadeStyle, kbHiddenStyle]}
+    >
       <GestureDetector gesture={miniCardGesture}>
         <View style={styles.shadowHost}>
           <Animated.View style={containerAnimatedStyle}>{cardSurface}</Animated.View>
         </View>
       </GestureDetector>
-    </View>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  outer: {
-    position: 'relative',
-    marginHorizontal: 0,
-    zIndex: 9999,
+  /** Root chrome only — never put `pointerEvents` here; it is not a valid style key. */
+  container: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: MINI_PLAYER_HEIGHT,
+    zIndex: 999,
+    ...Platform.select({
+      android: { elevation: 999 },
+      default: {},
+    }),
   },
   cardSurface: {
-    borderRadius: 0,
+    height: MINI_PLAYER_HEIGHT,
+    borderRadius: 12,
     overflow: 'hidden',
-    position: 'relative',
-    backgroundColor: '#121212',
+    backgroundColor: '#000000',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    ...Platform.select({
+      ios: {
+        shadowOffset: { width: 0, height: 0 },
+      },
+      default: {},
+    }),
   },
   shadowHost: {
-    borderRadius: 0,
-    backgroundColor: '#121212',
+    borderRadius: 12,
+    backgroundColor: '#000000',
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -394,11 +602,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 8,
+    paddingTop: 9,
+    paddingBottom: 9,
   },
   artworkContainer: {
     position: 'relative',
+  },
+  artworkShadowHost: {
+    borderRadius: 4,
+    backgroundColor: '#0A0A0A',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000000',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.65,
+        shadowRadius: 14,
+      },
+      android: {
+        elevation: 12,
+      },
+      default: {},
+    }),
   },
   artwork: {
     width: 44,
@@ -435,15 +659,44 @@ const styles = StyleSheet.create({
     minWidth: 0,
     justifyContent: 'center',
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   trackTitle: {
     color: '#FFFFFF',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '900',
+    letterSpacing: -0.5,
+    flexShrink: 1,
+  },
+  heartbeatDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginLeft: 8,
+    backgroundColor: '#FF00D4',
+    shadowColor: '#FF00D4',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 1,
+    shadowRadius: 4,
+  },
+  davinciSubtext: {
+    position: 'absolute',
+    right: 14,
+    bottom: 4,
+    color: '#6E6E73',
+    fontSize: 8,
+    fontWeight: '700',
+    letterSpacing: 1.6,
+    textTransform: 'uppercase',
   },
   artistName: {
-    color: 'rgba(255,255,255,0.55)',
-    fontSize: 12,
-    marginTop: 3,
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 14,
+    marginTop: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 1.5,
   },
   controlButton: {
     width: 36,

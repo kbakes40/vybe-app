@@ -3,12 +3,12 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   FreePDTrack,
-  FreePDCatalogResponse,
+  FreePDCatalogMeta,
   FreePDCategory,
 } from '@/types/freepd';
 import {
-  fetchFreePDCatalog,
-  fetchFreePDTracks,
+  fetchFreePDCatalogMeta,
+  fetchAllFreePDTracks,
   searchFreePDTracks as apiSearchFreePDTracks,
   fetchFreePDGenres,
   refreshFreePDCatalog as apiRefreshCatalog,
@@ -31,8 +31,8 @@ interface FreePDState {
   genres: GenreInfo[];
   moods: string[];
 
-  // Cached full catalog for offline use
-  cachedCatalog: FreePDCatalogResponse | null;
+  /** Server metadata from GET /api/freepd/catalog */
+  catalogMeta: FreePDCatalogMeta | null;
 
   // Loading and error states
   isLoading: boolean;
@@ -102,7 +102,7 @@ export const useFreePDStore = create<FreePDState>()(
       tracks: [],
       genres: [],
       moods: [],
-      cachedCatalog: null,
+      catalogMeta: null,
       isLoading: false,
       error: null,
       lastRefresh: null,
@@ -118,37 +118,34 @@ export const useFreePDStore = create<FreePDState>()(
       loadCatalog: async () => {
         const state = get();
 
-        // Check if cache is still fresh
         if (
-          state.cachedCatalog &&
+          state.tracks.length > 0 &&
           state.lastRefresh &&
           Date.now() - state.lastRefresh < CACHE_DURATION_MS
         ) {
-          // Use cached data
-          set({
-            tracks: state.cachedCatalog.tracks,
-            isLoading: false,
-          });
+          set({ isLoading: false });
           return;
         }
 
-        // Don't block UI if we already have data
         if (state.tracks.length === 0) {
           set({ isLoading: true });
         }
 
-        const [catalog, genresResponse] = await Promise.all([
-          withRetry(() => fetchFreePDCatalog()),
+        const [meta, genresResponse, allTracks] = await Promise.all([
+          withRetry(() => fetchFreePDCatalogMeta()),
           withRetry(() => fetchFreePDGenres()),
+          withRetry(() => fetchAllFreePDTracks()),
         ]);
 
-        if (catalog?.success && catalog.tracks) {
+        if (allTracks !== null) {
           set({
-            tracks: catalog.tracks,
-            cachedCatalog: catalog,
+            tracks: allTracks,
+            catalogMeta: meta ?? null,
             lastRefresh: Date.now(),
-            error: null,
+            error: allTracks.length === 0 ? 'No FreePD tracks returned' : null,
           });
+        } else {
+          set({ error: 'Could not load FreePD catalog' });
         }
 
         if (genresResponse) {
@@ -169,17 +166,21 @@ export const useFreePDStore = create<FreePDState>()(
 
         await withRetry(() => apiRefreshCatalog());
 
-        const [catalog, genresResponse] = await Promise.all([
-          withRetry(() => fetchFreePDCatalog()),
+        const [meta, genresResponse, allTracks] = await Promise.all([
+          withRetry(() => fetchFreePDCatalogMeta()),
           withRetry(() => fetchFreePDGenres()),
+          withRetry(() => fetchAllFreePDTracks()),
         ]);
 
-        if (catalog?.success && catalog.tracks) {
+        if (allTracks !== null) {
           set({
-            tracks: catalog.tracks,
-            cachedCatalog: catalog,
+            tracks: allTracks,
+            catalogMeta: meta ?? null,
             lastRefresh: Date.now(),
+            error: allTracks.length === 0 ? 'No FreePD tracks returned' : null,
           });
+        } else {
+          set({ error: 'Could not refresh FreePD catalog' });
         }
 
         if (genresResponse) {
@@ -317,14 +318,14 @@ export const useFreePDStore = create<FreePDState>()(
       },
     }),
     {
-      name: 'vybe-freepd',
+      name: 'vybe-freepd-v2',
       storage: createJSONStorage(() => AsyncStorage),
       // Only persist essential data to avoid storage bloat
       partialize: (state) => ({
         tracks: state.tracks,
         genres: state.genres,
         moods: state.moods,
-        cachedCatalog: state.cachedCatalog,
+        catalogMeta: state.catalogMeta,
         lastRefresh: state.lastRefresh,
       }),
     }

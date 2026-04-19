@@ -12,6 +12,7 @@ import { ChevronLeft } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { OtpInput } from 'react-native-otp-entry';
 import { authClient } from '@/lib/auth/auth-client';
+import { persistSessionBearerFromAuthResult } from '@/lib/auth/sessionBearer';
 import { api } from '@/lib/api/api';
 import { useUpgradePromptStore } from '@/stores/upgradePromptStore';
 import { useVybePopup } from '@/components/VybePopup';
@@ -45,6 +46,8 @@ export default function VerifyOtpScreen() {
         otp,
       });
       if (result.error) throw new Error(result.error.message ?? 'Invalid code');
+
+      await persistSessionBearerFromAuthResult(result);
 
       /** Shown on Home after navigation so the toast is not wiped by the stack transition. */
       usePostLoginWelcomeStore.getState().queueEnjoyVibes();

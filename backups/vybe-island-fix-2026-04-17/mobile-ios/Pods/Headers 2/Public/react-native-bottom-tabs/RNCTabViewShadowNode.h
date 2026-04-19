@@ -1,0 +1,1 @@
+../../../../../node_modules/react-native-bottom-tabs/common/cpp/react/renderer/components/RNCTabView/RNCTabViewShadowNode.h

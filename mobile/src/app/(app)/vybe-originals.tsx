@@ -23,6 +23,7 @@ import {
 import { useMusicGenStore } from '@/stores/musicgenStore';
 import { usePlaybackController } from '@/stores/playbackController';
 import { MusicGenTrack, MusicGenMood } from '@/types/musicgen';
+import { stackScreenContentContainerPaddingBottom } from '@/constants/Layout';
 import { formatDuration } from '@/data/mockData';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -387,7 +388,7 @@ export default function VybeOriginalsScreen() {
 
       <ScrollView
         className="flex-1"
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: stackScreenContentContainerPaddingBottom(insets.bottom) }}
         showsVerticalScrollIndicator={false}
       >
         {/* Featured Section */}

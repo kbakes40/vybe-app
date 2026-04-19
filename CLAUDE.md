@@ -16,8 +16,7 @@ This workspace contains a mobile app and backend server.
   - These are available at runtime: BACKEND_URL, PORT, NODE_ENV
 
   Mobile (in mobile/src/*.ts):
-  - Use `process.env.EXPO_PUBLIC_BACKEND_URL` for all API calls (single deploy; no second content host)
-  - Do not set `EXPO_PUBLIC_CONTENT_URL` — removed; `src/lib/api/api.ts` uses only `EXPO_PUBLIC_BACKEND_URL`
+  - Use `process.env.EXPO_PUBLIC_BACKEND_URL` for API calls
   - EXPO_PUBLIC_* vars are bundled at build time
 
   Testing backend endpoints:

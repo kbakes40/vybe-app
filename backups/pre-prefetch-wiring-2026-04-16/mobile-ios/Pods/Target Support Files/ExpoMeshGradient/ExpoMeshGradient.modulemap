@@ -1,0 +1,6 @@
+module ExpoMeshGradient {
+  umbrella header "ExpoMeshGradient-umbrella.h"
+
+  export *
+  module * { export * }
+}

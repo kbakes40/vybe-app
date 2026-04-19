@@ -331,11 +331,10 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
         return Date.now() - lastFetchedAt < cacheDurationMs;
       },
 
-      // Check if user needs to complete onboarding
-      needsOnboarding: () => {
-        const { preferences } = get();
-        return !preferences.onboardingComplete;
-      },
+      // Discover-onboarding is disabled — always behave as if the user
+      // already completed it so the feed loads straight from defaults and
+      // nothing auto-navigates to /(app)/discover-onboarding.
+      needsOnboarding: () => false,
     }),
     {
       name: 'vybe-discover-feed',

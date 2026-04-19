@@ -2,9 +2,6 @@ import Foundation
 import React
 import UIKit
 
-// Instant-start AV tuning for expo-av (AVQueuePlayer / AVURLAsset) is applied in
-// VybeAVPlayerTuning.m so playback begins with minimal buffering.
-
 /// Native background downloader using URLSession.background. Unlike JS-driven
 /// downloads (expo-file-system), the OS keeps these alive when the user
 /// backgrounds the app, and delegate callbacks run on Swift — so the
@@ -31,27 +28,6 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
     return URLSession(configuration: config, delegate: self, delegateQueue: nil)
   }()
 
-  /// Foreground / ephemeral session for short Range fetches only. Keeps
-  /// instant-play buffers off the background download pipeline used for
-  /// full `startDownload` / Now Playing–critical work.
-  private lazy var prefetchSession: URLSession = {
-    let config = URLSessionConfiguration.ephemeral
-    config.allowsCellularAccess = true
-    config.waitsForConnectivity = true
-    config.httpMaximumConnectionsPerHost = 5
-    config.networkServiceType = .background
-    config.timeoutIntervalForRequest = 60
-    return URLSession(configuration: config)
-  }()
-
-  private let prefetchQueue: OperationQueue = {
-    let q = OperationQueue()
-    q.name = "com.vybe.prefetch"
-    q.maxConcurrentOperationCount = 5
-    q.qualityOfService = .utility
-    return q
-  }()
-
   // MARK: Per-task bookkeeping
 
   private struct DownloadMeta {
@@ -68,28 +44,6 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
   private var lastProgressSendByTaskId: [Int: Date] = [:]
   private let progressThrottleSec: TimeInterval = 0.2
 
-  /// One background download task at a time — avoids iOS throttling / Live
-  /// Activity pile-up when users queue many tracks.
-  private struct SerialDownloadJob {
-    let url: URL
-    let destPath: String
-    let trackId: String
-    let trackTitle: String
-    let artistName: String
-    let queuePosition: Int
-    let queueTotal: Int
-    let resolver: RCTPromiseResolveBlock?
-    let rejecter: RCTPromiseRejectBlock?
-  }
-
-  private let serialLock = NSLock()
-  private var serialPending: [SerialDownloadJob] = []
-  private var serialIsActive = false
-
-  private var lastProgressSnapshot: [Int: Double] = [:]
-  private var watchdogWorkItems: [Int: DispatchWorkItem] = [:]
-  private let watchdogLock = NSLock()
-
   // Background session reactivation — iOS invokes
   // `application(_:handleEventsForBackgroundURLSession:completionHandler:)`
   // when it wakes us to handle pending download events. AppDelegate sets
@@ -99,10 +53,7 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
   // MARK: RCTEventEmitter
 
   override func supportedEvents() -> [String]! {
-    return [
-      "onDownloadProgress", "onDownloadComplete", "onDownloadError",
-      "onPrefetchProgress", "onPrefetchReady", "onPrefetchError",
-    ]
+    return ["onDownloadProgress", "onDownloadComplete", "onDownloadError"]
   }
 
   @objc override static func requiresMainQueueSetup() -> Bool { return false }
@@ -129,29 +80,38 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
     }
     let trackTitle = (params["trackTitle"] as? String) ?? "Unknown track"
     let artistName = (params["artistName"] as? String) ?? ""
+
     let destPath = destPathRaw.replacingOccurrences(of: "file://", with: "")
 
-    enqueueSerialDownload(SerialDownloadJob(
-      url: url,
-      destPath: destPath,
-      trackId: trackId,
-      trackTitle: trackTitle,
-      artistName: artistName,
-      queuePosition: 1,
-      queueTotal: 1,
-      resolver: resolver,
-      rejecter: rejecter
-    ))
+    // Start the Live Activity (relabels if one is already alive).
+    if #available(iOS 16.1, *) {
+      VybeDownloadActivityModule.swiftStart(trackTitle: trackTitle, artistName: artistName)
+    }
+
+    let task = session.downloadTask(with: url)
+    let taskId = task.taskIdentifier
+
+    stateLock.lock()
+    metaByTaskId[taskId] = DownloadMeta(
+      trackId: trackId, destPath: destPath,
+      trackTitle: trackTitle, artistName: artistName
+    )
+    metaByTrackId[trackId] = taskId
+    promiseByTaskId[taskId] = (resolver, rejecter)
+    stateLock.unlock()
+
+    task.resume()
   }
 
-  // MARK: Batch Download — enqueued; only one URLSession task runs at a time.
+  // MARK: Batch Download — fires all tasks at once so iOS handles them
+  // natively without needing JS to chain them via await. Each task's
+  // completion fires the onDownloadComplete event independently.
 
   @objc(startBatchDownload:resolver:rejecter:)
   func startBatchDownload(_ items: NSArray,
                           resolver: @escaping RCTPromiseResolveBlock,
                           rejecter: @escaping RCTPromiseRejectBlock) {
-    _ = rejecter
-    var parsed: [(url: URL, destPath: String, trackId: String, trackTitle: String, artistName: String)] = []
+    var started = 0
     for case let params as NSDictionary in items {
       guard let urlString = params["url"] as? String,
             let url = URL(string: urlString),
@@ -160,131 +120,28 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
       let trackTitle = (params["trackTitle"] as? String) ?? "Unknown track"
       let artistName = (params["artistName"] as? String) ?? ""
       let destPath = destPathRaw.replacingOccurrences(of: "file://", with: "")
-      parsed.append((url, destPath, trackId, trackTitle, artistName))
-    }
-    let total = parsed.count
-    guard total > 0 else {
-      resolver(["started": 0])
-      return
-    }
-    for (idx, row) in parsed.enumerated() {
-      enqueueSerialDownload(SerialDownloadJob(
-        url: row.url,
-        destPath: row.destPath,
-        trackId: row.trackId,
-        trackTitle: row.trackTitle,
-        artistName: row.artistName,
-        queuePosition: idx + 1,
-        queueTotal: total,
-        resolver: nil,
-        rejecter: nil
-      ))
-    }
-    resolver(["started": NSNumber(value: total)])
-  }
 
-  private func enqueueSerialDownload(_ job: SerialDownloadJob) {
-    serialLock.lock()
-    serialPending.append(job)
-    serialLock.unlock()
-    pumpSerialDownloadQueue()
-  }
+      let task = session.downloadTask(with: url)
+      let taskId = task.taskIdentifier
 
-  private func pumpSerialDownloadQueue() {
-    serialLock.lock()
-    if serialIsActive {
-      serialLock.unlock()
-      return
-    }
-    guard let job = serialPending.first else {
-      serialLock.unlock()
-      return
-    }
-    serialPending.removeFirst()
-    serialIsActive = true
-    serialLock.unlock()
-    beginUrlSessionDownload(for: job)
-  }
-
-  private func serialDownloadFinished() {
-    serialLock.lock()
-    serialIsActive = false
-    serialLock.unlock()
-    pumpSerialDownloadQueue()
-  }
-
-  private func beginUrlSessionDownload(for job: SerialDownloadJob) {
-    if #available(iOS 16.1, *) {
-      VybeDownloadActivityModule.swiftStart(
-        trackTitle: job.trackTitle,
-        artistName: job.artistName,
-        trackId: job.trackId,
-        queuePosition: job.queuePosition,
-        queueTotal: job.queueTotal
+      stateLock.lock()
+      metaByTaskId[taskId] = DownloadMeta(
+        trackId: trackId, destPath: destPath,
+        trackTitle: trackTitle, artistName: artistName
       )
-    }
-
-    let task = session.downloadTask(with: job.url)
-    let taskId = task.taskIdentifier
-
-    stateLock.lock()
-    metaByTaskId[taskId] = DownloadMeta(
-      trackId: job.trackId, destPath: job.destPath,
-      trackTitle: job.trackTitle, artistName: job.artistName
-    )
-    metaByTrackId[job.trackId] = taskId
-    if let res = job.resolver, let rej = job.rejecter {
-      promiseByTaskId[taskId] = (res, rej)
-    }
-    stateLock.unlock()
-
-    lastProgressSnapshot[taskId] = -1.0
-    armDownloadWatchdog(taskId: taskId, trackId: job.trackId)
-
-    task.resume()
-  }
-
-  // MARK: Stall watchdog (15s without meaningful progress → cancel task)
-
-  private func armDownloadWatchdog(taskId: Int, trackId: String) {
-    watchdogLock.lock()
-    watchdogWorkItems[taskId]?.cancel()
-    let work = DispatchWorkItem { [weak self] in
-      self?.handleWatchdogStall(taskId: taskId)
-    }
-    watchdogWorkItems[taskId] = work
-    watchdogLock.unlock()
-    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 15, execute: work)
-  }
-
-  private func bumpDownloadWatchdogProgress(taskId: Int, trackId: String, progress: Double) {
-    stateLock.lock()
-    let prev = lastProgressSnapshot[taskId] ?? -1.0
-    if progress > prev + 0.0005 {
-      lastProgressSnapshot[taskId] = progress
+      metaByTrackId[trackId] = taskId
       stateLock.unlock()
-      armDownloadWatchdog(taskId: taskId, trackId: trackId)
-    } else {
-      stateLock.unlock()
-    }
-  }
 
-  private func clearDownloadWatchdog(taskId: Int) {
-    watchdogLock.lock()
-    watchdogWorkItems[taskId]?.cancel()
-    watchdogWorkItems.removeValue(forKey: taskId)
-    watchdogLock.unlock()
-    stateLock.lock()
-    lastProgressSnapshot.removeValue(forKey: taskId)
-    stateLock.unlock()
-  }
-
-  private func handleWatchdogStall(taskId: Int) {
-    session.getAllTasks { tasks in
-      for t in tasks where t.taskIdentifier == taskId {
-        t.cancel()
+      // Start the Live Activity for the first track only — subsequent
+      // tracks update via swiftStart in the progress callback.
+      if started == 0, #available(iOS 16.1, *) {
+        VybeDownloadActivityModule.swiftStart(trackTitle: trackTitle, artistName: artistName)
       }
+
+      task.resume()
+      started += 1
     }
+    resolver(["started": started])
   }
 
   @objc(cancelDownload:)
@@ -298,171 +155,6 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
         t.cancel()
       }
     }
-  }
-
-  // MARK: Prefetch (Range GET via proxy/CDN — does not use background session)
-
-  /// Tiny first range for fastest first sample; probe step may widen for stability.
-  private static let prefetchMinBytes = 24 * 1024
-  private static let prefetchMaxBytes = 2 * 1024 * 1024
-  private static let prefetchDefaultRangeEnd = 32 * 1024 - 1
-
-  @objc(prefetchAudioBuffers:resolver:rejecter:)
-  func prefetchAudioBuffers(_ items: NSArray,
-                            resolver: @escaping RCTPromiseResolveBlock,
-                            rejecter: @escaping RCTPromiseRejectBlock) {
-    var queued = 0
-    for case let dict as NSDictionary in items {
-      guard let trackId = dict["trackId"] as? String,
-            let streamUrl = dict["streamUrl"] as? String,
-            let destPathRaw = dict["destPath"] as? String else { continue }
-      let destPath = destPathRaw.replacingOccurrences(of: "file://", with: "")
-      queued += 1
-      let url = streamUrl
-      let tid = trackId
-      let path = destPath
-      let op = BlockOperation()
-      op.addExecutionBlock { [weak self, weak op] in
-        guard let self else { return }
-        self.runPrefetchOperation(trackId: tid, streamUrl: url, destPath: path) {
-          op?.isCancelled ?? true
-        }
-      }
-      prefetchQueue.addOperation(op)
-    }
-    resolver(["queued": NSNumber(value: queued)])
-  }
-
-  @objc(cancelPrefetchQueue)
-  func cancelPrefetchQueue() {
-    prefetchQueue.cancelAllOperations()
-    prefetchSession.getAllTasks { tasks in
-      tasks.forEach { $0.cancel() }
-    }
-  }
-
-  private func runPrefetchOperation(
-    trackId: String,
-    streamUrl: String,
-    destPath: String,
-    isCancelled: () -> Bool
-  ) {
-    guard let url = URL(string: streamUrl) else {
-      DispatchQueue.main.async {
-        self.sendEvent(withName: "onPrefetchError", body: ["trackId": trackId, "error": "bad_url"])
-      }
-      return
-    }
-
-    let fm = FileManager.default
-    if fm.fileExists(atPath: destPath) {
-      DispatchQueue.main.async {
-        self.sendEvent(withName: "onPrefetchProgress", body: ["trackId": trackId, "progress": 1.0])
-        self.sendEvent(withName: "onPrefetchReady", body: ["trackId": trackId])
-      }
-      return
-    }
-
-    let prefetchPath = destPath + ".prefetch"
-    if let attrs = try? fm.attributesOfItem(atPath: prefetchPath),
-       let sz = attrs[.size] as? NSNumber,
-       sz.intValue >= Self.prefetchMinBytes {
-      DispatchQueue.main.async {
-        self.sendEvent(withName: "onPrefetchProgress", body: ["trackId": trackId, "progress": 1.0])
-        self.sendEvent(withName: "onPrefetchReady", body: ["trackId": trackId])
-      }
-      return
-    }
-
-    var rangeEnd = Self.prefetchDefaultRangeEnd
-    var probeReq = URLRequest(url: url)
-    probeReq.setValue("bytes=0-0", forHTTPHeaderField: "Range")
-    probeReq.timeoutInterval = 45
-    let semProbe = DispatchSemaphore(value: 0)
-    var probeResp: URLResponse?
-    let probeTask = prefetchSession.dataTask(with: probeReq) { _, resp, _ in
-      probeResp = resp
-      semProbe.signal()
-    }
-    probeTask.priority = URLSessionTask.highPriority
-    probeTask.resume()
-    _ = semProbe.wait(timeout: .now() + 50)
-
-    if isCancelled() {
-      return
-    }
-
-    if let http = probeResp as? HTTPURLResponse, http.statusCode == 206 {
-      if let cr = http.value(forHTTPHeaderField: "Content-Range"),
-         let total = Self.parseContentRangeTotal(cr), total > 0 {
-        let twenty = Int(Double(total) * 0.2)
-        let capped = min(Self.prefetchMaxBytes, max(Self.prefetchMinBytes, twenty))
-        rangeEnd = max(0, capped - 1)
-      }
-    }
-
-    DispatchQueue.main.async {
-      self.sendEvent(withName: "onPrefetchProgress", body: ["trackId": trackId, "progress": 0.08])
-    }
-
-    var req = URLRequest(url: url)
-    req.setValue("bytes=0-\(rangeEnd)", forHTTPHeaderField: "Range")
-    req.timeoutInterval = 90
-
-    let sem = DispatchSemaphore(value: 0)
-    var outData: Data?
-    var outErr: Error?
-    let dataTask = prefetchSession.dataTask(with: req) { data, _, err in
-      outData = data
-      outErr = err
-      sem.signal()
-    }
-    dataTask.priority = URLSessionTask.highPriority
-    dataTask.resume()
-    _ = sem.wait(timeout: .now() + 120)
-
-    if isCancelled() {
-      return
-    }
-
-    guard outErr == nil, let data = outData, data.count >= 32 * 1024 else {
-      if let err = outErr {
-        DispatchQueue.main.async {
-          self.sendEvent(withName: "onPrefetchError", body: [
-            "trackId": trackId,
-            "error": err.localizedDescription,
-          ])
-        }
-      }
-      return
-    }
-
-    let parent = URL(fileURLWithPath: destPath).deletingLastPathComponent()
-    try? fm.createDirectory(at: parent, withIntermediateDirectories: true)
-    try? fm.removeItem(atPath: prefetchPath)
-    do {
-      try data.write(to: URL(fileURLWithPath: prefetchPath), options: .atomic)
-    } catch {
-      DispatchQueue.main.async {
-        self.sendEvent(withName: "onPrefetchError", body: [
-          "trackId": trackId,
-          "error": error.localizedDescription,
-        ])
-      }
-      return
-    }
-
-    DispatchQueue.main.async {
-      self.sendEvent(withName: "onPrefetchProgress", body: ["trackId": trackId, "progress": 1.0])
-      self.sendEvent(withName: "onPrefetchReady", body: ["trackId": trackId])
-    }
-  }
-
-  private static func parseContentRangeTotal(_ header: String) -> Int? {
-    guard let slash = header.lastIndex(of: "/") else { return nil }
-    let tail = header[header.index(after: slash)...].trimmingCharacters(in: .whitespaces)
-    if tail == "*" { return nil }
-    return Int(tail)
   }
 
   // MARK: URLSessionDownloadDelegate — progress
@@ -484,8 +176,6 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
     let meta = metaByTaskId[taskId]
     stateLock.unlock()
     guard shouldSend, let meta = meta else { return }
-
-    bumpDownloadWatchdogProgress(taskId: taskId, trackId: meta.trackId, progress: progress)
 
     if #available(iOS 16.1, *) {
       // Relabel the pill with this track's title (handles batch — each
@@ -511,6 +201,7 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
     let taskId = downloadTask.taskIdentifier
     stateLock.lock()
     let meta = metaByTaskId[taskId]
+    let promise = promiseByTaskId[taskId]
     stateLock.unlock()
     guard let meta = meta else { return }
 
@@ -542,21 +233,19 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
     let attrs = (try? fm.attributesOfItem(atPath: finalURL.path)) ?? [:]
     let fileSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
 
-    clearDownloadWatchdog(taskId: taskId)
-
     stateLock.lock()
     metaByTaskId.removeValue(forKey: taskId)
     metaByTrackId.removeValue(forKey: meta.trackId)
-    let promise = promiseByTaskId.removeValue(forKey: taskId)
+    promiseByTaskId.removeValue(forKey: taskId)
     lastProgressSendByTaskId.removeValue(forKey: taskId)
+    let remainingCount = metaByTaskId.count
     stateLock.unlock()
 
-    if #available(iOS 16.1, *) {
-      VybeDownloadActivityModule.swiftEnd(success: true, trackId: meta.trackId) { [weak self] in
-        self?.serialDownloadFinished()
-      }
-    } else {
-      serialDownloadFinished()
+    // Only end the Live Activity when the LAST download in the batch
+    // completes — otherwise the pill dies after track 1 and subsequent
+    // progress updates land on a dead activity.
+    if remainingCount == 0, #available(iOS 16.1, *) {
+      VybeDownloadActivityModule.swiftEnd(success: true)
     }
 
     sendEvent(withName: "onDownloadComplete", body: [
@@ -584,31 +273,26 @@ class VybeDownloader: RCTEventEmitter, URLSessionDownloadDelegate {
   }
 
   private func finishFailure(taskId: Int, error: Error) {
-    clearDownloadWatchdog(taskId: taskId)
     stateLock.lock()
     let meta = metaByTaskId.removeValue(forKey: taskId)
     let promise = promiseByTaskId.removeValue(forKey: taskId)
     lastProgressSendByTaskId.removeValue(forKey: taskId)
     if let meta = meta { metaByTrackId.removeValue(forKey: meta.trackId) }
+    let remainingCount = metaByTaskId.count
     stateLock.unlock()
+
+    // Only end on the last task — same reason as the success path.
+    if remainingCount == 0, #available(iOS 16.1, *) {
+      VybeDownloadActivityModule.swiftEnd(success: false)
+    }
 
     if let meta = meta {
       sendEvent(withName: "onDownloadError", body: [
         "trackId": meta.trackId,
         "error": error.localizedDescription,
       ])
-      promise?.1("DOWNLOAD_FAILED", error.localizedDescription, error)
-      if #available(iOS 16.1, *) {
-        VybeDownloadActivityModule.swiftEnd(success: false, trackId: meta.trackId) { [weak self] in
-          self?.serialDownloadFinished()
-        }
-      } else {
-        serialDownloadFinished()
-      }
-    } else {
-      promise?.1("DOWNLOAD_FAILED", error.localizedDescription, error)
-      serialDownloadFinished()
     }
+    promise?.1("DOWNLOAD_FAILED", error.localizedDescription, error)
   }
 
   // MARK: URLSessionDelegate — background session wake

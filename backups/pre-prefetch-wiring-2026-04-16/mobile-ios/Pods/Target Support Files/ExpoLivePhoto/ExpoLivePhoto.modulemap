@@ -1,0 +1,6 @@
+module ExpoLivePhoto {
+  umbrella header "ExpoLivePhoto-umbrella.h"
+
+  export *
+  module * { export * }
+}

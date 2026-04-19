@@ -1,0 +1,6 @@
+module ExpoScreenCapture {
+  umbrella header "ExpoScreenCapture-umbrella.h"
+
+  export *
+  module * { export * }
+}

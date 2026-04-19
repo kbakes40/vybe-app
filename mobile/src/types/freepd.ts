@@ -40,8 +40,19 @@ export type FreePDCategory =
   | 'other';
 
 /**
- * Response from FreePD catalog API
+ * Metadata from GET /api/freepd/catalog (tracks come from paginated /tracks)
  */
+export interface FreePDCatalogMeta {
+  totalTracks: number;
+  genreCounts?: Record<string, number>;
+  lastUpdated?: string;
+  version?: string;
+  availableGenres?: string[];
+  availableMoods?: string[];
+  availableInstrumentProfiles?: string[];
+}
+
+/** @deprecated Use FreePDCatalogMeta + paginated tracks; kept for persisted cache shape */
 export interface FreePDCatalogResponse {
   success: boolean;
   tracks: FreePDTrack[];
@@ -49,7 +60,7 @@ export interface FreePDCatalogResponse {
   page: number;
   pageSize: number;
   categories: FreePDCategory[];
-  lastUpdated?: string; // ISO date string
+  lastUpdated?: string;
 }
 
 /**

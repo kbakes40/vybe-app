@@ -6,6 +6,7 @@ import {
   Modal,
   ActivityIndicator,
   Dimensions,
+  Alert,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import Animated, {
@@ -109,6 +110,9 @@ function PopupButton({
 
   return (
     <Pressable
+      onPressIn={() => {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }}
       onPress={onPress}
       disabled={isLoading}
       className={`flex-1 py-3.5 rounded-xl items-center justify-center ${
@@ -359,13 +363,17 @@ export function VybePopupProvider({ children }: { children: React.ReactNode }) {
 
       try {
         await action.onPress();
+        hideVybePopup();
+      } catch (e) {
+        const msg =
+          e instanceof Error ? e.message : typeof e === 'string' ? e : 'Something went wrong. Please try again.';
+        Alert.alert('Error', msg);
       } finally {
         setState((prev) => ({
           ...prev,
           loading: false,
           loadingActionIndex: null,
         }));
-        hideVybePopup();
       }
     } else {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);

@@ -26,6 +26,7 @@ import { useBeatMatchRadioStore, BeatMatchSettings } from '@/stores/beatMatchRad
 import { usePlaybackController } from '@/stores/playbackController';
 import { useDiscoveryAlgorithmStore } from '@/stores/discoveryAlgorithmStore';
 import { Track } from '@/types/music';
+import { stackScreenContentContainerPaddingBottom } from '@/constants/Layout';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -275,7 +276,7 @@ export default function BeatMatchRadioScreen() {
 
       <ScrollView
         className="flex-1"
-        contentContainerStyle={{ paddingBottom: 120 }}
+        contentContainerStyle={{ paddingBottom: stackScreenContentContainerPaddingBottom(insets.bottom) }}
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}

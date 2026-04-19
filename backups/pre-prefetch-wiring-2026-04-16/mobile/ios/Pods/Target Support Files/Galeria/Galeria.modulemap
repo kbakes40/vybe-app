@@ -1,0 +1,6 @@
+module Galeria {
+  umbrella header "Galeria-umbrella.h"
+
+  export *
+  module * { export * }
+}

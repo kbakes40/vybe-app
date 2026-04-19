@@ -88,7 +88,7 @@ export const useUserSettingsStore = create<UserSettingsState>()(
     }),
     {
       name: 'vybe-user-settings-v3',
-      storage: mmkvStorage,
+      storage: mmkvStorage as never,
       version: 2,
       migrate: (_: unknown) => ({
         profileImage: null,

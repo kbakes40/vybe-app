@@ -8,7 +8,7 @@ import * as Haptics from 'expo-haptics';
 import { usePlaybackController } from '@/stores/playbackController';
 import { createMMKVCache, TTL } from '@/lib/mmkv-cache';
 import { Track } from '@/types/music';
-import { MINI_PLAYER_HEIGHT } from './_layout';
+import { stackScreenContentContainerPaddingBottom } from '@/constants/Layout';
 
 const discoverMMKV = createMMKVCache('vybe-discover');
 
@@ -31,7 +31,7 @@ interface SCSearchTrack {
 type FeedKind = 'ytm' | 'sc';
 
 const META: Record<FeedKind, { title: string; subtitle: string; accent: string; mmkvKey: string }> = {
-  ytm: { title: 'From YouTube Music', subtitle: 'Fresh tracks to explore', accent: '#FF0000', mmkvKey: 'ytmTracksFeed' },
+  ytm: { title: 'Vault exclusives', subtitle: 'Cloud-locked rotation from your graph', accent: '#00E5FF', mmkvKey: 'ytmTracksFeed' },
   sc:  { title: 'From SoundCloud',   subtitle: 'Underground tracks waiting to be discovered', accent: '#FF5500', mmkvKey: 'scTracksFeed' },
 };
 
@@ -94,7 +94,12 @@ export default function TrackFeedScreen() {
         <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700', marginLeft: 8 }}>Play All</Text>
       </Pressable>
 
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: MINI_PLAYER_HEIGHT + insets.bottom + 24 }}>
+      <ScrollView
+        contentContainerStyle={{
+          paddingHorizontal: 12,
+          paddingBottom: stackScreenContentContainerPaddingBottom(insets.bottom),
+        }}
+      >
         {queue.map((t, idx) => (
           <Pressable
             key={t.id}

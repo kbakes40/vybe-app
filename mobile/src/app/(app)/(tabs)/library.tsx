@@ -1,17 +1,17 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, ScrollView, Pressable, Modal, Dimensions, TextInput, KeyboardAvoidingView, Platform, Keyboard } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { View, Text, ScrollView, Pressable, Modal, Dimensions, TextInput, KeyboardAvoidingView, Platform, Keyboard, StyleSheet, type TextStyle } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import Animated, { SharedValue, useAnimatedStyle, interpolate, Extrapolation } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { Image } from 'expo-image';
+import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
-import { ProfileAvatar } from '@/components/ProfileAvatar';
 import {
   Heart,
   Plus,
-  ChevronRight,
   ChevronDown,
   Check,
   Music2,
@@ -20,22 +20,86 @@ import {
   Download,
   Bookmark,
   Cloud,
-  Upload,
   FileAudio,
   Sparkles,
   X,
-  ListMusic,
   Trash2,
   Play,
 } from 'lucide-react-native';
 import { playlists, artists, getLikedTracks, tracks } from '@/data/mockData';
 import { usePlaybackController } from '@/stores/playbackController';
+import { useRecentsStore } from '@/stores/recentsStore';
 import { useDownloadsStore, formatFileSize } from '@/stores/downloadsStore';
 import { useSoundCloudPreloadStore } from '@/stores/soundcloudPreloadStore';
 import { useUserPlaylistStore } from '@/stores/userPlaylistStore';
 import { Track } from '@/types/music';
-import { createMMKVCache } from '@/lib/mmkv-cache';
-import { tabScreenScrollBottomPad } from '@/constants/miniPlayer';
+import { createMMKVCache, TTL } from '@/lib/mmkv-cache';
+import {
+  getDiscover,
+  getHome,
+  normalizeYtmThumb,
+  ytmTracksToQueueTracks,
+  prewarmYtmFeed,
+  type YtmPlaylistTrack,
+} from '@/lib/api/ytMusic';
+import { getTasteSeedTracks } from '@/lib/tasteSeed';
+import { useRecommendationSignalStore } from '@/stores/recommendationSignalStore';
+import { SourceCornerBadge } from '@/components/SourceCornerBadge';
+import { MasonryFlashList } from '@shopify/flash-list';
+import { SHADOW_TEXT_INPUT_DEFAULTS } from '@/lib/shadowInput';
+import { ShadowArtworkImage } from '@/components/ShadowArtworkImage';
+import { useFastVerticalScrollMotion } from '@/hooks/useFastScrollMotion';
+import { MachinedGradientText } from '@/components/MachinedGradientText';
+import { VaultImportCard } from '@/components/VaultImportCard';
+import { VIBRANT_BLUE, GRAPHITE_GREY } from '@/constants/machinedTheme';
+import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
+
+const TRACK_TITLE_MACHINED: TextStyle = {
+  color: VIBRANT_BLUE,
+  fontWeight: '600',
+  fontSize: 14,
+  textShadowColor: 'rgba(0,229,255,0.5)',
+  textShadowOffset: { width: 0, height: 0 },
+  textShadowRadius: 8,
+};
+
+const TRACK_META_GREY: TextStyle = {
+  color: GRAPHITE_GREY,
+  fontSize: 12,
+};
+
+const SEE_ALL_LINK = {
+  color: 'rgba(255,255,255,0.42)',
+  fontSize: 10,
+  fontWeight: '600' as const,
+  letterSpacing: 1.5,
+  textTransform: 'uppercase' as const,
+};
+
+/** Unified shadow card: machined border + vault radius */
+const SHADOW_CARD_FRAME = {
+  borderWidth: 1,
+  borderColor: 'rgba(255,255,255,0.12)',
+  borderRadius: 16,
+  backgroundColor: '#050505',
+  overflow: 'hidden' as const,
+};
+
+const libraryFeedMMKV = createMMKVCache('vybe-library-feed');
+const LIB_FEED_KEYS = { suggestedYtm: 'suggestedYtmV1' } as const;
+
+type DeepCutTile = { id: string; track: YtmPlaylistTrack; layoutHeight: number };
+
+const HEART_SHADOW_GLOW = Platform.select({
+  ios: {
+    shadowColor: '#D946EF',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.65,
+    shadowRadius: 12,
+  },
+  android: { elevation: 12 },
+  default: {},
+});
 
 // Shared MMKV cache with the artist-profile screen — both screens read from
 // and write to the same `vybe-artist-profile` bucket so the circle thumbnail
@@ -140,8 +204,8 @@ function ArtistCard({ artist, onPress }: { artist: { id: string; name: string; i
         style={{ width: ARTIST_CARD_SIZE, height: ARTIST_CARD_SIZE, borderRadius: ARTIST_CARD_SIZE / 2 }}
         contentFit="cover"
       />
-      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', marginTop: 8, textAlign: 'center' }} numberOfLines={1}>{artist.name}</Text>
-      <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, marginTop: 2 }}>Artist</Text>
+      <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, fontWeight: '600', marginTop: 8, textAlign: 'center' }} numberOfLines={1}>{artist.name}</Text>
+      <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12, marginTop: 2 }}>Artist</Text>
     </Pressable>
   );
 }
@@ -247,6 +311,8 @@ function PlaylistDeleteAction({ progress, onPress }: { progress: SharedValue<num
 export default function LibraryScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const [libraryHeaderHeight, setLibraryHeaderHeight] = useState(118);
+  const listBottomPad = tabScreenContentContainerPaddingBottom(insets.bottom);
   const [activeFilter, setActiveFilter] = useState<FilterType | null>(null);
   const [showCreatePlaylist, setShowCreatePlaylist] = useState(false);
   const [playlistName, setPlaylistName] = useState('');
@@ -260,6 +326,68 @@ export default function LibraryScreen() {
   const userPlaylists = useUserPlaylistStore(s => s.playlists);
   const createPlaylist = useUserPlaylistStore(s => s.createPlaylist);
   const deletePlaylist = useUserPlaylistStore(s => s.deletePlaylist);
+  const recentTracks = useRecentsStore(s => s.recentTracks);
+
+  const suggestedYtmCacheHitRef = useRef(false);
+  const [suggestedYtm, setSuggestedYtm] = useState<YtmPlaylistTrack[]>(() => {
+    const hit = libraryFeedMMKV.get<YtmPlaylistTrack[]>(LIB_FEED_KEYS.suggestedYtm, TTL.GENRE);
+    if (hit?.value?.length) {
+      suggestedYtmCacheHitRef.current = true;
+      return hit.value;
+    }
+    return [];
+  });
+  const [tasteProfileOpen, setTasteProfileOpen] = useState(false);
+  const [deepCuts, setDeepCuts] = useState<YtmPlaylistTrack[]>([]);
+  const [deepCutsLoading, setDeepCutsLoading] = useState(false);
+  const likeRefreshPulse = useRecommendationSignalStore((s) => s.likeRefreshPulse);
+  const { scrollHandler, listMotionStyle } = useFastVerticalScrollMotion();
+
+  const refreshSuggestedForYou = useCallback(() => {
+    void getHome(30, getTasteSeedTracks())
+      .then((rows) => {
+        if (!rows?.length) return;
+        const next = rows.map((r) => normalizeYtmThumb(r));
+        setSuggestedYtm(next);
+        libraryFeedMMKV.set(LIB_FEED_KEYS.suggestedYtm, next);
+        void prewarmYtmFeed(next, 16);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (suggestedYtmCacheHitRef.current) return;
+    refreshSuggestedForYou();
+  }, [refreshSuggestedForYou]);
+
+  useEffect(() => {
+    if (likeRefreshPulse === 0) return;
+    refreshSuggestedForYou();
+  }, [likeRefreshPulse, refreshSuggestedForYou]);
+
+  const openTasteProfile = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setTasteProfileOpen(true);
+    setDeepCutsLoading(true);
+    getDiscover(48, getTasteSeedTracks())
+      .then((rows) => {
+        const next = rows.map((r) => normalizeYtmThumb(r));
+        setDeepCuts(next);
+        void prewarmYtmFeed(next, 12);
+      })
+      .catch(() => setDeepCuts([]))
+      .finally(() => setDeepCutsLoading(false));
+  }, []);
+
+  const deepCutMasonryData = useMemo<DeepCutTile[]>(
+    () =>
+      deepCuts.map((t) => ({
+        id: t.videoId,
+        track: t,
+        layoutHeight: 168 + (t.title.length % 8) * 10,
+      })),
+    [deepCuts],
+  );
 
   const filters: { key: FilterType; label: string }[] = [
     { key: 'playlists', label: 'Playlists' },
@@ -396,6 +524,24 @@ export default function LibraryScreen() {
     return Array.from(map.values());
   }, [downloads]);
 
+  const LIBRARY_CARD_SIZE = 110;
+
+  type LibraryHomeRow =
+    | { kind: 'header'; key: string; title: string }
+    | { kind: 'track'; key: string; track: Track; queue: Track[] };
+
+  const libraryHomeRows = useMemo(() => {
+    const out: LibraryHomeRow[] = [];
+    if (likedSongs.length > 0) {
+      likedSongs.forEach(t => out.push({ kind: 'track', key: `lk-${t.id}`, track: t, queue: likedSongs }));
+    }
+    if (recentTracks.length > 0) {
+      out.push({ kind: 'header', key: 'hdr-recent', title: 'Recent Tracks' });
+      recentTracks.forEach(t => out.push({ kind: 'track', key: `rc-${t.id}`, track: t, queue: recentTracks }));
+    }
+    return out;
+  }, [likedSongs, recentTracks]);
+
   // Pre-warm artist photos in the background so the Artists tab + every
   // detail screen paints with the cached portrait instantly. Throttled to
   // 4 in-flight at a time so we don't slam Wikipedia on a big library.
@@ -495,13 +641,13 @@ export default function LibraryScreen() {
                 {album.artwork ? (
                   <Image source={{ uri: album.artwork }} style={{ width: 56, height: 56, borderRadius: 6 }} contentFit="cover" />
                 ) : (
-                  <View style={{ width: 56, height: 56, borderRadius: 6, backgroundColor: 'rgba(139,92,246,0.2)', alignItems: 'center', justifyContent: 'center' }}>
-                    <Disc size={24} color="#8B5CF6" />
+                  <View style={{ width: 56, height: 56, borderRadius: 6, backgroundColor: 'rgba(0,229,255,0.12)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Disc size={24} color={VIBRANT_BLUE} />
                   </View>
                 )}
                 <View style={{ flex: 1, marginLeft: 14 }}>
                   <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }} numberOfLines={1}>{album.name}</Text>
-                  <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 2 }}>
+                  <Text style={{ color: GRAPHITE_GREY, fontSize: 13, marginTop: 2 }}>
                     {album.artist} · {album.tracks.length} {album.tracks.length === 1 ? 'song' : 'songs'}
                   </Text>
                 </View>
@@ -513,7 +659,7 @@ export default function LibraryScreen() {
                   style={{ padding: 8 }}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#8B5CF6', alignItems: 'center', justifyContent: 'center' }}>
+                  <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: VIBRANT_BLUE, alignItems: 'center', justifyContent: 'center' }}>
                     <Text style={{ color: '#000', fontSize: 14, marginLeft: 2 }}>▶</Text>
                   </View>
                 </Pressable>
@@ -536,10 +682,10 @@ export default function LibraryScreen() {
                       }}
                       style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }}
                     >
-                      <Text style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, width: 22 }}>{i + 1}</Text>
+                      <Text style={{ color: GRAPHITE_GREY, fontSize: 13, width: 22 }}>{i + 1}</Text>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ color: '#fff', fontSize: 14, fontWeight: '500' }} numberOfLines={1}>{track.title}</Text>
-                        <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12, marginTop: 1 }} numberOfLines={1}>{track.artist}</Text>
+                        <Text style={TRACK_TITLE_MACHINED} numberOfLines={1}>{track.title}</Text>
+                        <Text style={[TRACK_META_GREY, { fontSize: 12, marginTop: 1 }]} numberOfLines={1}>{track.artist}</Text>
                       </View>
                     </Pressable>
                   ))}
@@ -555,78 +701,73 @@ export default function LibraryScreen() {
 
     if (activeFilter === 'downloaded') {
       return (
-        <View className="px-5">
-          {/* Import Audio Button */}
-          <Pressable
+        <View className="px-5" style={{ backgroundColor: '#000000' }}>
+          <VaultImportCard
             onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
               router.push('/(app)/import-audio' as never);
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             }}
-            className="mb-4"
-          >
-            <LinearGradient
-              colors={['#8B5CF6', '#7C3AED']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                padding: 12,
-                borderRadius: 10,
-              }}
-            >
-              <Upload size={20} color="#fff" />
-              <View className="flex-1 ml-3">
-                <Text className="text-white font-semibold text-sm">Import Audio</Text>
-                <Text className="text-white/70 text-xs">Add files from your device</Text>
-              </View>
-              <ChevronRight size={18} color="#fff" />
-            </LinearGradient>
-          </Pressable>
+          />
 
           {downloadedTracks.length === 0 ? (
             <View className="items-center justify-center py-16">
-              <View className="w-16 h-16 bg-[#8B5CF6]/20 rounded-full items-center justify-center mb-4">
-                <FileAudio size={32} color="#8B5CF6" />
+              <View
+                className="w-16 h-16 rounded-full items-center justify-center mb-4"
+                style={{ backgroundColor: 'rgba(0,229,255,0.12)' }}
+              >
+                <FileAudio size={32} color={VIBRANT_BLUE} />
               </View>
-              <Text className="text-white font-semibold text-lg">No downloads yet</Text>
-              <Text className="text-white/50 text-sm mt-2 text-center px-8">
-                Import audio files to listen offline.
+              <Text className="text-white font-semibold text-lg">Vault empty</Text>
+              <Text style={{ color: GRAPHITE_GREY, fontSize: 14, marginTop: 8, textAlign: 'center', paddingHorizontal: 32 }}>
+                Import to Vault — tracks stay on-device, OLED-ready.
               </Text>
             </View>
           ) : (
             <>
-              <Text className="text-white/50 text-xs mb-3">
-                {downloadedTracks.length} {downloadedTracks.length === 1 ? 'track' : 'tracks'} available offline
+              <Text style={{ color: GRAPHITE_GREY, fontSize: 12, marginBottom: 12 }}>
+                {downloadedTracks.length} {downloadedTracks.length === 1 ? 'asset' : 'assets'} in Vault
               </Text>
               {downloadedTracks.map(track => (
                 <Pressable
                   key={track.id}
                   onPress={() => playTrack(track, downloadedTracks)}
-                  className="flex-row items-center py-3"
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, backgroundColor: '#000000' }}
                 >
                   {track.artwork ? (
-                    <Image
+                    <ShadowArtworkImage
                       source={{ uri: track.artwork }}
                       style={{ width: 56, height: 56, borderRadius: 4 }}
                       contentFit="cover"
                     />
                   ) : (
-                    <View className="w-14 h-14 bg-[#8B5CF6]/20 rounded items-center justify-center">
-                      <Music2 size={24} color="#8B5CF6" />
+                    <View
+                      style={{
+                        width: 56,
+                        height: 56,
+                        borderRadius: 4,
+                        backgroundColor: 'rgba(0,229,255,0.12)',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Music2 size={24} color={VIBRANT_BLUE} />
                     </View>
                   )}
-                  <View className="flex-1 ml-4">
-                    <Text className="text-white font-medium" numberOfLines={1}>{track.title}</Text>
-                    <View className="flex-row items-center mt-0.5">
+                  <View style={{ flex: 1, marginLeft: 16 }}>
+                    <Text style={TRACK_TITLE_MACHINED} numberOfLines={1}>
+                      {track.title}
+                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
                       {track.isUserImported ? (
-                        <FileAudio size={12} color="#8B5CF6" />
+                        <FileAudio size={12} color={GRAPHITE_GREY} />
                       ) : (
-                        <Download size={12} color="#8B5CF6" />
+                        <Download size={12} color={GRAPHITE_GREY} />
                       )}
-                      <Text className="text-white/60 text-sm ml-1">{track.artist}</Text>
-                      <Text className="text-white/30 mx-1">•</Text>
-                      <Text className="text-white/40 text-xs">{formatFileSize(track.fileSize)}</Text>
+                      <Text style={[TRACK_META_GREY, { fontSize: 13, marginLeft: 4, flex: 1 }]} numberOfLines={1}>
+                        {track.artist}
+                      </Text>
+                      <Text style={[TRACK_META_GREY, { marginHorizontal: 6 }]}>•</Text>
+                      <Text style={[TRACK_META_GREY, { fontSize: 11 }]}>{formatFileSize(track.fileSize)}</Text>
                     </View>
                   </View>
                 </Pressable>
@@ -642,228 +783,545 @@ export default function LibraryScreen() {
       return null;
     }
 
-    // Default: Playlists or no filter — horizontal scroll card layout
-    const CARD_SIZE = 110;
-    return (
-      <View>
-        {/* Liked Songs row */}
-        <View style={{ paddingHorizontal: 16 }}>
-          <Pressable
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              router.push('/(app)/liked-songs' as never);
+    // Default home is rendered by FlashList in the main return (playlists / no filter).
+    return null;
+  };
+
+  const showLibraryHomeList = activeFilter === null || activeFilter === 'playlists';
+
+  const openCreatePlaylistModal = useCallback(() => {
+    setShowCreatePlaylist(true);
+  }, []);
+
+  const libraryHomeListHeader = (
+    <View>
+      {/* Full-width Liked Songs hero */}
+      <View style={{ paddingHorizontal: 16, marginTop: 6 }}>
+        <Pressable
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            router.push('/(app)/liked-songs' as never);
+          }}
+        >
+          <LinearGradient
+            colors={['rgba(255,0,255,0.125)', '#000000']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={{
+              borderRadius: 16,
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.12)',
+              paddingVertical: 22,
+              paddingHorizontal: 18,
+              flexDirection: 'row',
+              alignItems: 'center',
             }}
-            style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }}
           >
-            <LinearGradient
-              colors={['#4B2AA3', '#2D1B69']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={{ width: 56, height: 56, borderRadius: 6, alignItems: 'center', justifyContent: 'center' }}
+            <View
+              style={[
+                {
+                  width: 72,
+                  height: 72,
+                  borderRadius: 18,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: 'rgba(0,0,0,0.45)',
+                },
+                HEART_SHADOW_GLOW,
+              ]}
             >
-              <Heart size={24} color="#fff" fill="#fff" />
-            </LinearGradient>
-            <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }}>Liked Songs</Text>
-              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 2 }}>
+              <Heart size={36} color="#FFFFFF" fill="#FFFFFF" />
+            </View>
+            <View style={{ flex: 1, marginLeft: 16 }}>
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 20, letterSpacing: -0.35 }}>Liked Songs</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 5 }}>
                 Playlist · {likedTracks.size} {likedTracks.size === 1 ? 'song' : 'songs'}
               </Text>
             </View>
             <Pressable
-              onPress={(e) => {
-                e.stopPropagation();
-                if (likedSongs.length > 0) { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(likedSongs[0], likedSongs); }
+              onPress={() => {
+                if (likedSongs.length > 0) {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  playTrack(likedSongs[0], likedSongs);
+                }
               }}
-              hitSlop={8}
-              style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#22C55E', alignItems: 'center', justifyContent: 'center', marginRight: 6 }}
+              hitSlop={10}
+              style={{ marginLeft: 8 }}
             >
-              <Play size={16} color="#fff" fill="#fff" style={{ marginLeft: 2 }} />
-            </Pressable>
-          </Pressable>
-        </View>
-
-        {/* Your Playlists — horizontal scroll cards */}
-        <View style={{ marginTop: 20 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 12 }}>
-            <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Your Playlists</Text>
-            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>See all {'>'}</Text>
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }} style={{ flexGrow: 0 }}>
-            {userPlaylists.map(playlist => (
-              <Pressable
-                key={playlist.id}
-                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push(`/(app)/my-playlist/${playlist.id}` as never); }}
-                style={{ width: CARD_SIZE, marginRight: 12 }}
+              <View
+                style={{
+                  width: 54,
+                  height: 54,
+                  borderRadius: 27,
+                  overflow: 'hidden',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.28)',
+                  backgroundColor: '#000000',
+                }}
               >
-                <View style={{ width: CARD_SIZE, height: CARD_SIZE, borderRadius: 10, overflow: 'hidden', backgroundColor: '#1C1C1C' }}>
-                  {playlist.artwork ? (
-                    <Image source={{ uri: playlist.artwork }} style={{ width: CARD_SIZE, height: CARD_SIZE }} contentFit="cover" />
-                  ) : (
-                    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                      <ListMusic size={32} color="#8B5CF6" />
-                    </View>
-                  )}
-                  <View style={{ position: 'absolute', bottom: 6, right: 6, width: 28, height: 28, borderRadius: 14, backgroundColor: '#22C55E', alignItems: 'center', justifyContent: 'center' }}>
-                    <Play size={14} color="#000" fill="#000" style={{ marginLeft: 1 }} />
-                  </View>
-                </View>
-                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600', marginTop: 6 }} numberOfLines={1}>{playlist.name}</Text>
-                <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>{playlist.tracks.length} songs</Text>
-              </Pressable>
-            ))}
-            {/* Create playlist card */}
-            <Pressable
-              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setShowCreatePlaylist(true); }}
-              style={{ width: CARD_SIZE }}
-            >
-              <View style={{ width: CARD_SIZE, height: CARD_SIZE, borderRadius: 10, backgroundColor: '#1C1C1C', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center' }}>
-                <Plus size={28} color="rgba(255,255,255,0.3)" />
-              </View>
-              <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, fontWeight: '500', marginTop: 6 }}>Create playlist</Text>
-            </Pressable>
-          </ScrollView>
-        </View>
-
-        {/* Saved Albums — horizontal scroll */}
-        {libraryAlbums.length > 0 && (
-          <View style={{ marginTop: 24 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 12 }}>
-              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Saved Albums</Text>
-              <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>See all {'>'}</Text>
-            </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }} style={{ flexGrow: 0 }}>
-              {libraryAlbums.map(album => (
-                <Pressable
-                  key={album.key}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    playTrack(album.tracks[0], album.tracks);
+                <View
+                  style={{
+                    flex: 1,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: 'rgba(139,92,246,0.42)',
                   }}
-                  style={{ width: CARD_SIZE, marginRight: 12 }}
                 >
-                  <View style={{ width: CARD_SIZE, height: CARD_SIZE, borderRadius: 10, overflow: 'hidden', backgroundColor: '#1C1C1C' }}>
-                    {album.artwork ? (
-                      <Image source={{ uri: album.artwork }} style={{ width: CARD_SIZE, height: CARD_SIZE }} contentFit="cover" />
-                    ) : (
-                      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                        <Disc size={32} color="#8B5CF6" />
-                      </View>
-                    )}
-                    <View style={{ position: 'absolute', bottom: 6, right: 6, width: 28, height: 28, borderRadius: 14, backgroundColor: '#22C55E', alignItems: 'center', justifyContent: 'center' }}>
-                      <Play size={14} color="#000" fill="#000" style={{ marginLeft: 1 }} />
-                    </View>
-                  </View>
-                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600', marginTop: 6 }} numberOfLines={1}>{album.name}</Text>
-                  <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>{album.tracks.length} songs</Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* Liked Songs — horizontal scroll */}
-        {likedSongs.length > 0 && (
-          <View style={{ marginTop: 24 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 12 }}>
-              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Liked Songs</Text>
-              <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>See all {'>'}</Text>
-            </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }} style={{ flexGrow: 0 }}>
-              {likedSongs.slice(0, 10).map(track => (
-                <Pressable
-                  key={track.id}
-                  onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); playTrack(track, likedSongs); }}
-                  style={{ width: CARD_SIZE, marginRight: 12 }}
-                >
-                  <View style={{ width: CARD_SIZE, height: CARD_SIZE, borderRadius: 10, overflow: 'hidden', backgroundColor: '#1C1C1C' }}>
-                    {track.artwork ? (
-                      <Image source={{ uri: track.artwork }} style={{ width: CARD_SIZE, height: CARD_SIZE }} contentFit="cover" />
-                    ) : (
-                      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                        <Heart size={32} color="#8B5CF6" />
-                      </View>
-                    )}
-                    <View style={{ position: 'absolute', bottom: 6, right: 6, width: 28, height: 28, borderRadius: 14, backgroundColor: '#22C55E', alignItems: 'center', justifyContent: 'center' }}>
-                      <Play size={14} color="#000" fill="#000" style={{ marginLeft: 1 }} />
-                    </View>
-                  </View>
-                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600', marginTop: 6 }} numberOfLines={1}>{track.title}</Text>
-                  <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }} numberOfLines={1}>{track.artist}</Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-          </View>
-        )}
+                  <Play size={22} color="#FFFFFF" fill="#FFFFFF" style={{ marginLeft: 3 }} />
+                </View>
+              </View>
+            </Pressable>
+          </LinearGradient>
+        </Pressable>
       </View>
-    );
-  };
 
-  return (
-    <View className="flex-1 bg-[#121212]">
-      {/* Header */}
-      <View className="px-4 py-3" style={{ paddingTop: insets.top + 12 }}>
-        <View className="flex-row items-center justify-between mb-4">
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <ProfileAvatar size={32} />
-            <Text className="text-white text-[22px] font-bold ml-3">Your Library</Text>
-          </View>
-          <Pressable
-            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setShowCreatePlaylist(true); }}
-            className="p-2"
+      {suggestedYtm.length > 0 ? (
+        <View style={{ marginTop: 22 }}>
+          <View
+            style={{
+              paddingHorizontal: 16,
+              marginBottom: 12,
+              flexDirection: 'row',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 10,
+            }}
           >
-            <Plus size={26} color="#fff" />
-          </Pressable>
-        </View>
-
-        {/* Filter chips */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={{ flexGrow: 0, marginLeft: -4 }}
-          contentContainerStyle={{ paddingRight: 16 }}
-        >
-          {filters.map(filter => (
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Suggested for You</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginTop: 6 }}>
+                From your liked songs — updates when you heart a track
+              </Text>
+            </View>
             <Pressable
-              key={filter.key}
-              onPress={() => setActiveFilter(activeFilter === filter.key ? null : filter.key)}
-
+              onPress={openTasteProfile}
+              hitSlop={8}
               style={{
-                backgroundColor: activeFilter === filter.key ? '#22C55E' : '#232323',
-                paddingHorizontal: 14,
+                paddingHorizontal: 12,
                 paddingVertical: 8,
                 borderRadius: 20,
-                marginLeft: 8,
+                borderWidth: 1,
+                borderColor: 'rgba(255,0,255,0.45)',
+                backgroundColor: 'rgba(255,0,255,0.08)',
               }}
             >
-              <Text style={{ color: '#fff', fontSize: 13, fontWeight: '500' }}>
-                {filter.label}
+              <Text style={{ color: '#F0ABFC', fontSize: 11, fontWeight: '800', letterSpacing: 0.6 }}>
+                Taste Profile
               </Text>
             </Pressable>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 16 }}
+            style={{ flexGrow: 0 }}
+          >
+            {suggestedYtm.map((t) => {
+              const queue = ytmTracksToQueueTracks(suggestedYtm);
+              const self = queue.find((q) => q.id === `ytm-${t.videoId}`)!;
+              const dim = 140;
+              return (
+                <Pressable
+                  key={t.videoId}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    playTrack(self, queue);
+                  }}
+                  style={{ width: dim, marginRight: 12 }}
+                >
+                  <View style={[SHADOW_CARD_FRAME, { width: dim, height: dim }]}>
+                    <Image
+                      source={{ uri: t.thumbnailUrl }}
+                      style={{ width: dim, height: dim }}
+                      contentFit="cover"
+                    />
+                    <View style={{ position: 'absolute', top: 8, right: 8 }} pointerEvents="none">
+                      <SourceCornerBadge source="youtube_music" compact />
+                    </View>
+                  </View>
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', marginTop: 8 }} numberOfLines={1}>
+                    {t.title}
+                  </Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 2 }} numberOfLines={1}>
+                    {t.channelName}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      ) : null}
+
+      <View style={{ marginTop: 22 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 12 }}>
+          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Your Playlists</Text>
+          <Pressable
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
+            hitSlop={12}
+          >
+            <Text style={SEE_ALL_LINK}>See all {'>'}</Text>
+          </Pressable>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }} style={{ flexGrow: 0 }}>
+          {userPlaylists.map(playlist => (
+            <Pressable
+              key={playlist.id}
+              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push(`/(app)/my-playlist/${playlist.id}` as never); }}
+              style={{ width: LIBRARY_CARD_SIZE, marginRight: 12 }}
+            >
+              <View style={[SHADOW_CARD_FRAME, { width: LIBRARY_CARD_SIZE, height: LIBRARY_CARD_SIZE }]}>
+                {playlist.artwork ? (
+                  <Image source={{ uri: playlist.artwork }} style={{ width: LIBRARY_CARD_SIZE, height: LIBRARY_CARD_SIZE }} contentFit="cover" />
+                ) : (
+                  <View
+                    style={{
+                      flex: 1,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      backgroundColor: '#000000',
+                      paddingHorizontal: 8,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: '#FFFFFF',
+                        fontWeight: '900',
+                        fontSize: 12,
+                        textAlign: 'center',
+                        letterSpacing: -0.3,
+                      }}
+                      numberOfLines={3}
+                    >
+                      {playlist.name}
+                    </Text>
+                  </View>
+                )}
+                <View
+                  style={{
+                    position: 'absolute',
+                    bottom: 6,
+                    right: 6,
+                    width: 30,
+                    height: 30,
+                    borderRadius: 15,
+                    overflow: 'hidden',
+                    borderWidth: 1,
+                    borderColor: 'rgba(255,255,255,0.2)',
+                  }}
+                >
+                  <View style={{ flex: 1, backgroundColor: '#000000' }}>
+                    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(139,92,246,0.5)' }}>
+                      <Play size={13} color="#fff" fill="#fff" style={{ marginLeft: 1 }} />
+                    </View>
+                  </View>
+                </View>
+              </View>
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', marginTop: 8 }} numberOfLines={1}>{playlist.name}</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 2 }}>{playlist.tracks.length} songs</Text>
+            </Pressable>
           ))}
+          <Pressable
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              openCreatePlaylistModal();
+            }}
+            onLongPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              openCreatePlaylistModal();
+            }}
+            delayLongPress={350}
+            style={{ width: LIBRARY_CARD_SIZE }}
+          >
+            <View
+              style={[
+                SHADOW_CARD_FRAME,
+                {
+                  width: LIBRARY_CARD_SIZE,
+                  height: LIBRARY_CARD_SIZE,
+                  borderStyle: 'dashed',
+                  borderColor: 'rgba(255,255,255,0.2)',
+                  backgroundColor: 'transparent',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                },
+              ]}
+            >
+              <Plus size={26} color="rgba(255,255,255,0.35)" />
+            </View>
+            <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '500', marginTop: 8 }}>Create playlist</Text>
+          </Pressable>
         </ScrollView>
       </View>
 
-      <ScrollView
-        className="flex-1"
-        contentContainerStyle={{ paddingBottom: tabScreenScrollBottomPad(insets.bottom, !!currentTrack) }}
-        showsVerticalScrollIndicator={false}
+      {libraryAlbums.length > 0 && (
+        <View style={{ marginTop: 26 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, marginBottom: 12 }}>
+            <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Saved Albums</Text>
+            <Pressable
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setActiveFilter('albums');
+              }}
+              hitSlop={12}
+            >
+              <Text style={SEE_ALL_LINK}>See all {'>'}</Text>
+            </Pressable>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }} style={{ flexGrow: 0 }}>
+            {libraryAlbums.map(album => (
+              <Pressable
+                key={album.key}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  playTrack(album.tracks[0], album.tracks);
+                }}
+                style={{ width: LIBRARY_CARD_SIZE, marginRight: 12 }}
+              >
+                <View style={[SHADOW_CARD_FRAME, { width: LIBRARY_CARD_SIZE, height: LIBRARY_CARD_SIZE }]}>
+                  {album.artwork ? (
+                    <Image source={{ uri: album.artwork }} style={{ width: LIBRARY_CARD_SIZE, height: LIBRARY_CARD_SIZE }} contentFit="cover" />
+                  ) : (
+                    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                      <Disc size={32} color={VIBRANT_BLUE} />
+                    </View>
+                  )}
+                  <View
+                    style={{
+                      position: 'absolute',
+                      bottom: 6,
+                      right: 6,
+                      width: 30,
+                      height: 30,
+                      borderRadius: 15,
+                      overflow: 'hidden',
+                      borderWidth: 1,
+                      borderColor: 'rgba(255,255,255,0.2)',
+                    }}
+                  >
+                    <View style={{ flex: 1, backgroundColor: '#000000' }}>
+                      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,229,255,0.45)' }}>
+                        <Play size={13} color="#000" fill="#000" style={{ marginLeft: 1 }} />
+                      </View>
+                    </View>
+                  </View>
+                </View>
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', marginTop: 8 }} numberOfLines={1}>{album.name}</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 2 }}>{album.tracks.length} songs</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+    </View>
+  );
+
+  return (
+    <View style={{ flex: 1, backgroundColor: '#000000' }}>
+      {showLibraryHomeList ? (
+        <Animated.View style={[{ flex: 1 }, listMotionStyle]}>
+        <FlashList
+          data={libraryHomeRows}
+          keyExtractor={(item) => item.key}
+          estimatedItemSize={68}
+          getItemType={(item) => item.kind}
+          ListHeaderComponent={libraryHomeListHeader}
+          contentContainerStyle={{ paddingTop: libraryHeaderHeight, paddingBottom: listBottomPad }}
+          showsVerticalScrollIndicator={false}
+          onScroll={scrollHandler}
+          scrollEventThrottle={16}
+          renderItem={({ item }) => {
+            if (item.kind === 'header') {
+              return (
+                <View
+                  style={{
+                    paddingHorizontal: 16,
+                    paddingTop: 22,
+                    paddingBottom: 8,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>{item.title}</Text>
+                  {item.title === 'Recent Tracks' ? (
+                    <Pressable
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        router.push('/(app)/downloads' as never);
+                      }}
+                      hitSlop={12}
+                    >
+                      <Text style={SEE_ALL_LINK}>See all {'>'}</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              );
+            }
+            return (
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  playTrack(item.track, item.queue);
+                }}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8 }}
+              >
+                {item.track.artwork ? (
+                  <View style={{ width: 48, height: 48, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', overflow: 'hidden', backgroundColor: '#050505' }}>
+                    <ShadowArtworkImage source={{ uri: item.track.artwork }} style={{ width: 48, height: 48 }} contentFit="cover" />
+                  </View>
+                ) : (
+                  <View style={{ width: 48, height: 48, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(0,229,255,0.22)', backgroundColor: 'rgba(0,229,255,0.08)', alignItems: 'center', justifyContent: 'center' }}>
+                    <Heart size={20} color={VIBRANT_BLUE} />
+                  </View>
+                )}
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={TRACK_TITLE_MACHINED} numberOfLines={1}>{item.track.title}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 6 }}>
+                    {getSourceIcon(item.track.source ?? '')}
+                    <Text style={[TRACK_META_GREY, { flex: 1 }]} numberOfLines={1}>{item.track.artist}</Text>
+                  </View>
+                </View>
+              </Pressable>
+            );
+          }}
+        />
+        </Animated.View>
+      ) : (
+        <Animated.ScrollView
+          className="flex-1"
+          contentContainerStyle={{ paddingTop: libraryHeaderHeight, paddingBottom: listBottomPad }}
+          showsVerticalScrollIndicator={false}
+          automaticallyAdjustContentInsets={false}
+          onScroll={scrollHandler}
+          scrollEventThrottle={16}
+        >
+          <Animated.View style={listMotionStyle}>{renderContent()}</Animated.View>
+        </Animated.ScrollView>
+      )}
+
+      <View
+        pointerEvents="box-none"
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          zIndex: 20,
+        }}
       >
-        {renderContent()}
-      </ScrollView>
+        <BlurView
+          intensity={Platform.OS === 'ios' ? 52 : 40}
+          tint="dark"
+          style={{
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: 'rgba(255,255,255,0.08)',
+            overflow: 'hidden',
+          }}
+        >
+          <View
+            onLayout={(e) => setLibraryHeaderHeight(e.nativeEvent.layout.height)}
+            style={{ paddingTop: insets.top + 24, paddingHorizontal: 16, paddingBottom: 12 }}
+          >
+            <View className="flex-row items-center justify-between mb-4">
+              <MachinedGradientText
+                neonGlow
+                style={{ fontSize: 22, fontWeight: '700', letterSpacing: -0.3, paddingLeft: 4 }}
+                numberOfLines={1}
+              >
+                Your Library
+              </MachinedGradientText>
+              <Pressable
+                onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); setShowCreatePlaylist(true); }}
+                className="p-2"
+              >
+                <Plus size={26} color="#fff" />
+              </Pressable>
+            </View>
 
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={{ flexGrow: 0, marginLeft: -4 }}
+              contentContainerStyle={{ paddingRight: 16 }}
+            >
+              {filters.map(filter => {
+                const isOn = activeFilter === filter.key;
+                return (
+                  <Pressable
+                    key={filter.key}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      setActiveFilter(isOn ? null : filter.key);
+                    }}
+                    style={[
+                      {
+                        backgroundColor: 'transparent',
+                        borderWidth: isOn ? 1 : 0,
+                        paddingHorizontal: 14,
+                        paddingVertical: 8,
+                        borderRadius: 20,
+                        marginLeft: 8,
+                        borderColor: isOn ? VIBRANT_BLUE : 'transparent',
+                      },
+                      isOn
+                        ? Platform.select({
+                            ios: {
+                              shadowColor: VIBRANT_BLUE,
+                              shadowOffset: { width: 0, height: 0 },
+                              shadowOpacity: 0.35,
+                              shadowRadius: 10,
+                            },
+                            android: { elevation: 4 },
+                            default: {},
+                          })
+                        : null,
+                    ]}
+                  >
+                    <Text
+                      style={{
+                        color: isOn ? VIBRANT_BLUE : GRAPHITE_GREY,
+                        fontSize: 13,
+                        fontWeight: isOn ? '800' : '500',
+                      }}
+                    >
+                      {filter.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </BlurView>
+      </View>
 
-      {/* Create Playlist Modal — full screen */}
+      {/* Create Playlist Modal — sheet over blurred vault */}
       <Modal
         visible={showCreatePlaylist}
-        transparent={false}
+        transparent
         animationType="slide"
-        onRequestClose={() => setShowCreatePlaylist(false)}
+        onRequestClose={handleCloseCreatePlaylist}
         statusBarTranslucent
       >
-        <KeyboardAvoidingView
-          style={{ flex: 1, backgroundColor: '#0A0A0A' }}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
+        <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.88)' }]} pointerEvents="none" />
+          <Pressable style={StyleSheet.absoluteFill} onPress={handleCloseCreatePlaylist} accessibilityRole="button" />
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={{
+              width: '100%',
+              maxHeight: '92%',
+              borderTopLeftRadius: 22,
+              borderTopRightRadius: 22,
+              overflow: 'hidden',
+              backgroundColor: 'rgba(6,6,6,0.94)',
+              borderTopWidth: 1,
+              borderLeftWidth: 1,
+              borderRightWidth: 1,
+              borderColor: 'rgba(255,255,255,0.1)',
+            }}
+          >
           {/* Header */}
           <View style={{ paddingTop: insets.top + 12, paddingHorizontal: 20, paddingBottom: 12, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.07)' }}>
             <Pressable
@@ -888,10 +1346,10 @@ export default function LibraryScreen() {
           {/* Name input */}
           <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12 }}>
             <TextInput
+              {...SHADOW_TEXT_INPUT_DEFAULTS}
               value={playlistName}
               onChangeText={setPlaylistName}
               placeholder="Playlist name"
-              placeholderTextColor="rgba(255,255,255,0.3)"
               style={{ backgroundColor: '#1A1A1A', borderRadius: 10, paddingHorizontal: 16, paddingVertical: 13, color: '#fff', fontSize: 16 }}
               returnKeyType="done"
             />
@@ -902,12 +1360,13 @@ export default function LibraryScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#1A1A1A', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 11 }}>
               <Music2 size={16} color="rgba(255,255,255,0.4)" />
               <TextInput
+                {...SHADOW_TEXT_INPUT_DEFAULTS}
                 value={trackSearchQuery}
                 onChangeText={setTrackSearchQuery}
                 placeholder="Search tracks"
-                placeholderTextColor="rgba(255,255,255,0.3)"
                 style={{ flex: 1, color: '#fff', fontSize: 15, marginLeft: 10 }}
                 returnKeyType="search"
+                blurOnSubmit={false}
                 autoCorrect={false}
                 autoCapitalize="none"
               />
@@ -973,7 +1432,7 @@ export default function LibraryScreen() {
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: '#fff', fontSize: 15, fontWeight: '500' }} numberOfLines={1}>{track.title}</Text>
-                      <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 13, marginTop: 2 }} numberOfLines={1}>{track.artist}</Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 2 }} numberOfLines={1}>{track.artist}</Text>
                     </View>
                     <View style={{ width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: selected ? '#8B5CF6' : 'rgba(255,255,255,0.2)', backgroundColor: selected ? '#8B5CF6' : 'transparent', alignItems: 'center', justifyContent: 'center', marginLeft: 12 }}>
                       {selected ? <Check size={14} color="#fff" /> : null}
@@ -983,7 +1442,93 @@ export default function LibraryScreen() {
               })}
             </ScrollView>
           )}
-        </KeyboardAvoidingView>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={tasteProfileOpen}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setTasteProfileOpen(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: '#000000', paddingTop: insets.top + 8 }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingHorizontal: 16,
+              paddingBottom: 12,
+              borderBottomWidth: 1,
+              borderBottomColor: 'rgba(255,255,255,0.08)',
+            }}
+          >
+            <Pressable
+              onPress={() => setTasteProfileOpen(false)}
+              hitSlop={12}
+              style={{ marginRight: 14 }}
+            >
+              <X size={24} color="rgba(255,255,255,0.75)" />
+            </Pressable>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>Deep Cuts</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12, marginTop: 4 }}>
+                Non-obvious picks matched to your taste frequency
+              </Text>
+            </View>
+          </View>
+          {deepCutsLoading ? (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ color: 'rgba(255,255,255,0.45)', fontWeight: '600' }}>Tuning your profile…</Text>
+            </View>
+          ) : (
+            <MasonryFlashList
+              data={deepCutMasonryData}
+              numColumns={2}
+              keyExtractor={(it) => it.id}
+              estimatedItemSize={190}
+              optimizeItemArrangement
+              contentContainerStyle={{ paddingHorizontal: 10, paddingBottom: insets.bottom + 24 }}
+              overrideItemLayout={(layout, item) => {
+                layout.size = item.layoutHeight;
+              }}
+              renderItem={({ item }) => {
+                const artH = item.layoutHeight - 52;
+                const queue = ytmTracksToQueueTracks(deepCuts);
+                const self = queue.find((q) => q.id === `ytm-${item.track.videoId}`)!;
+                return (
+                  <Pressable
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      playTrack(self, queue);
+                    }}
+                    style={{ marginHorizontal: 6, marginBottom: 14 }}
+                  >
+                    <View style={[SHADOW_CARD_FRAME, { borderColor: 'rgba(255,0,255,0.22)', height: artH }]}>
+                      <Image
+                        source={{ uri: item.track.thumbnailUrl }}
+                        style={{ width: '100%', height: '100%' }}
+                        contentFit="cover"
+                      />
+                      <View style={{ position: 'absolute', top: 8, right: 8 }} pointerEvents="none">
+                        <SourceCornerBadge source="youtube_music" compact />
+                      </View>
+                    </View>
+                    <Text
+                      style={{ color: '#fff', fontSize: 12, fontWeight: '700', marginTop: 8 }}
+                      numberOfLines={2}
+                    >
+                      {item.track.title}
+                    </Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 2 }} numberOfLines={1}>
+                      {item.track.channelName}
+                    </Text>
+                  </Pressable>
+                );
+              }}
+            />
+          )}
+        </View>
       </Modal>
     </View>
   );

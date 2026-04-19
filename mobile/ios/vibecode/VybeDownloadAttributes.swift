@@ -25,26 +25,13 @@ public struct VybeDownloadAttributes: ActivityAttributes {
         public var isComplete: Bool
         public var trackTitle: String
         public var artistName: String
-        /// 1-based index for the current track in a multi-download run (e.g. 2 of 5).
-        public var queuePosition: Int
-        public var queueTotal: Int
 
-        public init(
-            progress: Double,
-            statusText: String,
-            isComplete: Bool = false,
-            trackTitle: String = "",
-            artistName: String = "",
-            queuePosition: Int = 1,
-            queueTotal: Int = 1
-        ) {
+        public init(progress: Double, statusText: String, isComplete: Bool = false, trackTitle: String = "", artistName: String = "") {
             self.progress = progress
             self.statusText = statusText
             self.isComplete = isComplete
             self.trackTitle = trackTitle
             self.artistName = artistName
-            self.queuePosition = max(1, queuePosition)
-            self.queueTotal = max(1, queueTotal)
         }
     }
 

@@ -1,0 +1,25 @@
+{
+  "name": "ExpoLivePhoto",
+  "version": "0.1.4",
+  "summary": "Library, which makes it possible to display live photos on iOS",
+  "description": "Library, which makes it possible to display live photos on iOS",
+  "license": "MIT",
+  "authors": "650 Industries, Inc.",
+  "homepage": "https://docs.expo.dev/versions/latest/sdk/live-photo/",
+  "platforms": {
+    "ios": "15.1"
+  },
+  "swift_versions": "5.4",
+  "source": {
+    "git": "https://github.com/expo/expo.git"
+  },
+  "static_framework": true,
+  "dependencies": {
+    "ExpoModulesCore": []
+  },
+  "pod_target_xcconfig": {
+    "DEFINES_MODULE": "YES"
+  },
+  "source_files": "**/*.{h,m,swift}",
+  "swift_version": "5.4"
+}

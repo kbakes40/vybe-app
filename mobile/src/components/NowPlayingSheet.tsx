@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Dimensions, StyleSheet, View } from 'react-native';
+import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
@@ -14,11 +14,13 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useNowPlayingSheetStore } from '@/stores/nowPlayingSheetStore';
-import { MiniPlayer } from '@/components/MiniPlayer';
 import { NowPlayingScreenContent } from '@/app/(app)/nowPlaying';
-import { MINI_PLAYER_HEIGHT } from '@/constants/miniPlayer';
+import { sheetProgressSV } from '@/stores/nowPlayingSheetProgress';
 
-const { height: SCREEN_H } = Dimensions.get('window');
+/** Expanded sheet height: full window — the sheet covers the tab bar too (Google/Apple Music style). */
+function sheetExpandedHeightPx(windowHeight: number): number {
+  return Math.max(120, windowHeight);
+}
 
 /** Open: gentle ease-out — slower start, soft landing (no snap). */
 const EASE_OPEN = Easing.bezier(0.16, 1, 0.22, 1);
@@ -50,16 +52,18 @@ type Props = { miniPlayerBottom: number };
 
 /**
  * Full-screen player sheet: one tall surface anchored to the bottom.
- * translateY 0 = full screen; larger = slid down so only the mini strip shows.
+ * translateY 0 = full screen; collapsed = off-screen (mini lives in root `AppLayout`).
  */
 export function NowPlayingSheet({ miniPlayerBottom }: Props) {
+  const { height: windowHeight } = useWindowDimensions();
   const currentTrack = usePlaybackController((s) => s.currentTrack);
-  const maxTranslate = Math.max(0, SCREEN_H - MINI_PLAYER_HEIGHT - miniPlayerBottom);
+  /** Mini player is mounted in the root layout; sheet fully slides off-screen when collapsed. */
+  const maxTranslate = sheetExpandedHeightPx(windowHeight);
   const ty = useSharedValue(maxTranslate);
   const dragStart = useSharedValue(0);
   const lastMaxTranslateRef = useRef(maxTranslate);
   const register = useNowPlayingSheetStore((s) => s.register);
-  const [miniPointerEvents, setMiniPointerEvents] = useState<'box-none' | 'none'>('box-none');
+  const setSheetExpanded = useNowPlayingSheetStore((s) => s.setSheetExpanded);
   // When collapsed, the full-player layer must not intercept touches (playlist list stays usable).
   const [mainPointerEvents, setMainPointerEvents] = useState<'auto' | 'none'>(() =>
     maxTranslate > 0 ? 'none' : 'auto',
@@ -81,9 +85,7 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
   }, [register, expand, collapse]);
 
   /**
-   * `miniPlayerBottom` changes between tab routes vs stack (playlist, etc.), so `maxTranslate`
-   * changes. If `ty` stays on the old value, `miniFadeStyle` can land in a low-opacity band and
-   * the mini bar looks nearly invisible.
+   * When `SCREEN_H` changes (rotation), keep `ty` clamped to the new `maxTranslate`.
    */
   useLayoutEffect(() => {
     const prev = lastMaxTranslateRef.current;
@@ -116,14 +118,17 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
   }, [maxTranslate]);
 
   useAnimatedReaction(
-    () => ty.value,
-    (y, prev) => {
-      if (maxTranslate <= 0) return;
-      const threshold = maxTranslate * 0.38;
-      const collapsed = y > threshold;
-      const wasCollapsed = (prev ?? maxTranslate) > threshold;
-      if (collapsed !== wasCollapsed) {
-        runOnJS(setMiniPointerEvents)(collapsed ? 'box-none' : 'none');
+    () => ({ y: ty.value, m: maxTranslate }),
+    (cur, prev) => {
+      if (cur.m <= 0) {
+        runOnJS(setSheetExpanded)(true);
+        return;
+      }
+      const expanded = cur.y < cur.m * 0.72;
+      const prevExpanded =
+        prev && prev.m > 0 ? prev.y < prev.m * 0.72 : expanded;
+      if (expanded !== prevExpanded) {
+        runOnJS(setSheetExpanded)(expanded);
       }
     },
     [maxTranslate],
@@ -142,16 +147,20 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
     [maxTranslate],
   );
 
+  /** Anchor to the window so the sheet overlays content instead of shifting the tab stack. */
   const shellLayoutStyle = {
+    position: 'absolute' as const,
+    top: 0,
     bottom: 0,
     left: 0,
     right: 0,
-    height: SCREEN_H,
-  } as const;
+  };
 
   /**
-   * Bottom-anchored reveal: animated *height* (not maxHeight alone) so flex children inside
-   * `NowPlayingScreenContent` get a real layout box. maxHeight-only parents often collapse to ~0 in RN.
+   * Google / Apple Music style: full-height surface that slides up as one block via translateY.
+   * Panel is always laid out at full `maxTranslate` height (so inner content is stable — no
+   * mid-animation layout smoosh). `translateY` animates from `maxTranslate` (off-screen, hidden
+   * below the mini) → 0 (fully shown).
    */
   const mainRevealStyle = useAnimatedStyle(() => {
     if (maxTranslate <= 0) {
@@ -159,18 +168,19 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
         flex: 1,
         width: '100%' as const,
         overflow: 'hidden' as const,
+        transform: [{ translateY: 0 }],
       };
     }
     const m = maxTranslate;
-    const h = interpolate(ty.value, [m, 0], [0, m], Extrapolation.CLAMP);
     const topRadius = interpolate(
       ty.value,
       [m, m * 0.88, m * 0.42, 0],
-      [12, 11, 4, 0],
+      [16, 14, 6, 0],
       Extrapolation.CLAMP,
     );
     return {
-      height: h,
+      height: m,
+      transform: [{ translateY: ty.value }],
       borderTopLeftRadius: topRadius,
       borderTopRightRadius: topRadius,
       overflow: 'hidden' as const,
@@ -178,36 +188,28 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
     };
   }, [maxTranslate]);
 
-  /**
-   * Mini must stay **fully opaque** while collapsed (y ≈ m). The old curve dipped to 0.28
-   * mid-travel, which read as “glass” over the home feed. Only fade once the sheet is clearly opening.
-   */
-  const miniFadeStyle = useAnimatedStyle(() => {
-    const m = maxTranslate;
-    if (m <= 0) {
-      return { opacity: 0, transform: [{ translateY: 0 }] };
-    }
-    const y = ty.value;
-    // inputRange must be increasing: collapsed y → m, expanded y → 0
-    return {
-      opacity: interpolate(
-        y,
-        [0, m * 0.35, m * 0.9, m],
-        [0, 0.12, 1, 1],
-        Extrapolation.CLAMP,
-      ),
-    };
-  }, [maxTranslate]);
-
-  /** Full player: only reserve tab bar. Collapsed: reserve tab + mini — avoids content sitting “too high” when open. */
+  /** Full-screen modal — no outer padding. Inner `NowPlayingScreenContent` handles safe-area insets. */
   const expandSlotPadStyle = useAnimatedStyle(() => {
     const m = maxTranslate;
-    const tab = miniPlayerBottom;
-    if (m <= 0) return { paddingBottom: tab };
-    const y = ty.value;
-    const miniPad = interpolate(y, [0, m], [0, MINI_PLAYER_HEIGHT], Extrapolation.CLAMP);
-    return { paddingBottom: tab + miniPad };
+    if (m <= 0) return { paddingBottom: miniPlayerBottom };
+    return { paddingBottom: 0 };
   }, [maxTranslate, miniPlayerBottom]);
+
+  /**
+   * Drive the global `sheetProgressSV` every frame (0 = collapsed → 1 = expanded).
+   * `MiniPlayer` reads this exact shared value to cross-fade smoothly with the gesture.
+   */
+  useAnimatedReaction(
+    () => ({ y: ty.value, m: maxTranslate }),
+    (cur) => {
+      if (cur.m <= 0) {
+        sheetProgressSV.value = 1;
+        return;
+      }
+      sheetProgressSV.value = 1 - cur.y / cur.m;
+    },
+    [maxTranslate],
+  );
 
   const pan = Gesture.Pan()
     .activeOffsetY([-10, 10])
@@ -242,12 +244,9 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
       runOnJS(lightHaptic)();
     });
 
-  if (!currentTrack) return null;
-
   return (
     <Animated.View style={[styles.shell, shellLayoutStyle]} pointerEvents="box-none">
       <View style={styles.column} pointerEvents="box-none">
-        {/* Pan must NOT wrap MiniPlayer — the outer GH pan wins and steals all touches, so expand never runs. */}
         <GestureDetector gesture={pan}>
           <View style={styles.panArea} pointerEvents="box-none">
             <Animated.View
@@ -256,18 +255,12 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
             >
               <View style={styles.mainRevealOuter} pointerEvents="box-none">
                 <Animated.View style={mainRevealStyle} pointerEvents="auto">
-                  <NowPlayingScreenContent sheetLayout />
+                  {currentTrack ? <NowPlayingScreenContent sheetLayout /> : null}
                 </Animated.View>
               </View>
             </Animated.View>
           </View>
         </GestureDetector>
-        <Animated.View
-          style={[styles.miniSlot, { paddingBottom: miniPlayerBottom }, miniFadeStyle]}
-          pointerEvents={miniPointerEvents}
-        >
-          <MiniPlayer />
-        </Animated.View>
       </View>
     </Animated.View>
   );
@@ -275,10 +268,9 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
 
 const styles = StyleSheet.create({
   shell: {
-    position: 'absolute',
-    zIndex: 1,
+    zIndex: 10,
     overflow: 'visible',
-    elevation: 0,
+    elevation: 10,
     backgroundColor: 'transparent',
   },
   column: {
@@ -292,19 +284,10 @@ const styles = StyleSheet.create({
   mainExpandSlot: {
     flex: 1,
   },
-  /** Hug the bottom so maxHeight growth reads as “coming from the player”, not from the status bar. */
+  /** Container lets the translated sheet slide up as one unit (no height animation). */
   mainRevealOuter: {
     flex: 1,
     justifyContent: 'flex-end',
-    overflow: 'hidden',
-  },
-  miniSlot: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 10,
-    elevation: 12,
-    backgroundColor: 'transparent',
+    overflow: 'visible',
   },
 });

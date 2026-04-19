@@ -46,6 +46,8 @@ export interface Track {
   bpm?: number; // Beats per minute
   musicalKey?: string; // Musical key (e.g., "C major", "A minor")
   releaseYear?: number; // Year the track was released
+  /** When set, tap opens this URL (e.g. vault promo) instead of starting playback. */
+  externalHandoffUrl?: string;
 }
 
 export interface RelatedTrack extends Track {

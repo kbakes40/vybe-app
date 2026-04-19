@@ -29,7 +29,7 @@ export const usePlaybackSettingsStore = create<PlaybackSettingsState>()(
     }),
     {
       name: 'vybe-playback-settings',
-      storage: mmkvStorage,
+      storage: mmkvStorage as never,
       version: 2,
       migrate: (persisted: any, version: number) => {
         if (version < 2) {

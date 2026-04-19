@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "Vybe",
+    "slug": "vybe",
+    "scheme": "vybe",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#000000",
+    "newArchEnabled": false,
+    "icon": "./assets/images/icon.png",
+    "splash": {
+      "image": "./assets/images/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.oneitch1scratch.vybe-app",
+      "backgroundColor": "#000000",
+      "appleTeamId": "FCXP585VH2"
+    },
+    "android": {
+      "package": "com.oneitch1scratch.vybeapp",
+      "backgroundColor": "#000000",
+      "edgeToEdgeEnabled": true,
+      "softwareKeyboardLayoutMode": "pan",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#000000"
+      }
+    }
+  }
+}

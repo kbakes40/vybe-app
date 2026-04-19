@@ -46,10 +46,10 @@ export function ExternalDownloadAlert({
           {/* Content */}
           <View className="p-5">
             <Text className="text-white/90 text-base leading-6">
-              Offline downloads are available for VYBE tracks only.
+              Vault import is available for VYBE tracks only.
             </Text>
             <Text className="text-white/60 text-sm mt-3 leading-5">
-              This track plays from {sourceName}. Use the button below for platform options including offline listening.
+              This track plays from {sourceName}. Use the button below for platform options including Vault-style local playback where supported.
             </Text>
           </View>
 

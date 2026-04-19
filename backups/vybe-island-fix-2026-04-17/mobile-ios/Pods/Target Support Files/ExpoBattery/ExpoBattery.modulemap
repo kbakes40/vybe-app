@@ -1,0 +1,6 @@
+module ExpoBattery {
+  umbrella header "ExpoBattery-umbrella.h"
+
+  export *
+  module * { export * }
+}

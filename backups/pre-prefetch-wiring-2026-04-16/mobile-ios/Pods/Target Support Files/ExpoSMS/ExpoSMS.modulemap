@@ -1,0 +1,6 @@
+module ExpoSMS {
+  umbrella header "ExpoSMS-umbrella.h"
+
+  export *
+  module * { export * }
+}

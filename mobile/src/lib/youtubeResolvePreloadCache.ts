@@ -11,6 +11,38 @@ function backendBase(): string {
   return (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
 }
 
+/** Mobile Safari-style client — helps Railway / edge paths that mirror YouTube expectations. */
+const YOUTUBE_RESOLVE_FETCH_HEADERS: Record<string, string> = {
+  Accept: 'application/json',
+  'User-Agent':
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+};
+
+function isRetriableResolveFetchError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return (
+    msg.includes('NSURLError') ||
+    msg.includes('Network request failed') ||
+    msg.includes('Failed to fetch') ||
+    msg.includes('Load failed') ||
+    msg.includes('network error') ||
+    msg.includes('ECONNRESET') ||
+    msg.includes('ETIMEDOUT')
+  );
+}
+
+export function invalidateYoutubeResolveCache(videoId: string): void {
+  if (!videoId) return;
+  cache.delete(videoId);
+  inflight.delete(videoId);
+}
+
+/** Dev / recovery: drop all in-memory YouTube resolve entries. */
+export function clearAllYoutubeResolveCaches(): void {
+  cache.clear();
+  inflight.clear();
+}
+
 export function getCachedYoutubeResolveUrl(videoId: string): string | null {
   const row = cache.get(videoId);
   if (!row || Date.now() > row.expires) {
@@ -25,7 +57,7 @@ export function setCachedYoutubeResolveUrl(videoId: string, url: string): void {
   cache.set(videoId, { url, expires: Date.now() + TTL_MS });
 }
 
-async function fetchResolveUrl(videoId: string): Promise<string | null> {
+async function fetchResolveUrl(videoId: string, attempt = 0): Promise<string | null> {
   const base = backendBase();
   if (!base || !videoId) return null;
   const ac = new AbortController();
@@ -33,6 +65,7 @@ async function fetchResolveUrl(videoId: string): Promise<string | null> {
   try {
     const res = await fetch(`${base}/api/youtube/resolve/${videoId}`, {
       signal: ac.signal,
+      headers: YOUTUBE_RESOLVE_FETCH_HEADERS,
     });
     if (!res.ok) return null;
     const j = (await res.json()) as { data?: { url?: string } };
@@ -41,8 +74,11 @@ async function fetchResolveUrl(videoId: string): Promise<string | null> {
       setCachedYoutubeResolveUrl(videoId, url);
       return url;
     }
-  } catch {
-    /* ignore */
+  } catch (e) {
+    if (attempt < 1 && isRetriableResolveFetchError(e)) {
+      await new Promise((r) => setTimeout(r, 350));
+      return fetchResolveUrl(videoId, attempt + 1);
+    }
   } finally {
     clearTimeout(t);
   }
@@ -60,7 +96,7 @@ function startResolveFetch(videoId: string): Promise<string | null> {
   if (p) return p;
 
   p = fetchResolveUrl(videoId).finally(() => {
-    inflight.delete(videoId);
+    if (inflight.get(videoId) === p) inflight.delete(videoId);
   });
   inflight.set(videoId, p);
   return p;

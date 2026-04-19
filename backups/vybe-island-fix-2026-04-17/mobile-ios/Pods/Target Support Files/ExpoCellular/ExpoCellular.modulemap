@@ -1,0 +1,6 @@
+module ExpoCellular {
+  umbrella header "ExpoCellular-umbrella.h"
+
+  export *
+  module * { export * }
+}

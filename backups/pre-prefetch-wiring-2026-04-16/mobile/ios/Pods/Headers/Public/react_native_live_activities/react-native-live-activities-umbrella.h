@@ -1,0 +1,1 @@
+../../../Target Support Files/react-native-live-activities/react-native-live-activities-umbrella.h

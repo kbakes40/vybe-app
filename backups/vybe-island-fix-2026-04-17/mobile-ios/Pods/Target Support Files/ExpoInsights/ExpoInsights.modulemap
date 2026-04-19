@@ -1,0 +1,6 @@
+module ExpoInsights {
+  umbrella header "ExpoInsights-umbrella.h"
+
+  export *
+  module * { export * }
+}

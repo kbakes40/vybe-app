@@ -11,13 +11,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import { ChevronLeft, Settings, Share2, Crown, ListMusic, Music2 } from 'lucide-react-native';
+import { ChevronLeft, Settings, Share2, ListMusic, Music2 } from 'lucide-react-native';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useUserPlaylistStore } from '@/stores/userPlaylistStore';
 import { useRecentsStore } from '@/stores/recentsStore';
 import { useDownloadsStore } from '@/stores/downloadsStore';
 import { VybeIcon } from '@/components/VybeIcon';
+import { VybePlusWordmark } from '@/components/VybePlusWordmark';
 import { MINI_PLAYER_HEIGHT } from './_layout';
 import { Track } from '@/types/music';
 import { authClient } from '@/lib/auth/auth-client';
@@ -251,9 +252,8 @@ export default function ProfileScreen() {
             ) : null}
 
             {tier === 'plus' && (
-              <View className="flex-row items-center mt-3 bg-[#8B5CF6]/20 rounded-full px-4 py-1.5">
-                <Crown size={16} color="#8B5CF6" />
-                <Text className="text-[#8B5CF6] text-sm font-semibold ml-1.5">VYBE Plus</Text>
+              <View className="mt-3">
+                <VybePlusWordmark variant="badgeCapsule" />
               </View>
             )}
           </View>

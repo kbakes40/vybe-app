@@ -1,0 +1,1 @@
+../../../../../node_modules/react-native-bottom-tabs/ios/Fabric/RCTTabViewComponentView.h

@@ -1,0 +1,6 @@
+module SwiftDraw {
+  umbrella header "SwiftDraw-umbrella.h"
+
+  export *
+  module * { export * }
+}

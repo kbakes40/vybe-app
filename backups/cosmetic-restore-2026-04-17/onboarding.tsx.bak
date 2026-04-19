@@ -1,0 +1,337 @@
+import React, { useState } from 'react';
+import {
+  View,
+  Text,
+  Pressable,
+  ScrollView,
+  ActivityIndicator,
+  Platform,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import { Check } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
+import Animated, {
+  useAnimatedStyle,
+  withSpring,
+  useSharedValue,
+} from 'react-native-reanimated';
+import { api } from '@/lib/api/api';
+import { useUpgradePromptStore } from '@/stores/upgradePromptStore';
+
+const GENRES = [
+  'Pop',
+  'Hip-Hop',
+  'R&B',
+  'Electronic',
+  'Rock',
+  'Jazz',
+  'Classical',
+  'Lo-Fi',
+  'Indie',
+  'Latin',
+  'Country',
+  'Metal',
+];
+
+const MOODS = ['Chill', 'Energetic', 'Focused', 'Melancholic', 'Happy'];
+
+const ERAS = ['70s', '80s', '90s', '2000s', '2010s', 'Now'];
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+interface GenreChipProps {
+  genre: string;
+  selected: boolean;
+  onPress: () => void;
+  disabled: boolean;
+}
+
+function GenreChip({ genre, selected, onPress, disabled }: GenreChipProps) {
+  const scale = useSharedValue(1);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  const handlePressIn = () => {
+    scale.value = withSpring(0.96);
+  };
+
+  const handlePressOut = () => {
+    scale.value = withSpring(1);
+  };
+
+  return (
+    <AnimatedPressable
+      onPress={onPress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+      disabled={disabled && !selected}
+      style={[
+        animatedStyle,
+        {
+          paddingHorizontal: 20,
+          paddingVertical: 12,
+          borderRadius: 999,
+          marginRight: 8,
+          marginBottom: 8,
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: '#000000',
+          borderWidth: 1,
+          borderColor: selected ? '#00FFFF' : 'rgba(255,255,255,0.125)',
+          opacity: disabled && !selected ? 0.45 : 1,
+          ...(selected
+            ? {
+                shadowColor: '#00FFFF',
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: 0.45,
+                shadowRadius: 8,
+                ...Platform.select({ android: { elevation: 8 } }),
+              }
+            : Platform.select({ android: { elevation: 0 } })),
+        },
+      ]}
+    >
+      {selected ? (
+        <Check size={16} color="#00FFFF" style={{ marginRight: 6 }} />
+      ) : null}
+      <Text className={`font-medium ${selected ? 'text-white' : 'text-white/75'}`}>
+        {genre}
+      </Text>
+    </AnimatedPressable>
+  );
+}
+
+interface SelectChipProps {
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+}
+
+function SelectChip({ label, selected, onPress }: SelectChipProps) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        borderRadius: 999,
+        marginRight: 8,
+        marginBottom: 8,
+        backgroundColor: '#000000',
+        borderWidth: 1,
+        borderColor: selected ? '#00FFFF' : 'rgba(255,255,255,0.125)',
+        ...(selected
+          ? {
+              shadowColor: '#00FFFF',
+              shadowOffset: { width: 0, height: 0 },
+              shadowOpacity: 0.4,
+              shadowRadius: 8,
+              ...Platform.select({ android: { elevation: 6 } }),
+            }
+          : {}),
+      }}
+    >
+      <Text className={`font-medium ${selected ? 'text-white' : 'text-white/75'}`}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+export default function OnboardingScreen() {
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
+  const [selectedMood, setSelectedMood] = useState<string | null>(null);
+  const [selectedEra, setSelectedEra] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  useUpgradePromptStore((s) => s.hasSeenPrompt);
+
+  const continueScale = useSharedValue(1);
+  const continueStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: continueScale.value }],
+  }));
+
+  const toggleGenre = (genre: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelectedGenres((prev) => {
+      if (prev.includes(genre)) {
+        return prev.filter((g) => g !== genre);
+      }
+      if (prev.length >= 3) {
+        return prev;
+      }
+      return [...prev, genre];
+    });
+  };
+
+  const selectMood = (mood: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelectedMood(mood === selectedMood ? null : mood);
+  };
+
+  const selectEra = (era: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelectedEra(era === selectedEra ? null : era);
+  };
+
+  const handleSkip = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    handleContinue(true);
+  };
+
+  const handleContinue = async (skipped = false) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setIsLoading(true);
+
+    try {
+      await api.post('/api/user/preferences', {
+        genres: skipped ? [] : selectedGenres,
+        mood: skipped ? null : selectedMood,
+        eraPreference: skipped ? null : selectedEra,
+        onboardingDone: true,
+      });
+    } catch (error) {
+      // Continue even if preferences fail to save (e.g. not authenticated)
+      console.log('Could not save preferences:', error);
+    } finally {
+      setIsLoading(false);
+      // After onboarding, always show the paywall so new users see the
+      // Vybe+ subscription options before landing on the tabs. Users can
+      // tap "Not now" to continue on the free plan.
+      if (__DEV__) {
+        router.replace('/(app)/(tabs)');
+      } else {
+        router.replace('/(app)/upgrade');
+      }
+    }
+  };
+
+  return (
+    <View className="flex-1 bg-[#0A0A0A]">
+      <LinearGradient
+        colors={['#1a1a2e', '#0A0A0A']}
+        style={{ flex: 1, paddingTop: insets.top }}
+      >
+        {/* Header */}
+        <View className="flex-row items-center justify-between px-6 py-4">
+          <Text className="text-white text-2xl font-bold">
+            Personalize your VYBE
+          </Text>
+          <Pressable onPress={handleSkip} disabled={isLoading}>
+            <Text className="text-white/60 text-base">Skip</Text>
+          </Pressable>
+        </View>
+
+        <ScrollView
+          className="flex-1"
+          contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 120 }}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Genres Section */}
+          <View className="mb-8">
+            <Text className="text-white text-lg font-semibold mb-2">
+              Select up to 3 genres
+            </Text>
+            <Text className="text-white/50 text-sm mb-4">
+              {selectedGenres.length}/3 selected
+            </Text>
+            <View className="flex-row flex-wrap">
+              {GENRES.map((genre) => (
+                <GenreChip
+                  key={genre}
+                  genre={genre}
+                  selected={selectedGenres.includes(genre)}
+                  onPress={() => toggleGenre(genre)}
+                  disabled={selectedGenres.length >= 3}
+                />
+              ))}
+            </View>
+          </View>
+
+          {/* Mood Section */}
+          <View className="mb-8">
+            <Text className="text-white text-lg font-semibold mb-2">
+              What is your vibe today?
+            </Text>
+            <Text className="text-white/50 text-sm mb-4">Select one mood</Text>
+            <View className="flex-row flex-wrap">
+              {MOODS.map((mood) => (
+                <SelectChip
+                  key={mood}
+                  label={mood}
+                  selected={selectedMood === mood}
+                  onPress={() => selectMood(mood)}
+                />
+              ))}
+            </View>
+          </View>
+
+          {/* Era Section */}
+          <View className="mb-8">
+            <Text className="text-white text-lg font-semibold mb-2">
+              Favorite music era (optional)
+            </Text>
+            <Text className="text-white/50 text-sm mb-4">
+              Select your preferred era
+            </Text>
+            <View className="flex-row flex-wrap">
+              {ERAS.map((era) => (
+                <SelectChip
+                  key={era}
+                  label={era}
+                  selected={selectedEra === era}
+                  onPress={() => selectEra(era)}
+                />
+              ))}
+            </View>
+          </View>
+        </ScrollView>
+
+        {/* Continue Button */}
+        <View
+          className="absolute bottom-0 left-0 right-0 px-6"
+          style={{ paddingBottom: insets.bottom + 16 }}
+        >
+          <AnimatedPressable
+            onPress={() => handleContinue(false)}
+            disabled={isLoading}
+            onPressIn={() => {
+              continueScale.value = withSpring(1.06, { damping: 14, stiffness: 220 });
+            }}
+            onPressOut={() => {
+              continueScale.value = withSpring(1, { damping: 16, stiffness: 200 });
+            }}
+            style={[continueStyle, { borderRadius: 14, overflow: 'hidden' }]}
+          >
+            <LinearGradient
+              colors={['#FF00FF', '#00FFFF']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={{
+                paddingVertical: 16,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.35)',
+                borderRadius: 14,
+              }}
+            >
+              {isLoading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text className="text-white font-semibold text-lg" style={{ textShadowColor: 'rgba(0,0,0,0.35)', textShadowRadius: 6 }}>
+                  Continue
+                </Text>
+              )}
+            </LinearGradient>
+          </AnimatedPressable>
+        </View>
+      </LinearGradient>
+    </View>
+  );
+}

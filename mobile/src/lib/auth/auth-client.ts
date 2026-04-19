@@ -1,6 +1,6 @@
 // The OnlineManager stub for @better-auth/expo is installed as a side-effect
-// by mobile/index.ts importing ./install-online-manager-stub BEFORE this file
-// gets reached. See that file for the full rationale.
+// by src/app/_layout.tsx importing install-online-manager-stub BEFORE this file
+// gets reached. See that module for the full rationale.
 import { createAuthClient } from "better-auth/react";
 import { expoClient } from "@better-auth/expo/client";
 import { emailOTPClient, genericOAuthClient } from "better-auth/client/plugins";

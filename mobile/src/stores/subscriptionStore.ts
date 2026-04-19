@@ -6,12 +6,15 @@ interface SubscriptionState {
   showPaywall: boolean;
   paywallTrigger: string | null;
   vipEmail: string | null;
+  /** Interstitial ad / upsell sheet (free tier). */
+  showAdBreak: boolean;
 
   setTier: (tier: 'free' | 'plus') => void;
   setSkipsRemaining: (count: number) => void;
   useSkip: () => boolean;
   openPaywall: (trigger: string) => void;
   closePaywall: () => void;
+  dismissAd: () => void;
 }
 
 export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
@@ -20,6 +23,7 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
   showPaywall: false,
   paywallTrigger: null,
   vipEmail: null,
+  showAdBreak: false,
 
   setTier: (tier) => set({ tier }),
 
@@ -40,6 +44,8 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
   openPaywall: (trigger) => set({ showPaywall: true, paywallTrigger: trigger }),
 
   closePaywall: () => set({ showPaywall: false, paywallTrigger: null }),
+
+  dismissAd: () => set({ showAdBreak: false }),
 }));
 
 /** Cached session email for VIP checks (set from app layout after session load). */

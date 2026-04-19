@@ -13,10 +13,4 @@ RCT_EXTERN_METHOD(startBatchDownload:(NSArray *)items
 
 RCT_EXTERN_METHOD(cancelDownload:(NSString *)trackId)
 
-RCT_EXTERN_METHOD(prefetchAudioBuffers:(NSArray *)items
-                  resolver:(RCTPromiseResolveBlock)resolve
-                  rejecter:(RCTPromiseRejectBlock)reject)
-
-RCT_EXTERN_METHOD(cancelPrefetchQueue)
-
 @end

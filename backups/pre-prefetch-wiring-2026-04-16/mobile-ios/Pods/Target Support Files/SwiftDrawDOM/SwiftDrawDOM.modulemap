@@ -1,0 +1,6 @@
+module SwiftDrawDOM {
+  umbrella header "SwiftDrawDOM-umbrella.h"
+
+  export *
+  module * { export * }
+}

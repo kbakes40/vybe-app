@@ -1,48 +1,103 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Platform } from 'react-native';
+import { BlurView } from 'expo-blur';
 
-/** Top-right source badge on playlist / artwork cards (Shadow branding) */
-export function SourceCornerBadge({ source, compact }: { source?: string; compact?: boolean }) {
-  const s = source ?? '';
-  const fs = compact ? 7.5 : 9;
+export type SourceCornerBadgeSource =
+  | 'soundcloud'
+  | 'youtube_music'
+  | 'youtube'
+  | 'vybe'
+  | 'stream';
+
+type Props = { source?: SourceCornerBadgeSource | string; compact?: boolean };
+
+function GlassBadgeShell({
+  compact,
+  children,
+}: {
+  compact?: boolean;
+  children: React.ReactNode;
+}) {
+  const r = compact ? 6 : 8;
   const ph = compact ? 5 : 8;
   const pv = compact ? 3 : 4;
-  const shell = {
-    backgroundColor: 'rgba(0,0,0,0.75)',
-    borderRadius: compact ? 6 : 8,
-    paddingHorizontal: ph,
-    paddingVertical: pv,
+  const border = {
+    borderRadius: r,
+    overflow: 'hidden' as const,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.12)',
-  } as const;
-  if (s === 'soundcloud') {
+    borderColor: 'rgba(255,255,255,0.15)',
+  };
+  if (Platform.OS === 'ios') {
     return (
-      <View style={shell}>
-        <Text style={{ color: 'rgba(255,255,255,0.95)', fontSize: fs, fontWeight: '900', letterSpacing: 0.6 }}>SC</Text>
-      </View>
-    );
-  }
-  if (s === 'youtube_music') {
-    return (
-      <View style={shell}>
-        <Text style={{ color: 'rgba(255,255,255,0.95)', fontSize: fs, fontWeight: '900', letterSpacing: compact ? 0.35 : 0.5 }}>
-          {compact ? 'CS' : 'CLOUD'}
-        </Text>
-      </View>
-    );
-  }
-  if (s === 'youtube') {
-    return (
-      <View style={shell}>
-        <Text style={{ color: 'rgba(255,255,255,0.95)', fontSize: fs, fontWeight: '900', letterSpacing: compact ? 0.4 : 0.6 }}>
-          {compact ? 'WS' : 'WEB'}
-        </Text>
+      <View style={border} pointerEvents="none">
+        <BlurView
+          intensity={48}
+          tint="dark"
+          pointerEvents="none"
+          style={{ paddingHorizontal: ph, paddingVertical: pv }}
+        >
+          {children}
+        </BlurView>
       </View>
     );
   }
   return (
-    <View style={[shell, { borderColor: 'rgba(139,92,246,0.4)' }]}>
-      <Text style={{ color: '#F3E8FF', fontSize: fs, fontWeight: '900', letterSpacing: compact ? 0.8 : 1.1 }}>VYBE</Text>
+    <View
+      pointerEvents="none"
+      style={[
+        border,
+        {
+          paddingHorizontal: ph,
+          paddingVertical: pv,
+          backgroundColor: 'rgba(22,22,24,0.78)',
+        },
+      ]}
+    >
+      {children}
     </View>
+  );
+}
+
+/** Top-right source badge on playlist / artwork cards (glass + Shadow labels). */
+export function SourceCornerBadge({ source, compact }: Props) {
+  const s = (source ?? '') as string;
+  const fs = compact ? 7.5 : 9;
+  const textStyle = { color: 'rgba(255,255,255,0.95)', fontSize: fs, fontWeight: '900' as const };
+  if (s === 'soundcloud') {
+    return (
+      <GlassBadgeShell compact={compact}>
+        <Text style={{ ...textStyle, letterSpacing: 0.6 }}>SC</Text>
+      </GlassBadgeShell>
+    );
+  }
+  if (s === 'youtube_music') {
+    return (
+      <GlassBadgeShell compact={compact}>
+        <Text style={{ ...textStyle, letterSpacing: compact ? 0.35 : 0.5 }}>
+          {compact ? 'CS' : 'CLOUD'}
+        </Text>
+      </GlassBadgeShell>
+    );
+  }
+  if (s === 'youtube') {
+    return (
+      <GlassBadgeShell compact={compact}>
+        <Text style={{ ...textStyle, letterSpacing: compact ? 0.4 : 0.6 }}>
+          {compact ? 'WS' : 'WEB'}
+        </Text>
+      </GlassBadgeShell>
+    );
+  }
+  if (s === 'stream') {
+    return (
+      <GlassBadgeShell compact={compact}>
+        <Text style={{ ...textStyle, letterSpacing: compact ? 0.45 : 0.65 }}>STREAM</Text>
+      </GlassBadgeShell>
+    );
+  }
+  return (
+    <GlassBadgeShell compact={compact}>
+      <Text style={{ ...textStyle, color: '#F3E8FF', letterSpacing: compact ? 0.8 : 1.1 }}>VYBE</Text>
+    </GlassBadgeShell>
   );
 }

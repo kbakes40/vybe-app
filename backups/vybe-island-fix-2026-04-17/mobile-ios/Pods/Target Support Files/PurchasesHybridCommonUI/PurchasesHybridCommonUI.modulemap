@@ -1,0 +1,6 @@
+module PurchasesHybridCommonUI {
+  umbrella header "PurchasesHybridCommonUI-umbrella.h"
+
+  export *
+  module * { export * }
+}

@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, Pressable } from 'react-native';
-import { Image } from 'expo-image';
+import { ShadowArtworkImage } from '@/components/ShadowArtworkImage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Play } from 'lucide-react-native';
 import Animated, {
@@ -60,7 +60,7 @@ export function AlbumCard({ album, onPress, size = 'medium' }: AlbumCardProps) {
           style={{ width, height, borderRadius: 8, overflow: 'hidden' }}
           className="relative"
         >
-          <Image
+          <ShadowArtworkImage
             source={{ uri: album.artwork }}
             style={{ width, height }}
             contentFit="cover"

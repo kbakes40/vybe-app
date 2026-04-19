@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, Pressable } from 'react-native';
-import { Image } from 'expo-image';
+import { ShadowArtworkImage } from '@/components/ShadowArtworkImage';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   useSharedValue,
@@ -100,11 +100,9 @@ export function DiscoverCard({ item, queue, onVisible }: DiscoverCardProps) {
     <AnimatedPressable
       onPressIn={() => {
         if (ytPreId) preResolveYoutubeVideoId(ytPreId);
-      }}
-      onPress={handlePress}
-      onPressIn={() => {
         scale.value = withSpring(0.97);
       }}
+      onPress={handlePress}
       onPressOut={() => {
         scale.value = withSpring(1);
       }}
@@ -113,7 +111,7 @@ export function DiscoverCard({ item, queue, onVisible }: DiscoverCardProps) {
       <View style={{ width: 160 }}>
         {/* Thumbnail with platform badge */}
         <View className="relative overflow-hidden rounded-xl">
-          <Image
+          <ShadowArtworkImage
             source={{ uri: item.thumbnailUrl }}
             style={{ width: 160, height: 160, borderRadius: 12 }}
             contentFit="cover"
@@ -261,7 +259,7 @@ export function DiscoverCardCompact({ item }: DiscoverCardProps) {
       className="flex-row items-center py-3 px-4 bg-white/5 rounded-xl mb-2"
     >
       {/* Thumbnail */}
-      <Image
+      <ShadowArtworkImage
         source={{ uri: item.thumbnailUrl }}
         style={{ width: 56, height: 56, borderRadius: 8 }}
         contentFit="cover"

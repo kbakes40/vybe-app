@@ -600,7 +600,7 @@ export default function SoundCloudImportScreen() {
                     </Text>
                   </View>
                   <Text className="text-white/40 text-xs leading-4">
-                    This track streams directly from SoundCloud. Offline downloads are not available for external content.
+                    This track streams directly from SoundCloud. Import to Vault is not available for external content.
                   </Text>
                 </View>
               </>

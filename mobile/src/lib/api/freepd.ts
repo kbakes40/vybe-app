@@ -1,7 +1,7 @@
 import { api } from './api';
 import {
   FreePDTrack,
-  FreePDCatalogResponse,
+  FreePDCatalogMeta,
   FreePDSearchParams,
   FreePDCategory,
 } from '@/types/freepd';
@@ -17,7 +17,7 @@ interface FreePDGenresResponse {
 /**
  * Response type for paginated tracks
  */
-interface FreePDTracksResponse {
+export interface FreePDTracksResponse {
   tracks: FreePDTrack[];
   total: number;
   page: number;
@@ -25,12 +25,60 @@ interface FreePDTracksResponse {
   hasMore: boolean;
 }
 
+/** Raw shape from GET /api/freepd/tracks */
+interface FreePDTracksApiPayload {
+  tracks: FreePDTrack[];
+  pagination: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+  };
+}
+
+function normalizeTracksResponse(payload: FreePDTracksApiPayload): FreePDTracksResponse {
+  const { tracks, pagination } = payload;
+  return {
+    tracks,
+    total: pagination.total,
+    page: pagination.page,
+    pageSize: pagination.limit,
+    hasMore: pagination.hasNextPage,
+  };
+}
+
 /**
- * Fetches the complete FreePD catalog
- * Use sparingly - prefer paginated fetchFreePDTracks for large catalogs
+ * Catalog metadata only (no track list)
  */
-export async function fetchFreePDCatalog(): Promise<FreePDCatalogResponse> {
-  return api.get<FreePDCatalogResponse>('/api/freepd/catalog');
+export async function fetchFreePDCatalogMeta(): Promise<FreePDCatalogMeta> {
+  return api.get<FreePDCatalogMeta>('/api/freepd/catalog');
+}
+
+/**
+ * Fetches every FreePD track page from the API (limit 100 per request).
+ */
+export async function fetchAllFreePDTracks(
+  onProgress?: (loaded: number, total: number) => void
+): Promise<FreePDTrack[]> {
+  const pageSize = 100;
+  const all: FreePDTrack[] = [];
+  let page = 1;
+  let hasMore = true;
+  let total = 0;
+
+  while (hasMore) {
+    const res = await fetchFreePDTracks({ page, pageSize });
+    if (page === 1) total = res.total;
+    all.push(...res.tracks);
+    onProgress?.(all.length, total);
+    hasMore = res.hasMore && res.tracks.length > 0;
+    page += 1;
+    if (page > 1000) break;
+  }
+
+  return all;
 }
 
 /**
@@ -42,7 +90,7 @@ export async function fetchFreePDTracks(
   const searchParams = new URLSearchParams();
 
   if (params.query) searchParams.set('query', params.query);
-  if (params.category) searchParams.set('category', params.category);
+  if (params.category) searchParams.set('genre', params.category);
   if (params.categories?.length) {
     searchParams.set('categories', params.categories.join(','));
   }
@@ -67,13 +115,14 @@ export async function fetchFreePDTracks(
   if (params.sortOrder) searchParams.set('sortOrder', params.sortOrder);
   if (params.page !== undefined) searchParams.set('page', String(params.page));
   if (params.pageSize !== undefined) {
-    searchParams.set('pageSize', String(params.pageSize));
+    searchParams.set('limit', String(params.pageSize));
   }
 
   const queryString = searchParams.toString();
   const url = queryString ? `/api/freepd/tracks?${queryString}` : '/api/freepd/tracks';
 
-  return api.get<FreePDTracksResponse>(url);
+  const raw = await api.get<FreePDTracksApiPayload>(url);
+  return normalizeTracksResponse(raw);
 }
 
 /**
@@ -89,23 +138,35 @@ export async function fetchFreePDTrack(id: string): Promise<FreePDTrack | null> 
 }
 
 /**
- * Searches FreePD tracks with query and optional filters
+ * Searches FreePD tracks (GET /api/freepd/search)
  */
 export async function searchFreePDTracks(
   query: string,
   filters?: Partial<FreePDSearchParams>
 ): Promise<FreePDTracksResponse> {
-  return fetchFreePDTracks({
-    query,
-    ...filters,
-  });
+  const searchParams = new URLSearchParams();
+  searchParams.set('q', query);
+  if (filters?.page !== undefined) searchParams.set('page', String(filters.page));
+  if (filters?.pageSize !== undefined) searchParams.set('limit', String(filters.pageSize));
+  if (filters?.category) searchParams.set('genre', filters.category);
+  if (filters?.moods?.length) searchParams.set('moods', filters.moods.join(','));
+  const qs = searchParams.toString();
+  const raw = await api.get<FreePDTracksApiPayload>(`/api/freepd/search?${qs}`);
+  return normalizeTracksResponse(raw);
 }
 
 /**
- * Fetches available genres and moods from FreePD
+ * Fetches available genres (with counts) and mood names from FreePD
  */
 export async function fetchFreePDGenres(): Promise<FreePDGenresResponse> {
-  return api.get<FreePDGenresResponse>('/api/freepd/genres');
+  const [genreRows, moodRows] = await Promise.all([
+    api.get<Array<{ id: string; name: string; trackCount: number }>>('/api/freepd/genres'),
+    api.get<Array<{ id: string; name: string }>>('/api/freepd/moods'),
+  ]);
+  return {
+    genres: (genreRows ?? []).map((g) => ({ name: g.name, count: g.trackCount })),
+    moods: (moodRows ?? []).map((m) => m.name),
+  };
 }
 
 /**

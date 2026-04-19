@@ -1,0 +1,6 @@
+module react_native_bottom_tabs {
+  umbrella header "react-native-bottom-tabs-umbrella.h"
+
+  export *
+  module * { export * }
+}

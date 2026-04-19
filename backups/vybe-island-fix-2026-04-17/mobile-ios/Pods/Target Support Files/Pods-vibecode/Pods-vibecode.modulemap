@@ -1,0 +1,6 @@
+module Pods_vibecode {
+  umbrella header "Pods-vibecode-umbrella.h"
+
+  export *
+  module * { export * }
+}
