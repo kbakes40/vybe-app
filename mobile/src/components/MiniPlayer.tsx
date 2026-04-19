@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { View, Text, StyleSheet, LayoutChangeEvent, Platform } from 'react-native';
+import { View, Text, StyleSheet, LayoutChangeEvent, Platform, Pressable as RNPressable } from 'react-native';
 import { Pressable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useShallow } from 'zustand/react/shallow';
@@ -74,7 +74,7 @@ function MiniPlayerSlimProgress() {
   };
 
   return (
-    <View style={styles.progressTrack} onLayout={onLayout}>
+    <View style={styles.progressTrack} onLayout={onLayout} pointerEvents="none">
       {svgW > 0 ? (
         <Svg width={svgW} height={2}>
           <Rect x={0} y={0} width={svgW} height={2} fill="rgba(255,255,255,0.08)" />
@@ -305,10 +305,6 @@ export function MiniPlayer({ bottomLift }: MiniPlayerProps) {
       runOnJS(handleTripleTap)();
     });
 
-  const tapOpenGesture = Gesture.Tap().onEnd(() => {
-    runOnJS(navigateToNowPlaying)();
-  });
-
   const panGesture = Gesture.Pan()
     .minDistance(12)
     .onUpdate((event) => {
@@ -347,10 +343,8 @@ export function MiniPlayer({ bottomLift }: MiniPlayerProps) {
       translateY.value = withSpring(0, { damping: 20, stiffness: 400 });
     });
 
-  const miniCardGesture = Gesture.Exclusive(
-    tripleTapDebugGesture,
-    Gesture.Race(tapOpenGesture, panGesture),
-  );
+  /** Tap-to-expand is handled by a full-bleed `RNPressable` behind controls (see `cardSurface`). */
+  const miniCardGesture = Gesture.Exclusive(tripleTapDebugGesture, panGesture);
 
   const showDownload =
     meta.hasRealTrack &&
@@ -419,8 +413,8 @@ export function MiniPlayer({ bottomLift }: MiniPlayerProps) {
 
   const cardBody = (
     <>
-      <View style={styles.content}>
-        <View style={styles.artworkContainer}>
+      <View style={styles.content} pointerEvents="box-none">
+        <View style={styles.artworkContainer} pointerEvents="none">
           <View style={styles.artworkShadowHost}>
             <ShadowArtworkImage
               key={`${meta.id}-${playbackRevision}-${meta.artworkUri}`}
@@ -446,7 +440,7 @@ export function MiniPlayer({ bottomLift }: MiniPlayerProps) {
           ) : null}
         </View>
 
-        <View style={styles.trackInfo}>
+        <View style={styles.trackInfo} pointerEvents="none">
           <View style={styles.titleRow}>
             <Text style={styles.trackTitle} numberOfLines={1} ellipsizeMode="tail">
               {meta.title}
@@ -463,7 +457,7 @@ export function MiniPlayer({ bottomLift }: MiniPlayerProps) {
         {showDownload && (
           <GestureDetector gesture={downloadTapGesture}>
             <Animated.View
-              style={[styles.controlButton, { opacity: isImporting ? 0.4 : 1 }]}
+              style={[styles.controlButton, styles.controlHit, { opacity: isImporting ? 0.4 : 1 }]}
               accessibilityRole="button"
               accessibilityLabel="Import to Vault"
             >
@@ -473,7 +467,7 @@ export function MiniPlayer({ bottomLift }: MiniPlayerProps) {
         )}
 
         <GestureDetector gesture={playPauseTapGesture}>
-          <Animated.View style={[styles.controlButton, buttonAnimatedStyle]}>
+          <Animated.View style={[styles.controlButton, styles.controlHit, buttonAnimatedStyle]}>
             {isLoading ? (
               <LoadingRing
                 size={21}
@@ -495,7 +489,7 @@ export function MiniPlayer({ bottomLift }: MiniPlayerProps) {
         </GestureDetector>
 
         <GestureDetector gesture={nextTapGesture}>
-          <View style={styles.controlButton}>
+          <View style={[styles.controlButton, styles.controlHit]}>
             <SkipForward size={21} color="#FFFFFF" strokeWidth={ICON_STROKE} fill="transparent" />
           </View>
         </GestureDetector>
@@ -508,7 +502,17 @@ export function MiniPlayer({ bottomLift }: MiniPlayerProps) {
   /** Solid chrome (#000) matches tab bar — Animated.View so the track-change bloom can tint the border. */
   const cardSurface = (
     <Animated.View style={[styles.cardSurface, bloomBorderStyle]}>
+      <RNPressable
+        accessibilityRole="button"
+        accessibilityLabel="Expand now playing"
+        onPress={navigateToNowPlaying}
+        style={styles.expandHitTarget}
+        disabled={!meta.hasRealTrack}
+        hitSlop={0}
+      />
+      <View style={styles.cardForeground} pointerEvents="box-none">
       {cardBody}
+      </View>
       {meta.hasRealTrack ? (
         // Hidden DEV FAIL-SAFE — long-press fires `simulateVaultFailure` so QA
         // can verify the SHADOW_HEALING → SoundCloud transition without waiting
@@ -579,16 +583,27 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: MINI_PLAYER_HEIGHT,
-    zIndex: 999,
+    zIndex: 9999,
     // 1px OLED Black bottom border keeps the baby-blue progress bar from
     // bleeding into the tab bar — pairs with the tab bar's 1px black top
     // border to create a sharp "Machined" seam.
     borderBottomWidth: 1,
     borderBottomColor: '#000000',
     ...Platform.select({
-      android: { elevation: 999 },
+      android: { elevation: 9999 },
       default: {},
     }),
+  },
+  expandHitTarget: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 0,
+  },
+  cardForeground: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1,
+  },
+  controlHit: {
+    zIndex: 2,
   },
   cardSurface: {
     height: MINI_PLAYER_HEIGHT,
@@ -621,6 +636,7 @@ const styles = StyleSheet.create({
     }),
   },
   content: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
@@ -707,7 +723,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 14,
     bottom: 4,
-    color: '#6E6E73',
+    color: 'rgba(103,232,249,0.42)',
     fontSize: 8,
     fontWeight: '700',
     letterSpacing: 1.6,

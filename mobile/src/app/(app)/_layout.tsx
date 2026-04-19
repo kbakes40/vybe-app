@@ -455,8 +455,8 @@ export default function AppLayout() {
             right: 0,
             top: 0,
             bottom: 0,
-            zIndex: 1002,
-            elevation: 1002,
+            zIndex: 10050,
+            elevation: 10050,
           }}
         >
           <NowPlayingSheet miniPlayerBottom={miniPlayerBottom} />
@@ -473,8 +473,8 @@ export default function AppLayout() {
             right: 0,
             top: 0,
             bottom: 0,
-            zIndex: 1001,
-            elevation: 1001,
+            zIndex: 9999,
+            elevation: 9999,
           }}
         >
           <MiniPlayer bottomLift={miniPlayerBottom} />

@@ -305,6 +305,8 @@ export default function TabLayout() {
             borderTopColor: '#000000',
             zIndex: 1000,
             elevation: 1000,
+            // Let touches above the chrome (e.g. mini strip overlap) reach siblings with higher z-index.
+            pointerEvents: 'box-none',
             alignItems: 'center',
             justifyContent: 'center',
             ...tabBarChrome,

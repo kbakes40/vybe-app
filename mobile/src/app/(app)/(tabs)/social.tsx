@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -34,14 +34,17 @@ import { ActivePost } from '@/components/social/ActivePost';
 import { PostComposer } from '@/components/social/PostComposer';
 import { FeedPostRow } from '@/components/social/FeedPostRow';
 import type {
+  ActivePostItem,
   PlaylistShareItem,
   SocialFeedItem,
   SocialInteractionItem,
+  VybeStory,
 } from '@/types/socialActivity';
 import { MachinedGradientText } from '@/components/MachinedGradientText';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
 import { getSocialActivityFeed, getSocialFeed, type SocialPost } from '@/lib/api/social';
 import { VIBRANT_BLUE } from '@/constants/machinedTheme';
+import { FlashList } from '@shopify/flash-list';
 
 /** Set true to show Active Posts above the compose row again. */
 const SHOW_ACTIVE_POSTS_SECTION = false;
@@ -50,7 +53,7 @@ const BRAND_FEED_ITEMS = [
   {
     id: 'brand-davinci',
     brand: 'DaVinci Dynamics',
-    headline: 'Machined Blue 2.1',
+    headline: 'Machined Cyan 2.1',
     detail: 'Tighter token refresh windows · calmer vault handoffs.',
     timeLabel: '2h ago',
   },
@@ -77,7 +80,7 @@ function SectionHeader({
 }: {
   title: string;
   subtitle?: string;
-  /** `machined` — cyan/blue gradient headline (e.g. Active Posts). */
+  /** `machined` — machined cyan gradient headline (e.g. Active Posts). */
   titleVariant?: 'default' | 'machined';
 }) {
   return (
@@ -200,6 +203,135 @@ function SocialInteractionRow({ item }: { item: SocialInteractionItem }) {
   );
 }
 
+type SocialFeedHeaderProps = {
+  stories: VybeStory[];
+  activePosts: ActivePostItem[];
+  markStoryViewed: (id: string) => void;
+  togglePostHeart: (id: string) => void;
+  bumpReaction: (id: string, kind: 'flame' | 'speaker') => void;
+  handleOpenComposer: () => void;
+  feedPostCount?: number;
+};
+
+function SocialFeedHeader({
+  stories,
+  activePosts,
+  markStoryViewed,
+  togglePostHeart,
+  bumpReaction,
+  handleOpenComposer,
+  feedPostCount,
+}: SocialFeedHeaderProps) {
+  return (
+    <View>
+      <SectionHeader title="Brand Feed" subtitle="Partner grid · Krak Coffee · STAK" />
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.brandRow}
+      >
+        {BRAND_FEED_ITEMS.map((b) => (
+          <BrandFeedRow
+            key={b.id}
+            brand={b.brand}
+            headline={b.headline}
+            detail={b.detail}
+            timeLabel={b.timeLabel}
+          />
+        ))}
+      </ScrollView>
+
+      <View style={styles.divider} />
+
+      <SectionHeader title="Vybe Alerts" subtitle="New & Noteworthy" />
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.storiesRow}
+      >
+        {stories.map((story) => (
+          <VybeStoryRing key={story.id} story={story} onPress={() => markStoryViewed(story.id)} />
+        ))}
+      </ScrollView>
+
+      <View style={styles.divider} />
+
+      {SHOW_ACTIVE_POSTS_SECTION ? (
+        <>
+          <SectionHeader title="Active Posts" subtitle="Live from your network" titleVariant="machined" />
+          {activePosts.map((post) => (
+            <ActivePost
+              key={post.id}
+              post={post}
+              onToggleHeart={togglePostHeart}
+              onBumpReaction={bumpReaction}
+            />
+          ))}
+          <View style={styles.divider} />
+        </>
+      ) : null}
+
+      <Pressable
+        onPress={handleOpenComposer}
+        style={({ pressed }) => [
+          styles.mindPrompt,
+          SHOW_ACTIVE_POSTS_SECTION && styles.mindPromptAfterActive,
+          pressed && { opacity: 0.88 },
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel="Start a post"
+      >
+        <Text style={styles.mindPromptText}>What&apos;s on your mind?</Text>
+        <Text style={styles.mindPromptSub}>Tap to write — attach vault tracks & visuals</Text>
+      </Pressable>
+      <Pressable
+        onPress={handleOpenComposer}
+        style={({ pressed }) => [styles.newPostCta, styles.newPostCtaTight, pressed && { opacity: 0.9 }]}
+      >
+        <Text style={styles.newPostCtaText}>＋ NEW POST</Text>
+      </Pressable>
+
+      <SectionHeader
+        title="Feed"
+        subtitle={typeof feedPostCount === 'number' ? `${feedPostCount} posts` : 'Live from your network'}
+        titleVariant="machined"
+      />
+    </View>
+  );
+}
+
+type SocialFeedFooterProps = {
+  playlistItems: PlaylistShareItem[];
+  interactionItems: SocialInteractionItem[];
+};
+
+function SocialFeedFooter({ playlistItems, interactionItems }: SocialFeedFooterProps) {
+  return (
+    <View>
+      <View style={styles.divider} />
+
+      <SectionHeader
+        title="Shared Playlists"
+        subtitle="Shadow cyan cloud = instant SoundCloud · Join = vault playlist"
+      />
+      {playlistItems.map((item) => (
+        <PlaylistShareRow
+          key={item.id}
+          item={item}
+          onJoin={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+        />
+      ))}
+
+      <View style={styles.divider} />
+
+      <SectionHeader title="Social Interactions" />
+      {interactionItems.map((item) => (
+        <SocialInteractionRow key={item.id} item={item} />
+      ))}
+    </View>
+  );
+}
+
 export default function SocialScreen() {
   const insets = useSafeAreaInsets();
   const stories = useSocialActivityStore((s) => s.stories);
@@ -257,9 +389,13 @@ export default function SocialScreen() {
     };
   }, []);
 
-  const playlistItems = tailItems.filter((i): i is PlaylistShareItem => i.kind === 'playlist_share');
-  const interactionItems = tailItems.filter(
-    (i): i is SocialInteractionItem => i.kind === 'social_interaction',
+  const playlistItems = useMemo(
+    () => tailItems.filter((i): i is PlaylistShareItem => i.kind === 'playlist_share'),
+    [tailItems],
+  );
+  const interactionItems = useMemo(
+    () => tailItems.filter((i): i is SocialInteractionItem => i.kind === 'social_interaction'),
+    [tailItems],
   );
 
   const handleOpenComposer = useCallback(() => {
@@ -296,6 +432,75 @@ export default function SocialScreen() {
   /** Clear tab bar + mini player + home indicator (same math as feed scroll padding). */
   const fabBottom = tabScreenContentContainerPaddingBottom(insets.bottom) + 12;
 
+  const feedPosts = feedQuery.data ?? [];
+  const feedListData =
+    feedQuery.isLoading || isUnauthorized || feedQuery.isError ? [] : feedPosts;
+
+  const listHeader = useMemo(
+    () => (
+      <SocialFeedHeader
+        stories={stories}
+        activePosts={activePosts}
+        markStoryViewed={markStoryViewed}
+        togglePostHeart={togglePostHeart}
+        bumpReaction={bumpReaction}
+        handleOpenComposer={handleOpenComposer}
+        feedPostCount={feedQuery.data?.length}
+      />
+    ),
+    [
+      stories,
+      activePosts,
+      markStoryViewed,
+      togglePostHeart,
+      bumpReaction,
+      handleOpenComposer,
+      feedQuery.data?.length,
+    ],
+  );
+
+  const listFooter = useMemo(
+    () => <SocialFeedFooter playlistItems={playlistItems} interactionItems={interactionItems} />,
+    [playlistItems, interactionItems],
+  );
+
+  const renderFeedItem = useCallback(
+    ({ item }: { item: SocialPost }) => <FeedPostRow post={item} onFireTap={handleFeedFireTap} />,
+    [handleFeedFireTap],
+  );
+
+  const listEmpty = useCallback(() => {
+    if (feedQuery.isLoading) {
+      return (
+        <View style={styles.feedLoading}>
+          <ActivityIndicator color={VIBRANT_BLUE} />
+        </View>
+      );
+    }
+    if (isUnauthorized) {
+      return (
+        <View style={styles.feedEmpty}>
+          <Text style={styles.feedEmptyTitle}>Sign in to see the Feed</Text>
+          <Text style={styles.feedEmptySub}>Your session expired or isn&apos;t set up yet.</Text>
+        </View>
+      );
+    }
+    if (feedQuery.isError) {
+      return (
+        <View style={styles.feedEmpty}>
+          <Text style={styles.feedEmptyTitle}>Couldn&apos;t load feed</Text>
+          <Text style={styles.feedEmptySub} numberOfLines={2}>
+            {feedQuery.error instanceof Error ? feedQuery.error.message : 'Network error'}
+          </Text>
+          <Pressable style={styles.feedRetry} onPress={() => feedQuery.refetch()}>
+            <Text style={styles.feedRetryText}>RETRY</Text>
+          </Pressable>
+        </View>
+      );
+    }
+    return null;
+  }, [feedQuery, isUnauthorized]);
+
   return (
     <View style={styles.screen}>
       <View style={[styles.topBar, { paddingTop: insets.top + 24 }]}>
@@ -318,10 +523,17 @@ export default function SocialScreen() {
         </View>
       </View>
 
-      <ScrollView
+      <FlashList
+        style={{ flex: 1 }}
+        data={feedListData}
+        keyExtractor={(item) => item.id}
+        estimatedItemSize={220}
+        ListHeaderComponent={listHeader}
+        ListFooterComponent={listFooter}
+        renderItem={renderFeedItem}
+        ListEmptyComponent={listEmpty}
         contentContainerStyle={{ paddingBottom: tabScreenContentContainerPaddingBottom(insets.bottom) }}
         showsVerticalScrollIndicator={false}
-        automaticallyAdjustContentInsets={false}
         refreshControl={
           <RefreshControl
             refreshing={feedQuery.isRefetching || activityQuery.isRefetching}
@@ -334,129 +546,7 @@ export default function SocialScreen() {
             progressBackgroundColor="#111111"
           />
         }
-      >
-        <SectionHeader title="Brand Feed" subtitle="DaVinci Dynamics · Krak Coffee · STAK" />
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.brandRow}
-        >
-          {BRAND_FEED_ITEMS.map((b) => (
-            <BrandFeedRow
-              key={b.id}
-              brand={b.brand}
-              headline={b.headline}
-              detail={b.detail}
-              timeLabel={b.timeLabel}
-            />
-          ))}
-        </ScrollView>
-
-        <View style={styles.divider} />
-
-        <SectionHeader title="Vybe Alerts" subtitle="New & Noteworthy" />
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.storiesRow}
-        >
-          {stories.map((story) => (
-            <VybeStoryRing
-              key={story.id}
-              story={story}
-              onPress={() => markStoryViewed(story.id)}
-            />
-          ))}
-        </ScrollView>
-
-        <View style={styles.divider} />
-
-        {SHOW_ACTIVE_POSTS_SECTION ? (
-          <>
-            <SectionHeader title="Active Posts" subtitle="Live from your network" titleVariant="machined" />
-            {activePosts.map((post) => (
-              <ActivePost
-                key={post.id}
-                post={post}
-                onToggleHeart={togglePostHeart}
-                onBumpReaction={bumpReaction}
-              />
-            ))}
-            <View style={styles.divider} />
-          </>
-        ) : null}
-
-        <Pressable
-          onPress={handleOpenComposer}
-          style={({ pressed }) => [
-            styles.mindPrompt,
-            SHOW_ACTIVE_POSTS_SECTION && styles.mindPromptAfterActive,
-            pressed && { opacity: 0.88 },
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel="Start a post"
-        >
-          <Text style={styles.mindPromptText}>What&apos;s on your mind?</Text>
-          <Text style={styles.mindPromptSub}>Tap to write — attach vault tracks & visuals</Text>
-        </Pressable>
-        <Pressable
-          onPress={handleOpenComposer}
-          style={({ pressed }) => [styles.newPostCta, styles.newPostCtaTight, pressed && { opacity: 0.9 }]}
-        >
-          <Text style={styles.newPostCtaText}>＋ NEW POST</Text>
-        </Pressable>
-
-        <SectionHeader
-          title="Feed"
-          subtitle={feedQuery.data ? `${feedQuery.data.length} posts` : 'Live from your network'}
-          titleVariant="machined"
-        />
-        {feedQuery.isLoading ? (
-          <View style={styles.feedLoading}>
-            <ActivityIndicator color={VIBRANT_BLUE} />
-          </View>
-        ) : isUnauthorized ? (
-          <View style={styles.feedEmpty}>
-            <Text style={styles.feedEmptyTitle}>Sign in to see the Feed</Text>
-            <Text style={styles.feedEmptySub}>Your session expired or isn&apos;t set up yet.</Text>
-          </View>
-        ) : feedQuery.isError ? (
-          <View style={styles.feedEmpty}>
-            <Text style={styles.feedEmptyTitle}>Couldn&apos;t load feed</Text>
-            <Text style={styles.feedEmptySub} numberOfLines={2}>
-              {feedQuery.error instanceof Error ? feedQuery.error.message : 'Network error'}
-            </Text>
-            <Pressable style={styles.feedRetry} onPress={() => feedQuery.refetch()}>
-              <Text style={styles.feedRetryText}>RETRY</Text>
-            </Pressable>
-          </View>
-        ) : (
-          (feedQuery.data ?? []).map((post) => (
-            <FeedPostRow key={post.id} post={post} onFireTap={handleFeedFireTap} />
-          ))
-        )}
-
-        <View style={styles.divider} />
-
-        <SectionHeader
-          title="Shared Playlists"
-          subtitle="Shadow cyan cloud = instant SoundCloud · Join = vault playlist"
-        />
-        {playlistItems.map((item) => (
-          <PlaylistShareRow
-            key={item.id}
-            item={item}
-            onJoin={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-          />
-        ))}
-
-        <View style={styles.divider} />
-
-        <SectionHeader title="Social Interactions" />
-        {interactionItems.map((item) => (
-          <SocialInteractionRow key={item.id} item={item} />
-        ))}
-      </ScrollView>
+      />
 
       {/* Floating Action Button — opens PostComposer */}
       <Pressable
@@ -804,7 +894,7 @@ const styles = StyleSheet.create({
   },
   mindPromptSub: {
     marginTop: 6,
-    color: 'rgba(107,110,115,0.95)',
+    color: 'rgba(103,232,249,0.55)',
     fontSize: 12,
     fontWeight: '600',
   },
