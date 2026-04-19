@@ -302,6 +302,8 @@ export default function AppLayout() {
             contentStyle: { backgroundColor: '#000000' },
             gestureEnabled: true,
             sheetAllowedDetents: ['medium', 'large'],
+            // Open at 'medium' (half-height) first; user can drag up to 'large'.
+            sheetInitialDetentIndex: 0,
             sheetCornerRadius: 32,
           }}
         />
