@@ -464,11 +464,12 @@ export default function TabLayout() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    // No solid backgroundColor — the outer GestureHandlerRootView paints black.
-    // Keeping this transparent lets the root-level <DynamicIsland /> (zIndex 9999)
-    // render over every tab screen instead of being painted over by an opaque
-    // tab container. Individual tabs should keep their own backgrounds transparent too.
-    backgroundColor: 'transparent',
+    // Must be an opaque black — the native UIViewController backing this stack
+    // screen has a system-default (white in light mode) background, and going
+    // transparent here exposes that white. Individual tab screens that need
+    // the DynamicIsland to paint over them should set their OWN screen style
+    // to transparent (see social.tsx) rather than making this container leak.
+    backgroundColor: '#000000',
   },
   // Tab button style - only handles layout, NOT icon size
   tabButton: {
