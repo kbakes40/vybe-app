@@ -173,8 +173,8 @@ export default function SignInScreen() {
     }
   }, [googleResponse]);
 
-  const replaceWithOptionalMorph = (href: '/(app)/(tabs)' | '/(app)/upgrade' | '/onboarding') => {
-    if (href === '/(app)/(tabs)' && logoRef.current) {
+  const replaceWithOptionalMorph = (href: '/(app)/(tabs)/discover' | '/(app)/upgrade' | '/onboarding') => {
+    if (href === '/(app)/(tabs)/discover' && logoRef.current) {
       logoRef.current.measureInWindow((x, y, w, h) => {
         const { width: sw, height: sh } = Dimensions.get('window');
         useLoginMorphStore.getState().start({

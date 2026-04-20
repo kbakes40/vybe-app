@@ -1,21 +1,24 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, StyleSheet, LayoutChangeEvent } from 'react-native';
+import { View, StyleSheet, LayoutChangeEvent, Platform } from 'react-native';
 import { BottomTabBar, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { BlurView } from 'expo-blur';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
-import { useThemeStore } from '@/stores/themeStore';
+import { VIBRANT_BLUE } from '@/constants/machinedTheme';
 
-/** Slightly narrower so eight dock slots stay legible without crowding the cyan line. */
-const INDICATOR_W = 15;
+/** Five-tab doc — indicator tracks active slot. */
+const INDICATOR_W = 16;
 const INDICATOR_H = 2;
 
 const SPRING = { damping: 22, stiffness: 300, mass: 0.55 };
 
+/** Blur behind the dock (iOS intensity; Android falls back to dark scrim). */
+const DOCK_BLUR_INTENSITY = 25;
+
 /**
- * Default bottom tab bar plus a thin neon “machined” line that springs under the active tab.
+ * Bottom tab bar: 25pt-style blur underlay + 1px cyan top hairline (pill-adjacent spec).
  */
 export function ShadowMachinedTabBar(props: BottomTabBarProps) {
   const { state, insets } = props;
-  const accentColor = useThemeStore((s) => s.accentColor);
   const [barWidth, setBarWidth] = useState(0);
   const indicatorX = useSharedValue(0);
   const prevBarWidth = useRef(0);
@@ -53,12 +56,16 @@ export function ShadowMachinedTabBar(props: BottomTabBarProps) {
 
   return (
     <View style={styles.wrap} onLayout={onLayout}>
+      <BlurView intensity={DOCK_BLUR_INTENSITY} tint="dark" style={StyleSheet.absoluteFill} />
+      {Platform.OS === 'android' ? (
+        <View style={[StyleSheet.absoluteFill, styles.androidBlurFallback]} pointerEvents="none" />
+      ) : null}
       <BottomTabBar {...props} />
       <Animated.View
         pointerEvents="none"
         style={[styles.indicatorHost, { bottom: bottomOffset }, lineStyle]}
       >
-        <View style={[styles.line, { backgroundColor: accentColor, shadowColor: accentColor }]} />
+        <View style={[styles.line, { backgroundColor: VIBRANT_BLUE, shadowColor: VIBRANT_BLUE }]} />
       </Animated.View>
     </View>
   );
@@ -67,6 +74,12 @@ export function ShadowMachinedTabBar(props: BottomTabBarProps) {
 const styles = StyleSheet.create({
   wrap: {
     position: 'relative',
+    overflow: 'hidden',
+    borderTopWidth: 1,
+    borderTopColor: VIBRANT_BLUE,
+  },
+  androidBlurFallback: {
+    backgroundColor: 'rgba(0,0,0,0.72)',
   },
   indicatorHost: {
     position: 'absolute',

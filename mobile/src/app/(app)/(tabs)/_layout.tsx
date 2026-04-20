@@ -1,24 +1,20 @@
 import React, { useState } from 'react';
 import { View, StyleSheet, Pressable, Modal, Text, Image } from 'react-native';
 import { Tabs, useRouter } from 'expo-router';
-import { Download, Play, Headphones, Disc } from 'lucide-react-native';
+import { Download, Headphones, Disc } from 'lucide-react-native';
 import {
   VybeVideoNeonIcon,
   VybeMusicNeonIcon,
   VybeWavesNeonIcon,
 } from '@/assets/icons/VybeNeonSourceIcons';
 import {
-  ShadowHomeIcon,
   ShadowLibraryIcon,
-  ShadowPlanGridIcon,
-  ShadowProfileVybeVIcon,
-  ShadowSearchIcon,
-  ShadowVaultWaveIcon,
-  ShadowRadioTowerIcon,
+  ShadowProfileIcon,
+  ShadowSaxSearchIcon,
+  ShadowRadioDialIcon,
   ShadowTabIconShell,
-  SHADOW_TAB_INACTIVE,
+  ShadowVaultWaveIcon,
 } from '@/components/navigation/ShadowTabBarIcons';
-import { useThemeStore } from '@/stores/themeStore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import type { BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
@@ -27,9 +23,16 @@ import { useKeyboardChromeStore } from '@/stores/keyboardChromeStore';
 import { ShadowMachinedTabBar } from '@/components/navigation/ShadowMachinedTabBar';
 import { LouisOledTabOverlays } from '@/components/LouisOledTabOverlays';
 import { useTabBarBloomStore } from '@/stores/tabBarBloomStore';
-import { NAV_BAR_PURPLE } from '@/constants/machinedTheme';
+import { VIBRANT_BLUE } from '@/constants/machinedTheme';
 
 const VYBE_TAB_ICON = require('../../../../assets/images/icon.png');
+
+/** Inactive tab icon: 0.4 opacity white on OLED black (spec). */
+const TAB_INACTIVE = 'rgba(255,255,255,0.4)';
+const TAB_ACTIVE = VIBRANT_BLUE;
+
+const ICON_SIZE = 25;
+const CENTER_ICON_SIZE = 30;
 
 function SpotifyIcon() {
   return (
@@ -47,13 +50,6 @@ function AppleMusicIcon() {
   );
 }
 
-// Fixed icon size - THE ONLY PLACE ICON SIZE IS DEFINED
-const ICON_SIZE = 25;
-
-/**
- * Tab bar button — Shadow theme uses light haptic on every press.
- * Forwards children unchanged (icons + labels come from `screenOptions`).
- */
 function HapticTabButton(props: BottomTabBarButtonProps & { bloomRoute?: string }) {
   const { children, onPress, bloomRoute, ...rest } = props;
 
@@ -134,10 +130,13 @@ function LibraryTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?:
   );
 }
 
+/**
+ * Symmetric 5-tab doc: Search | Radio | Discover (center) | Library | Account.
+ * Home / plan / social removed from tab bar (see stack routes `home`, `social`, `your-plan`).
+ */
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const accentColor = useThemeStore((s) => s.accentColor);
   const keyboardVisible = useKeyboardChromeStore((s) => s.keyboardVisible);
   const [showViewMenu, setShowViewMenu] = useState(false);
   const [showSearchMenu, setShowSearchMenu] = useState(false);
@@ -154,12 +153,11 @@ export default function TabLayout() {
     : {
         height: TAB_BAR_HEIGHT + insets.bottom,
         paddingTop: 10,
-        paddingBottom: Math.max(8, insets.bottom > 0 ? insets.bottom - 2 : 8),
+        paddingBottom: insets.bottom > 0 ? insets.bottom : 8,
       };
 
   return (
     <View style={styles.container}>
-      {/* View My Modal */}
       <Modal
         visible={showViewMenu}
         transparent
@@ -208,7 +206,6 @@ export default function TabLayout() {
         </View>
       </Modal>
 
-      {/* Search Menu Modal */}
       <Modal
         visible={showSearchMenu}
         transparent
@@ -291,6 +288,7 @@ export default function TabLayout() {
       </Modal>
 
       <Tabs
+        initialRouteName="discover"
         tabBar={(tabProps) => <ShadowMachinedTabBar {...tabProps} />}
         screenOptions={{
           headerShown: false,
@@ -302,22 +300,17 @@ export default function TabLayout() {
             bottom: 0,
             left: 0,
             right: 0,
-            backgroundColor: '#000000',
-            // Sharp 1px OLED Black "machined" separation between mini-player
-            // bottom and tab-bar top. Black-on-black creates a physical seam
-            // (no visible color, but a 1px structural gap).
-            borderTopWidth: 1,
-            borderTopColor: '#000000',
+            backgroundColor: 'transparent',
+            borderTopWidth: 0,
             zIndex: 1000,
             elevation: 1000,
-            // Let touches above the chrome (e.g. mini strip overlap) reach siblings with higher z-index.
             pointerEvents: 'box-none',
             alignItems: 'center',
             justifyContent: 'center',
             ...tabBarChrome,
           },
-          tabBarActiveTintColor: accentColor,
-          tabBarInactiveTintColor: SHADOW_TAB_INACTIVE,
+          tabBarActiveTintColor: TAB_ACTIVE,
+          tabBarInactiveTintColor: TAB_INACTIVE,
           tabBarIconStyle: {
             width: ICON_SIZE,
             height: ICON_SIZE,
@@ -327,22 +320,6 @@ export default function TabLayout() {
           },
         }}
       >
-        <Tabs.Screen
-          name="index"
-          options={{
-            title: 'Home',
-            tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="index" />,
-            tabBarIcon: ({ focused, size }) => {
-              const dim = size ?? ICON_SIZE;
-              const c = focused ? accentColor : SHADOW_TAB_INACTIVE;
-              return (
-                <ShadowTabIconShell focused={focused} pressRoute="index">
-                  <ShadowHomeIcon size={dim} color={c} />
-                </ShadowTabIconShell>
-              );
-            },
-          }}
-        />
         <Tabs.Screen
           name="search"
           options={{
@@ -356,50 +333,10 @@ export default function TabLayout() {
             ),
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
-              const c = focused ? accentColor : SHADOW_TAB_INACTIVE;
+              const c = focused ? TAB_ACTIVE : TAB_INACTIVE;
               return (
                 <ShadowTabIconShell focused={focused} pressRoute="search">
-                  <ShadowSearchIcon size={dim} color={c} />
-                </ShadowTabIconShell>
-              );
-            },
-          }}
-        />
-        <Tabs.Screen
-          name="discover"
-          options={{
-            title: 'Discover',
-            tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="discover" />,
-            tabBarIcon: ({ focused, size }) => {
-              const dim = size ?? ICON_SIZE;
-              return (
-                <ShadowTabIconShell focused={focused} variant="vybe" pressRoute="discover">
-                  <Image
-                    source={VYBE_TAB_ICON}
-                    style={{
-                      width: dim,
-                      height: dim,
-                      borderRadius: Math.max(6, dim * 0.22),
-                      opacity: focused ? 1 : 0.72,
-                    }}
-                    resizeMode="cover"
-                  />
-                </ShadowTabIconShell>
-              );
-            },
-          }}
-        />
-        <Tabs.Screen
-          name="social"
-          options={{
-            title: 'Activity',
-            tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="social" />,
-            tabBarIcon: ({ focused, size }) => {
-              const dim = size ?? ICON_SIZE;
-              const c = focused ? accentColor : SHADOW_TAB_INACTIVE;
-              return (
-                <ShadowTabIconShell focused={focused} pressRoute="social">
-                  <ShadowVaultWaveIcon size={dim} color={c} />
+                  <ShadowSaxSearchIcon size={dim} color={c} />
                 </ShadowTabIconShell>
               );
             },
@@ -412,26 +349,34 @@ export default function TabLayout() {
             tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="radio" />,
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
-              const c = focused ? accentColor : SHADOW_TAB_INACTIVE;
+              const c = focused ? TAB_ACTIVE : TAB_INACTIVE;
               return (
                 <ShadowTabIconShell focused={focused} pressRoute="radio">
-                  <ShadowRadioTowerIcon size={dim} color={c} />
+                  <ShadowRadioDialIcon size={dim} color={c} />
                 </ShadowTabIconShell>
               );
             },
           }}
         />
         <Tabs.Screen
-          name="plan"
+          name="discover"
           options={{
-            title: 'Your Plan',
-            tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="plan" />,
+            title: 'Discover',
+            tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="discover" />,
             tabBarIcon: ({ focused, size }) => {
-              const dim = size ?? ICON_SIZE;
-              const c = focused ? accentColor : SHADOW_TAB_INACTIVE;
+              const dim = size ?? CENTER_ICON_SIZE;
               return (
-                <ShadowTabIconShell focused={focused} pressRoute="plan">
-                  <ShadowPlanGridIcon size={dim} color={c} />
+                <ShadowTabIconShell focused={focused} variant="vybe" pressRoute="discover">
+                  <Image
+                    source={VYBE_TAB_ICON}
+                    style={{
+                      width: dim,
+                      height: dim,
+                      borderRadius: Math.max(6, dim * 0.22),
+                      opacity: focused ? 1 : 0.4,
+                    }}
+                    resizeMode="cover"
+                  />
                 </ShadowTabIconShell>
               );
             },
@@ -440,7 +385,7 @@ export default function TabLayout() {
         <Tabs.Screen
           name="library"
           options={{
-            title: 'Your Library',
+            title: 'Library',
             tabBarButton: (props) => (
               <LibraryTabButton
                 {...props}
@@ -450,10 +395,10 @@ export default function TabLayout() {
             ),
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
-              const c = focused ? accentColor : SHADOW_TAB_INACTIVE;
+              const c = focused ? TAB_ACTIVE : TAB_INACTIVE;
               return (
                 <ShadowTabIconShell focused={focused} pressRoute="library">
-                  <ShadowLibraryIcon size={dim} color={c} />
+                  <ShadowVaultWaveIcon size={dim} color={c} />
                 </ShadowTabIconShell>
               );
             },
@@ -462,14 +407,14 @@ export default function TabLayout() {
         <Tabs.Screen
           name="profile"
           options={{
-            title: 'Profile',
+            title: 'Account',
             tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="profile" />,
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? ICON_SIZE;
-              const c = focused ? NAV_BAR_PURPLE : SHADOW_TAB_INACTIVE;
+              const c = focused ? TAB_ACTIVE : TAB_INACTIVE;
               return (
                 <ShadowTabIconShell focused={focused} pressRoute="profile">
-                  <ShadowProfileVybeVIcon size={dim} color={c} />
+                  <ShadowProfileIcon size={dim} color={c} />
                 </ShadowTabIconShell>
               );
             },
@@ -484,14 +429,8 @@ export default function TabLayout() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    // Must be an opaque black — the native UIViewController backing this stack
-    // screen has a system-default (white in light mode) background, and going
-    // transparent here exposes that white. Individual tab screens that need
-    // the DynamicIsland to paint over them should set their OWN screen style
-    // to transparent (see social.tsx) rather than making this container leak.
     backgroundColor: '#000000',
   },
-  // Tab button style - only handles layout, NOT icon size
   tabButton: {
     flex: 1,
     alignItems: 'center',

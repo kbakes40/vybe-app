@@ -155,14 +155,27 @@ export function CategoryCard({ category, onPress, lockedTileHeight }: CategoryCa
         <View style={styles.cardGrainClip} pointerEvents="none">
           <GrainNoise layoutId={category.id} />
         </View>
-        <View style={styles.iconArea}>
-          <View style={[styles.iconGlowHost, { shadowColor: neon }]}>
-            <Icon size={iconSize} color={neon} strokeWidth={lockedTileHeight ? 1.5 : 1.65} />
+        {lockedTileHeight != null ? (
+          <View style={styles.iconColumnLocked}>
+            <View style={[styles.iconGlowHost, { shadowColor: neon }]}>
+              <Icon size={iconSize} color={neon} strokeWidth={1.5} />
+            </View>
+            <Text style={styles.genreTitleBrowseGrid} numberOfLines={2}>
+              {category.name}
+            </Text>
           </View>
-        </View>
-        <Text style={[styles.genreTitle, lockedTileHeight != null ? styles.genreTitleCompact : null]} numberOfLines={1}>
-          {category.name}
-        </Text>
+        ) : (
+          <>
+            <View style={styles.iconArea}>
+              <View style={[styles.iconGlowHost, { shadowColor: neon }]}>
+                <Icon size={iconSize} color={neon} strokeWidth={1.65} />
+              </View>
+            </View>
+            <Text style={styles.genreTitle} numberOfLines={1}>
+              {category.name}
+            </Text>
+          </>
+        )}
       </Animated.View>
     </Pressable>
   );
@@ -204,6 +217,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingBottom: 2,
   },
+  /** Browse All grid — icon stacked above label, centered column. */
+  iconColumnLocked: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 4,
+    paddingBottom: 4,
+  },
   iconGlowHost: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -226,5 +247,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     letterSpacing: -0.35,
     marginTop: 0,
+  },
+  /** 12pt Small Caps (geometric) — 0.8 opacity, centered under icon. */
+  genreTitleBrowseGrid: {
+    color: '#FFFFFF',
+    opacity: 0.8,
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    fontVariant: Platform.OS === 'ios' ? ['small-caps'] : undefined,
+    textAlign: 'center',
+    width: '100%',
+    marginTop: 8,
   },
 });

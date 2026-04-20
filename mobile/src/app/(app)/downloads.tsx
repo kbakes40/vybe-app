@@ -335,7 +335,7 @@ export default function DownloadsScreen() {
     <View style={{ flex: 1, backgroundColor: '#000000' }}>
         {/* Header — Vault command center */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: insets.top + 8, paddingBottom: 12 }}>
-          <Pressable onPress={() => { if (router.canGoBack()) router.back(); else router.replace('/(app)/(tabs)' as never); }} style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}>
+          <Pressable onPress={() => { if (router.canGoBack()) router.back(); else router.replace('/(app)/(tabs)/discover' as never); }} style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}>
             <ChevronLeft size={28} color="#fff" />
           </Pressable>
           <View style={{ flex: 1, alignItems: 'center' }}>

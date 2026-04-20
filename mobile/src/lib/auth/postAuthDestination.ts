@@ -4,7 +4,7 @@ import { api } from '@/lib/api/api';
 /** Same key as `onboarding.tsx` — local proof the style picker finished. */
 export const ONBOARDING_VIBES_STORAGE_KEY = '@vybe/onboarding_vibes';
 
-export type PostAuthHref = '/(app)/(tabs)' | '/onboarding';
+export type PostAuthHref = '/(app)/(tabs)/discover' | '/onboarding';
 
 async function hasLocalVibeOnboarding(): Promise<boolean> {
   try {
@@ -32,8 +32,8 @@ async function hasServerOnboardingDone(): Promise<boolean> {
  * back through the picker on every launch).
  */
 export async function getPostAuthDestination(): Promise<PostAuthHref> {
-  if (await hasLocalVibeOnboarding()) return '/(app)/(tabs)';
-  if (await hasServerOnboardingDone()) return '/(app)/(tabs)';
+  if (await hasLocalVibeOnboarding()) return '/(app)/(tabs)/discover';
+  if (await hasServerOnboardingDone()) return '/(app)/(tabs)/discover';
   return '/onboarding';
 }
 

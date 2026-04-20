@@ -209,7 +209,7 @@ export default function UpgradeScreen() {
   // Paywalls disabled — any navigation to /upgrade bounces straight back to
   // the tabs home. Remove this single `return` to restore the upgrade flow;
   // the rest of the component is intentionally left intact.
-  return <Redirect href="/(app)/(tabs)" />;
+  return <Redirect href="/(app)/(tabs)/discover" />;
   // eslint-disable-next-line no-unreachable
   const insets = useSafeAreaInsets();
   const router = useRouter();

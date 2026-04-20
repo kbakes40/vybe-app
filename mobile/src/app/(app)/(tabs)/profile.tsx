@@ -12,7 +12,7 @@ import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { Crown, Settings, Smartphone, HelpCircle } from 'lucide-react-native';
+import { Crown, Settings, Smartphone, HelpCircle, Home, Users } from 'lucide-react-native';
 import { Image } from 'expo-image';
 import { authClient } from '@/lib/auth/auth-client';
 import { clearSessionBearerToken } from '@/lib/auth/sessionBearer';
@@ -133,6 +133,16 @@ export default function ProfileTabScreen() {
         </View>
 
         <View style={[styles.menuCard, { borderColor: hexToRgba(accent, 0.22) }]}>
+          <MenuItem
+            icon={<Home size={20} color={NAV_BAR_PURPLE} strokeWidth={2} />}
+            label="Home Feed"
+            onPress={() => router.push('/(app)/home' as never)}
+          />
+          <MenuItem
+            icon={<Users size={20} color={NAV_BAR_PURPLE} strokeWidth={2} />}
+            label="Activity"
+            onPress={() => router.push('/(app)/social' as never)}
+          />
           <MenuItem
             icon={<Crown size={20} color={NAV_BAR_PURPLE} strokeWidth={2} />}
             label="Your Plan"

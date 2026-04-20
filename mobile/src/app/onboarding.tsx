@@ -182,7 +182,7 @@ export default function OnboardingScreen() {
     let cancelled = false;
     void (async () => {
       if (await hasOnboardingCompleted()) {
-        if (!cancelled) router.replace('/(app)/(tabs)' as never);
+        if (!cancelled) router.replace('/(app)/(tabs)/discover' as never);
       }
     })();
     return () => {
@@ -217,8 +217,7 @@ export default function OnboardingScreen() {
     }
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setLoading(false);
-    // Same href as the rest of the app — `/(app)/(tabs)/index` is not used elsewhere and can fail to match the file route.
-    router.replace('/(app)/(tabs)' as never);
+    router.replace('/(app)/(tabs)/discover' as never);
 
     void (async () => {
       try {

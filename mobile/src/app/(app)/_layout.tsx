@@ -254,25 +254,19 @@ export default function AppLayout() {
   const segs = segments as string[];
   const tabLeaf = segs[segs.length - 1] ?? '';
   const isKnownTabLeaf =
-    tabLeaf === 'index' ||
     tabLeaf === 'search' ||
     tabLeaf === 'library' ||
     tabLeaf === 'discover' ||
     tabLeaf === 'profile' ||
-    tabLeaf === 'social' ||
-    tabLeaf === 'radio' ||
-    tabLeaf === 'plan';
+    tabLeaf === 'radio';
   const pathNorm = String(pathname ?? '/').replace(/\/$/, '') || '/';
   const isTabPath =
     pathNorm === '/' ||
-    pathNorm === '/index' ||
     pathNorm === '/search' ||
     pathNorm === '/library' ||
     pathNorm === '/discover' ||
     pathNorm === '/profile' ||
-    pathNorm === '/social' ||
-    pathNorm === '/radio' ||
-    pathNorm === '/plan';
+    pathNorm === '/radio';
   const isTabScreen = segs.includes('(tabs)') || isKnownTabLeaf || isTabPath;
 
   const miniPlayerBottom = isTabScreen

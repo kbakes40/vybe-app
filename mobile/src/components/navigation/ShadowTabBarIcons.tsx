@@ -5,7 +5,6 @@ import { Radar } from 'lucide-react-native';
 import Animated, {
   Easing,
   cancelAnimation,
-  interpolate,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -14,28 +13,21 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useTabBarBloomStore } from '@/stores/tabBarBloomStore';
-import { useThemeStore } from '@/stores/themeStore';
-import { hexToRgb } from '@/lib/themeColorUtils';
+import { VIBRANT_BLUE } from '@/constants/machinedTheme';
 
 /** Shadow tab chrome — shared across tab bar icons. */
 export const SHADOW_TAB_STROKE = 1.5;
-/** Muted Machined Grey — inactive silhouettes (white at 25% opacity). */
-export const SHADOW_TAB_INACTIVE = '#FFFFFF40';
-const MAGENTA_HEARTBEAT = '#FF00FF';
+/** Inactive tab: 0.4 white on OLED (nav spec). */
+export const SHADOW_TAB_INACTIVE = 'rgba(255,255,255,0.4)';
 
-/** Active-tab glow target — per spec: shadowOpacity 0.8 / shadowRadius 10. */
-const ACTIVE_SHADOW_OPACITY = 0.8;
+/** Cyan #00E5FF — only active tab glows (nav spec). */
+const TAB_GLOW_RGB = { r: 0, g: 229, b: 255 } as const;
+
+/** Active-tab glow — shadowOpacity / radius caps. */
+const ACTIVE_SHADOW_OPACITY = 0.85;
 const ACTIVE_SHADOW_RADIUS = 10;
-/** Vybe (discover) hero variant — slightly stronger glow when focused. */
-const ACTIVE_SHADOW_RADIUS_VYBE = 14;
-/**
- * Speed Mode "Always On" baseline — every tab keeps a faint Machined Blue
- * presence at 0.6 opacity so the bar never feels dead. Focus springs the
- * glow up to full (1.0) and brings the magenta heartbeat dot in below.
- */
-const BASELINE_BORDER_OPACITY = 0.6;
-const BASELINE_SHADOW_OPACITY = 0.35;
-const BASELINE_SHADOW_RADIUS = 4;
+/** Vybe (discover) center — slightly stronger glow when focused. */
+const ACTIVE_SHADOW_RADIUS_VYBE = 15;
 /** Spring physics for the cyan glow morph between tabs — stiff, snappy. */
 const FOCUS_SPRING = { damping: 18, stiffness: 220, mass: 0.6 } as const;
 
@@ -45,9 +37,9 @@ const BLOOM_OUT_MS = 150;
 type TabIconVariant = 'default' | 'vybe';
 
 /**
- * Tab icon shell — permanent Machined Blue 1px ring + outer glow (baseline 0.6 opacity),
- * press-driven 1.2× bloom + doubled shadow (300ms), magenta heartbeat dot under active tab.
- * `variant="vybe"`: stronger ring + breathing glow when active.
+ * Tab icon shell — **only the focused tab** gets cyan #00E5FF ring + glow.
+ * Inactive: no chrome (icons render at 0.4 white from parent).
+ * `variant="vybe"`: center Discover — stronger ring + subtle breath when active.
  */
 export function ShadowTabIconShell({
   focused,
@@ -65,27 +57,11 @@ export function ShadowTabIconShell({
   const isVybe = variant === 'vybe';
   const activeRadius = isVybe ? ACTIVE_SHADOW_RADIUS_VYBE : ACTIVE_SHADOW_RADIUS;
 
-  // Spring-driven focus value (0 = inactive, 1 = active). Drives borderColor
-  // opacity, shadow opacity, and shadow radius — so the cyan glow physically
-  // springs onto the new tab and away from the old one.
   const focusedSv = useSharedValue(focused ? 1 : 0);
   const bloomScale = useSharedValue(1);
   const bloomBoost = useSharedValue(0);
   const breath = useSharedValue(1);
-  const dotPulse = useSharedValue(1);
   const lastPulseAtRef = useRef(0);
-
-  const accentR = useSharedValue(0);
-  const accentG = useSharedValue(255);
-  const accentB = useSharedValue(255);
-  const accentColor = useThemeStore((s) => s.accentColor);
-
-  useEffect(() => {
-    const { r, g, b } = hexToRgb(accentColor);
-    accentR.value = r;
-    accentG.value = g;
-    accentB.value = b;
-  }, [accentColor, accentR, accentG, accentB]);
 
   useEffect(() => {
     focusedSv.value = withSpring(focused ? 1 : 0, FOCUS_SPRING);
@@ -132,59 +108,38 @@ export function ShadowTabIconShell({
     }
   }, [focused, isVybe, breath]);
 
-  useEffect(() => {
-    if (focused) {
-      dotPulse.value = withRepeat(
-        withSequence(
-          withTiming(1.18, { duration: 380, easing: Easing.inOut(Easing.quad) }),
-          withTiming(1, { duration: 380, easing: Easing.inOut(Easing.quad) }),
-        ),
-        -1,
-        true,
-      );
-    } else {
-      cancelAnimation(dotPulse);
-      dotPulse.value = 1;
-    }
-  }, [focused, dotPulse]);
+  const { r: cr, g: cg, b: cb } = TAB_GLOW_RGB;
 
-  // Speed Mode tab chrome: every tab keeps a constant Machined Blue
-  // baseline (border 0.6, soft shadow at 0.35) so the bar feels alive even
-  // when nothing is focused. The spring then layers the active boost on
-  // top — full opacity ring, full glow, optional press bloom.
   const shellAnimatedStyle = useAnimatedStyle(() => {
     const f = focusedSv.value;
     const breathMix = isVybe ? breath.value : 1;
     const boost = bloomBoost.value;
-    const borderOpacity = Math.min(
-      1,
-      BASELINE_BORDER_OPACITY + f * (1 - BASELINE_BORDER_OPACITY) + boost * 0.3,
-    );
-    const shadowOpacity = Math.min(
-      1,
-      BASELINE_SHADOW_OPACITY +
-        f * (ACTIVE_SHADOW_OPACITY - BASELINE_SHADOW_OPACITY) * breathMix +
-        boost * 0.2,
-    );
-    const shadowRadius =
-      BASELINE_SHADOW_RADIUS +
-      f * (activeRadius - BASELINE_SHADOW_RADIUS) * breathMix +
-      boost * 6;
+    const active = f * (1 - boost * 0.02) + boost * 0.85;
+    if (active < 0.03) {
+      return {
+        transform: [{ scale: bloomScale.value }],
+        borderWidth: 0,
+        borderColor: 'transparent',
+        shadowOpacity: 0,
+        shadowRadius: 0,
+        shadowOffset: { width: 0, height: 0 },
+        elevation: 0,
+      };
+    }
+    const shadowOpacity = Math.min(1, active * ACTIVE_SHADOW_OPACITY * breathMix + boost * 0.15);
+    const shadowRadius = active * activeRadius * breathMix + boost * 6;
+    const borderOpacity = Math.min(1, active * 0.95 + boost * 0.2);
     return {
       transform: [{ scale: bloomScale.value }],
-      borderColor: `rgba(${accentR.value}, ${accentG.value}, ${accentB.value}, ${borderOpacity})`,
-      shadowColor: `rgb(${accentR.value}, ${accentG.value}, ${accentB.value})`,
+      borderWidth: isVybe ? 2 : 1,
+      borderColor: `rgba(${cr},${cg},${cb},${borderOpacity})`,
+      shadowColor: VIBRANT_BLUE,
       shadowOffset: { width: 0, height: 0 },
       shadowOpacity,
       shadowRadius,
       elevation: Platform.OS === 'android' ? Math.min(14, shadowRadius * 0.85) : 0,
     };
   });
-
-  const dotAnimatedStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: dotPulse.value }],
-    opacity: interpolate(dotPulse.value, [1, 1.18], [0.88, 1]),
-  }));
 
   return (
     <View style={styles.wrapCol} pointerEvents="box-none">
@@ -195,14 +150,6 @@ export function ShadowTabIconShell({
       >
         {children}
       </Animated.View>
-      {focused ? (
-        <Animated.View
-          style={[styles.heartbeatDot, dotAnimatedStyle]}
-          pointerEvents="none"
-          renderToHardwareTextureAndroid
-          collapsable={false}
-        />
-      ) : null}
     </View>
   );
 }
@@ -251,6 +198,57 @@ export function ShadowSearchIcon({ size, color }: IconBase) {
         stroke={color}
         strokeWidth={SHADOW_TAB_STROKE}
         strokeLinecap="round"
+      />
+    </Svg>
+  );
+}
+
+/**
+ * Search tab — technical saxophone glyph (stroke-only, geometric).
+ */
+export function ShadowSaxSearchIcon({ size, color }: IconBase) {
+  const s = size;
+  return (
+    <Svg width={s} height={s} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M7.5 18.5V8.2c0-1.1.9-2 2-2h1.2M9.5 6.2L11 4.7c.4-.4 1-.4 1.4 0l1.1 1.1M12.5 5.8l2.8 2.8c.6.6.9 1.4.9 2.3v6.1c0 .8-.3 1.6-.9 2.2l-.4.4c-.5.5-1.2.8-1.9.8H10c-.8 0-1.5-.3-2-.8l-.5-.5"
+        stroke={color}
+        strokeWidth={SHADOW_TAB_STROKE}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Circle cx="14.5" cy="14" r="1.15" stroke={color} strokeWidth={SHADOW_TAB_STROKE} />
+      <Path
+        d="M6 19.5h3.5"
+        stroke={color}
+        strokeWidth={SHADOW_TAB_STROKE}
+        strokeLinecap="round"
+      />
+    </Svg>
+  );
+}
+
+/**
+ * Radio tab — minimalist transmitter dial (arc ticks + center post).
+ */
+export function ShadowRadioDialIcon({ size, color }: IconBase) {
+  const s = size;
+  return (
+    <Svg width={s} height={s} viewBox="0 0 24 24" fill="none">
+      <Circle cx="12" cy="12" r="8.25" stroke={color} strokeWidth={SHADOW_TAB_STROKE} />
+      <Circle cx="12" cy="12" r="1.6" fill={color} />
+      <Path
+        d="M12 12L12 6.2"
+        stroke={color}
+        strokeWidth={SHADOW_TAB_STROKE}
+        strokeLinecap="round"
+      />
+      <Path
+        d="M12 4.5v1.2M16.2 7.8l-.85.85M19.5 12h-1.2M16.2 16.2l-.85-.85M12 19.5v-1.2M7.8 16.2l.85-.85M4.5 12h1.2M7.8 7.8l.85.85"
+        stroke={color}
+        strokeWidth={1.35}
+        strokeLinecap="round"
+        opacity={0.85}
       />
     </Svg>
   );
@@ -397,10 +395,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 3,
-    // Static border WIDTH only — color/opacity come from the animated style.
-    // Speed Mode keeps a 0.6 baseline ring on every tab; focus springs it
-    // up to full and brings the heartbeat dot in below.
-    borderWidth: 1,
+    borderWidth: 0,
     borderColor: 'transparent',
     borderRadius: 12,
     backgroundColor: 'rgba(0,0,0,0.001)',
@@ -410,17 +405,5 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderRadius: 10,
     padding: 2,
-  },
-  heartbeatDot: {
-    marginTop: 4,
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: MAGENTA_HEARTBEAT,
-    shadowColor: MAGENTA_HEARTBEAT,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.75,
-    shadowRadius: 3,
-    elevation: 4,
   },
 });

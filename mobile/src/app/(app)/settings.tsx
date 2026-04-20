@@ -347,7 +347,8 @@ function ColorEngineSection({ searchQuery }: { searchQuery: string }) {
                   borderColor: selected ? VIBRANT_BLUE : 'rgba(255,255,255,0.1)',
                   backgroundColor: selected ? hexToRgba(p.hex, 0.12) : 'rgba(255,255,255,0.04)',
                 },
-                selected && Platform.select({ ios: NEON_IOS_SHADOW, android: { elevation: 8 }, default: {} }),
+                selected && Platform.OS === 'ios' ? NEON_IOS_SHADOW : null,
+                selected && Platform.OS === 'android' ? { elevation: 8 } : null,
               ]}
             >
               <View style={[styles.presetSwatch, { backgroundColor: p.hex }]} />
