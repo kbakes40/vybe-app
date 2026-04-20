@@ -6,6 +6,7 @@ import {
   Pressable,
   StyleSheet,
 } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -23,6 +24,7 @@ import {
 import type { LucideIcon } from 'lucide-react-native';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import { VybePlusWordmark } from '@/components/VybePlusWordmark';
+import { useLouisOledChrome } from '@/hooks/useLouisOledChrome';
 import { OLED_BLACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
 import { useThemeStore } from '@/stores/themeStore';
 import { hexToRgba } from '@/lib/themeColorUtils';
@@ -131,6 +133,7 @@ function PricingCard({
 
 export default function YourPlanScreen() {
   const insets = useSafeAreaInsets();
+  const { louis, kickTranslateStyle, tabListTopPadding } = useLouisOledChrome(insets.top);
   const router = useRouter();
   const tier = useSubscriptionStore((s) => s.tier);
   const setTier = useSubscriptionStore((s) => s.setTier);
@@ -155,8 +158,8 @@ export default function YourPlanScreen() {
   };
 
   return (
-    <View style={planStyles.screen}>
-      <View style={[planStyles.header, { paddingTop: insets.top }]}>
+    <Animated.View style={[planStyles.screen, louis && kickTranslateStyle]}>
+      <View style={[planStyles.header, { paddingTop: tabListTopPadding }]}>
         <View style={planStyles.headerRow}>
           <Pressable
             onPress={() => {
@@ -291,7 +294,7 @@ export default function YourPlanScreen() {
           </Pressable>
         </View>
       )}
-    </View>
+    </Animated.View>
   );
 }
 

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
@@ -23,9 +24,11 @@ import {
   fetchGlobalRadioLivePreviewMap,
   type GlobalRadioLivePreview,
 } from '@/lib/globalRadioLivePreview';
+import { useLouisOledChrome } from '@/hooks/useLouisOledChrome';
 
 export default function GlobalRadioTabScreen() {
   const insets = useSafeAreaInsets();
+  const { louis, kickTranslateStyle, tabListTopPadding } = useLouisOledChrome(insets.top);
   const accent = useThemeStore((s) => s.accentColor);
   const currentTrack = usePlaybackController((s) => s.currentTrack);
   const playbackState = usePlaybackController((s) => s.playbackState);
@@ -230,17 +233,20 @@ export default function GlobalRadioTabScreen() {
       : liveSnap?.artist ?? streamDef.staticNowPlaying?.artist ?? streamDef.diChannelTag;
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top + 100, paddingBottom: insets.bottom + 24 }]}>
+    <Animated.View style={[{ flex: 1, backgroundColor: '#000000' }, louis && kickTranslateStyle]}>
+    <View style={[styles.root, { paddingTop: tabListTopPadding, paddingBottom: insets.bottom + 24 }]}>
       <GlobalRadioPillBar selectedId={genrePill} onSelect={onSelectGenrePill} />
 
-      <RadioUnityStationList
-        stationId={genrePill}
-        accent={accent}
-        globalRelayId={globalRelayId}
-        onPickGlobalRelay={onPickGlobalRelay}
-        jazzRelayId={jazzRelayId}
-        onPickJazzRelay={onPickJazzRelay}
-      />
+      <View style={styles.stationListSlot}>
+        <RadioUnityStationList
+          stationId={genrePill}
+          accent={accent}
+          globalRelayId={globalRelayId}
+          onPickGlobalRelay={onPickGlobalRelay}
+          jazzRelayId={jazzRelayId}
+          onPickJazzRelay={onPickJazzRelay}
+        />
+      </View>
 
       <View style={styles.headerRow}>
         <Radio color={accent} size={22} strokeWidth={2.2} />
@@ -321,6 +327,7 @@ export default function GlobalRadioTabScreen() {
         <Text style={styles.ctaLabel}>{isPlayingStation ? 'Pause live stream' : 'Play live stream'}</Text>
       </Pressable>
     </View>
+    </Animated.View>
   );
 }
 
@@ -349,11 +356,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.4,
   },
+  stationListSlot: {
+    flex: 1,
+    minHeight: 0,
+    marginBottom: 4,
+  },
   card: {
     marginTop: 16,
     borderRadius: 20,
     borderWidth: StyleSheet.hairlineWidth,
-    backgroundColor: '#050505',
+    backgroundColor: '#000000',
     paddingVertical: 22,
     paddingHorizontal: 18,
     alignItems: 'center',

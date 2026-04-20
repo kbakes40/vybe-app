@@ -1,3 +1,11 @@
+import { EXPANDED_PILL_MAX_HEIGHT_PT } from '@/constants/pillIslandGeometry';
+
+/**
+ * Top padding under the status bar for main tab roots so content clears the
+ * in-app Dynamic Island pill (expanded mini-controller, max wrap height) + glow gap.
+ */
+export const TAB_SCREEN_TOP_INSET_BELOW_PILL_PT = EXPANDED_PILL_MAX_HEIGHT_PT + 2 + 4;
+
 /** Fixed tab bar chrome height (icon-only + machined indicator; `tabBarStyle` adds `insets.bottom` for home indicator). */
 export const TAB_BAR_HEIGHT = 56;
 

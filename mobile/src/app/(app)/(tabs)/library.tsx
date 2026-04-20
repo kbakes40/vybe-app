@@ -53,6 +53,7 @@ import { MachinedGradientText } from '@/components/MachinedGradientText';
 import { VaultImportCard } from '@/components/VaultImportCard';
 import { VIBRANT_BLUE, GRAPHITE_GREY } from '@/constants/machinedTheme';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
+import { useLouisOledChrome } from '@/hooks/useLouisOledChrome';
 
 const TRACK_TITLE_MACHINED: TextStyle = {
   color: VIBRANT_BLUE,
@@ -310,6 +311,7 @@ function PlaylistDeleteAction({ progress, onPress }: { progress: SharedValue<num
 
 export default function LibraryScreen() {
   const insets = useSafeAreaInsets();
+  const { louis, kickTranslateStyle, tabListTopPadding } = useLouisOledChrome(insets.top);
   const router = useRouter();
   const [libraryHeaderHeight, setLibraryHeaderHeight] = useState(118);
   const listBottomPad = tabScreenContentContainerPaddingBottom(insets.bottom);
@@ -1118,7 +1120,7 @@ export default function LibraryScreen() {
   );
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#000000' }}>
+    <Animated.View style={[{ flex: 1, backgroundColor: '#000000' }, louis && kickTranslateStyle]}>
       {showLibraryHomeList ? (
         <Animated.View style={[{ flex: 1 }, listMotionStyle]}>
         <FlashList
@@ -1222,7 +1224,7 @@ export default function LibraryScreen() {
         >
           <View
             onLayout={(e) => setLibraryHeaderHeight(e.nativeEvent.layout.height)}
-            style={{ paddingTop: insets.top + 100, paddingHorizontal: 16, paddingBottom: 12 }}
+            style={{ paddingTop: tabListTopPadding, paddingHorizontal: 16, paddingBottom: 12 }}
           >
             <View className="flex-row items-center justify-between mb-4">
               <MachinedGradientText
@@ -1530,6 +1532,6 @@ export default function LibraryScreen() {
           )}
         </View>
       </Modal>
-    </View>
+    </Animated.View>
   );
 }

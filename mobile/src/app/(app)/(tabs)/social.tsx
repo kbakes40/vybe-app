@@ -50,6 +50,7 @@ import type {
 } from '@/types/socialActivity';
 import { MachinedGradientText } from '@/components/MachinedGradientText';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
+import { useLouisOledChrome } from '@/hooks/useLouisOledChrome';
 import { getSocialActivityFeed, getSocialFeed, type SocialPost } from '@/lib/api/social';
 import { OLED_BLACK } from '@/constants/machinedTheme';
 import { useThemeStore } from '@/stores/themeStore';
@@ -362,6 +363,7 @@ function SocialFeedFooter({ playlistItems, interactionItems }: SocialFeedFooterP
 
 export default function SocialScreen() {
   const insets = useSafeAreaInsets();
+  const { louis, kickTranslateStyle, tabListTopPadding } = useLouisOledChrome(insets.top);
   const accent = useThemeStore((s) => s.accentColor);
   const styles = useMemo(() => makeSocialStyles(accent), [accent]);
   const stories = useSocialActivityStore((s) => s.stories);
@@ -466,8 +468,8 @@ export default function SocialScreen() {
 
   return (
     <SocialStylesCtx.Provider value={styles}>
-    <View style={styles.screen}>
-      <View style={[styles.topBar, { paddingTop: insets.top + 100 }]}>
+    <Animated.View style={[styles.screen, louis && kickTranslateStyle]}>
+      <View style={[styles.topBar, { paddingTop: tabListTopPadding }]}>
         <View style={styles.topBarRow}>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={styles.screenTitle}>Vybe Activity</Text>
@@ -573,7 +575,7 @@ export default function SocialScreen() {
 
       {/* Above feed scroll + FAB so the checkmark is actually visible after post */}
       <FeedPostSuccessPulse tick={feedSuccessTick} bottom={fabBottom + 72} />
-    </View>
+    </Animated.View>
     </SocialStylesCtx.Provider>
   );
 }

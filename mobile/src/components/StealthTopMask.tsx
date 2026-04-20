@@ -2,6 +2,7 @@ import React from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { usePillLockStore } from '@/stores/pillLockStore';
+import { isLouisDevice } from '@/constants/louisOledProfile';
 
 const MASK_HEIGHT = 88;
 
@@ -12,6 +13,21 @@ const MASK_HEIGHT = 88;
 export function StealthTopMask() {
   const hasUser = usePillLockStore((s) => s.hasUser);
   if (Platform.OS !== 'ios' || !hasUser) return null;
+
+  /**
+   * Louis OLED — render a SOLID pure-black band that covers the status-bar area
+   * (no gradient = no off-black wash). Without this the system status bar reads
+   * as a white strip on the OLED tab stack.
+   */
+  if (isLouisDevice()) {
+    return (
+      <View
+        pointerEvents="none"
+        style={[styles.host, styles.solidLouis]}
+        collapsable={false}
+      />
+    );
+  }
 
   return (
     <View pointerEvents="none" style={styles.host} collapsable={false}>
@@ -34,6 +50,9 @@ const styles = StyleSheet.create({
     height: MASK_HEIGHT,
     zIndex: 9998,
     elevation: 9998,
+  },
+  solidLouis: {
+    backgroundColor: '#000000',
   },
   gradient: {
     flex: 1,

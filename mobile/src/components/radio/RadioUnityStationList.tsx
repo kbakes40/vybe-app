@@ -1,13 +1,22 @@
 import React, { useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import {
   GLOBAL_EXPANSION_STATION_ORDER,
   GLOBAL_RADIO_STATIONS,
   JAZZ_SUB_STATION_ORDER,
   type GlobalRadioStationId,
 } from '@/lib/GlobalRadioClient';
-import { MACHINED_CYAN } from '@/constants/machinedTheme';
 import { hexToRgba } from '@/lib/themeColorUtils';
+
+const OLED_BLACK = '#000000';
+/** Active station chrome — matches Dynamic Island pill cyan. */
+const RADIO_CYAN = '#00E5FF';
+
+/** Clears the collapsed pill band so the first row does not sit under the island. */
+const RADIO_LIST_TOP_KICK_PT = 20;
+/** Top-of-list dissolve: transparent → opaque black before content reaches the pill. */
+const RADIO_STATION_FADE_MASK_PT = 15;
 
 type Row = { id: string; title: string; subtitle: string };
 
@@ -53,6 +62,46 @@ const STATION_LIST: Record<GlobalRadioStationId, Row[]> = {
   hor_berlin: [{ id: 'hor', title: 'HÖR', subtitle: 'Relay' }],
 };
 
+const activeRowGlow = Platform.select({
+  ios: {
+    shadowColor: RADIO_CYAN,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.55,
+    shadowRadius: 12,
+  },
+  android: {
+    elevation: 6,
+  },
+  default: {},
+});
+
+function OledStationListViewport({
+  children,
+  accentBorder,
+}: {
+  children: React.ReactNode;
+  accentBorder: string;
+}) {
+  return (
+    <View style={[styles.viewport, { borderColor: accentBorder }]}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        nestedScrollEnabled
+      >
+        {children}
+      </ScrollView>
+      <LinearGradient
+        pointerEvents="none"
+        colors={['rgba(0,0,0,0)', OLED_BLACK]}
+        locations={[0, 1]}
+        style={styles.fadeMask}
+      />
+    </View>
+  );
+}
+
 export function RadioUnityStationList({
   stationId,
   accent,
@@ -70,6 +119,8 @@ export function RadioUnityStationList({
   jazzRelayId: GlobalRadioStationId;
   onPickJazzRelay: (id: GlobalRadioStationId) => void;
 }) {
+  const accentBorder = hexToRgba(accent, 0.22);
+
   const rows = useMemo(() => {
     if (stationId === 'global_hub' || stationId === 'jazz') return null;
     return STATION_LIST[stationId] ?? [];
@@ -77,7 +128,7 @@ export function RadioUnityStationList({
 
   if (stationId === 'global_hub') {
     return (
-      <View style={[styles.shell, { borderColor: hexToRgba(accent, 0.28) }]}>
+      <OledStationListViewport accentBorder={accentBorder}>
         <Text style={styles.hint}>STATION LIST · GLOBAL</Text>
         {GLOBAL_EXPANSION_STATION_ORDER.map((rid) => {
           const def = GLOBAL_RADIO_STATIONS[rid];
@@ -88,34 +139,34 @@ export function RadioUnityStationList({
               onPress={() => onPickGlobalRelay(rid)}
               style={[
                 styles.row,
-                {
-                  borderColor: sel ? MACHINED_CYAN : hexToRgba(accent, 0.22),
-                  backgroundColor: sel ? 'rgba(0,255,255,0.06)' : 'rgba(255,255,255,0.03)',
-                },
+                sel ? [styles.rowActive, activeRowGlow] : styles.rowIdle,
               ]}
               accessibilityRole="button"
               accessibilityState={{ selected: sel }}
               accessibilityLabel={def.pillLabel}
             >
-              <View style={[styles.dot, !sel && { opacity: 0.45 }]} />
+              <View style={[styles.dot, !sel && styles.dotDim]} />
               <View style={styles.body}>
-                <Text style={styles.title} numberOfLines={1}>
+                <Text style={styles.titleStation} numberOfLines={1}>
                   {def.pillLabel}
                 </Text>
-                <Text style={[styles.sub, { color: MACHINED_CYAN }]} numberOfLines={2}>
+                <Text
+                  style={[styles.subtitle, sel ? styles.subtitleActive : styles.subtitleIdle]}
+                  numberOfLines={2}
+                >
                   {def.staticNowPlaying?.artist ?? def.diChannelTag}
                 </Text>
               </View>
             </Pressable>
           );
         })}
-      </View>
+      </OledStationListViewport>
     );
   }
 
   if (stationId === 'jazz') {
     return (
-      <View style={[styles.shell, { borderColor: hexToRgba(accent, 0.28) }]}>
+      <OledStationListViewport accentBorder={accentBorder}>
         <Text style={styles.hint}>STATION LIST · JAZZ</Text>
         {JAZZ_SUB_STATION_ORDER.map((rid) => {
           const def = GLOBAL_RADIO_STATIONS[rid];
@@ -125,30 +176,27 @@ export function RadioUnityStationList({
             <Pressable
               key={rid}
               onPress={() => onPickJazzRelay(rid)}
-              style={[
-                styles.row,
-                {
-                  borderColor: sel ? MACHINED_CYAN : hexToRgba(accent, 0.22),
-                  backgroundColor: sel ? 'rgba(0,255,255,0.06)' : 'rgba(255,255,255,0.03)',
-                },
-              ]}
+              style={[styles.row, sel ? [styles.rowActive, activeRowGlow] : styles.rowIdle]}
               accessibilityRole="button"
               accessibilityState={{ selected: sel }}
               accessibilityLabel={def.diChannelTag}
             >
-              <View style={[styles.dot, !sel && { opacity: 0.45 }]} />
+              <View style={[styles.dot, !sel && styles.dotDim]} />
               <View style={styles.body}>
-                <Text style={styles.title} numberOfLines={1}>
+                <Text style={styles.titleStation} numberOfLines={1}>
                   {def.staticNowPlaying?.title ?? def.diChannelTag}
                 </Text>
-                <Text style={[styles.sub, { color: MACHINED_CYAN }]} numberOfLines={2}>
+                <Text
+                  style={[styles.subtitle, sel ? styles.subtitleActive : styles.subtitleIdle]}
+                  numberOfLines={2}
+                >
                   {sub}
                 </Text>
               </View>
             </Pressable>
           );
         })}
-      </View>
+      </OledStationListViewport>
     );
   }
 
@@ -156,37 +204,56 @@ export function RadioUnityStationList({
   const list = rows ?? [];
 
   return (
-    <View style={[styles.shell, { borderColor: hexToRgba(accent, 0.28) }]}>
+    <OledStationListViewport accentBorder={accentBorder}>
       <Text style={styles.hint}>STATION LIST · {header}</Text>
       {list.map((r) => (
-        <View key={r.id} style={[styles.row, { borderColor: hexToRgba(accent, 0.22) }]}>
+        <View key={r.id} style={[styles.row, styles.rowIdle]}>
           <View style={styles.dot} />
           <View style={styles.body}>
-            <Text style={styles.title} numberOfLines={1}>
+            <Text style={styles.titleStation} numberOfLines={1}>
               {r.title}
             </Text>
-            <Text style={[styles.sub, { color: MACHINED_CYAN }]} numberOfLines={2}>
+            <Text style={[styles.subtitle, styles.subtitleIdle]} numberOfLines={2}>
               {r.subtitle}
             </Text>
           </View>
         </View>
       ))}
-    </View>
+    </OledStationListViewport>
   );
 }
 
 const styles = StyleSheet.create({
-  shell: {
+  viewport: {
+    flex: 1,
+    minHeight: 0,
     marginTop: 14,
     borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: OLED_BLACK,
+    overflow: 'hidden',
+  },
+  scroll: {
+    flex: 1,
+    backgroundColor: OLED_BLACK,
+  },
+  scrollContent: {
     paddingHorizontal: 14,
-    paddingTop: 12,
+    paddingTop: RADIO_LIST_TOP_KICK_PT,
     paddingBottom: 12,
-    backgroundColor: '#050505',
+    backgroundColor: OLED_BLACK,
+  },
+  /** Dissolve band — scroll content fades to OLED before passing under the pill. */
+  fadeMask: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: RADIO_STATION_FADE_MASK_PT,
+    zIndex: 4,
   },
   hint: {
-    color: 'rgba(255,255,255,0.45)',
+    color: 'rgba(255,255,255,0.38)',
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 1.4,
@@ -203,26 +270,42 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     gap: 10,
   },
+  rowIdle: {
+    borderColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: OLED_BLACK,
+  },
+  rowActive: {
+    borderColor: RADIO_CYAN,
+    backgroundColor: 'rgba(0,229,255,0.08)',
+  },
   dot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: MACHINED_CYAN,
+    backgroundColor: RADIO_CYAN,
+  },
+  dotDim: {
+    opacity: 0.35,
   },
   body: {
     flex: 1,
     minWidth: 0,
   },
-  title: {
-    color: '#fff',
+  titleStation: {
+    color: 'rgba(255,255,255,0.9)',
     fontSize: 15,
     fontWeight: '800',
     letterSpacing: 0.2,
   },
-  sub: {
+  subtitle: {
     marginTop: 4,
     fontSize: 12,
     fontWeight: '600',
-    opacity: 0.9,
+  },
+  subtitleActive: {
+    color: RADIO_CYAN,
+  },
+  subtitleIdle: {
+    color: 'rgba(255,255,255,0.55)',
   },
 });

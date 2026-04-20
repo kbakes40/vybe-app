@@ -27,3 +27,11 @@ export const NEON_IOS_SHADOW = {
   shadowOpacity: 0.75,
   shadowRadius: 10,
 } as const;
+
+/** Matches Dynamic Island `metaFormatBadge` (FLAC / LOSSLESS) — settings device pills. */
+export const PILL_LOSSLESS_BADGE_TEXT = {
+  fontSize: 8,
+  fontWeight: '900' as const,
+  letterSpacing: 1.1,
+  textTransform: 'uppercase' as const,
+};

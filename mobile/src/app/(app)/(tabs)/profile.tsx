@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Platform,
 } from 'react-native';
+import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -16,6 +17,7 @@ import { Image } from 'expo-image';
 import { authClient } from '@/lib/auth/auth-client';
 import { clearSessionBearerToken } from '@/lib/auth/sessionBearer';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
+import { useLouisOledChrome } from '@/hooks/useLouisOledChrome';
 import { OLED_BLACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
 import { useThemeStore } from '@/stores/themeStore';
 import { hexToRgba } from '@/lib/themeColorUtils';
@@ -95,6 +97,7 @@ function MenuItem({
 
 export default function ProfileTabScreen() {
   const insets = useSafeAreaInsets();
+  const { louis, kickTranslateStyle, tabListTopPadding } = useLouisOledChrome(insets.top);
   const router = useRouter();
   const accent = useThemeStore((s) => s.accentColor);
   const { data: session } = authClient.useSession();
@@ -105,13 +108,13 @@ export default function ProfileTabScreen() {
     'Vybe Listener';
 
   return (
-    <View style={styles.screen}>
+    <Animated.View style={[styles.screen, louis && kickTranslateStyle]}>
       <ScrollView
         contentContainerStyle={{ paddingBottom: tabScreenContentContainerPaddingBottom(insets.bottom) }}
         showsVerticalScrollIndicator={false}
         automaticallyAdjustContentInsets={false}
       >
-        <View style={[styles.hero, { paddingTop: insets.top + 100 }]}>
+        <View style={[styles.hero, { paddingTop: tabListTopPadding }]}>
           <Text style={styles.kicker}>ACCOUNT</Text>
           {avatarUrl ? (
             <Image
@@ -179,7 +182,7 @@ export default function ProfileTabScreen() {
           </Pressable>
         </View>
       </ScrollView>
-    </View>
+    </Animated.View>
   );
 }
 

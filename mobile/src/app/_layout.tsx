@@ -194,7 +194,10 @@ export default function RootLayout() {
             <KeyboardProvider>
               <VybePopupProvider>
                 <GlobalKeyboardChrome />
-                <StatusBar style="light" translucent backgroundColor="transparent" />
+                {/* OLED_ROOT_FIX — `backgroundColor` prop is Android-only and can
+                    glitch on iOS 15 Pro Max (visible grey bar above the pill).
+                    Translucent + light style is enough; root View owns the black. */}
+                <StatusBar style="light" translucent />
                 {/* AUTH_LOCK_SYNC: PillLockSync runs first so `pillLockStore.hasUser` is set before app chrome (MiniPlayer, top masks, Island). */}
                 <PillLockSync />
                 <RootLayoutNav />

@@ -25,6 +25,7 @@ import type { BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
 import { TAB_BAR_HEIGHT } from '@/constants/Layout';
 import { useKeyboardChromeStore } from '@/stores/keyboardChromeStore';
 import { ShadowMachinedTabBar } from '@/components/navigation/ShadowMachinedTabBar';
+import { LouisOledTabOverlays } from '@/components/LouisOledTabOverlays';
 import { useTabBarBloomStore } from '@/stores/tabBarBloomStore';
 import { NAV_BAR_PURPLE } from '@/constants/machinedTheme';
 
@@ -475,6 +476,7 @@ export default function TabLayout() {
           }}
         />
       </Tabs>
+      <LouisOledTabOverlays />
     </View>
   );
 }

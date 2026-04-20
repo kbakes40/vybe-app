@@ -28,6 +28,11 @@ import {
   type GlobalRadioStationId,
 } from '@/lib/GlobalRadioClient';
 
+/** Expanded Dynamic Island — machined cyan, 0.8 visual opacity spec. */
+const ISLAND_ICON_CYAN = 'rgba(0,229,255,0.8)';
+const ISLAND_TOUCH = 44;
+const ISLAND_ICON_VISUAL = 18;
+
 export type RadioParadiseSoulActionsLayout = 'full' | 'island_compact';
 
 export type RadioTabSoulContext = {
@@ -47,15 +52,21 @@ export function RadioParadiseSoulActions({
   tabContext?: RadioTabSoulContext;
 }) {
   const compact = layout === 'island_compact';
-  const icon = compact ? 15 : 22;
-  const pad = compact ? 5 : 11;
+  const icon = compact ? ISLAND_ICON_VISUAL : 22;
+  const pad = compact ? 0 : 12;
   const accent = useThemeStore((s) => s.accentColor);
   const heartChrome = useMemo(
-    () => ({
-      borderColor: hexToRgba(accent, 0.85),
-      ...(Platform.OS === 'ios' ? { shadowColor: accent } : {}),
-    }),
-    [accent],
+    () =>
+      compact
+        ? {
+            borderColor: 'rgba(0,229,255,0.35)',
+            ...(Platform.OS === 'ios' ? { shadowColor: '#00E5FF' } : {}),
+          }
+        : {
+            borderColor: hexToRgba(accent, 0.85),
+            ...(Platform.OS === 'ios' ? { shadowColor: accent } : {}),
+          },
+    [accent, compact],
   );
 
   const currentTrack = usePlaybackController((s) => s.currentTrack);
@@ -162,29 +173,41 @@ export function RadioParadiseSoulActions({
     return null;
   }
 
+  const heartShellStyle = compact ? styles.heartShellIsland : [styles.heartShell, heartChrome, { padding: pad }];
+  const fireShellBase = compact ? styles.fireShellIsland : styles.fireShell;
+  const fireShadowColor = compact ? '#00E5FF' : NAV_BAR_PURPLE;
+
   return (
     <View style={[styles.row, compact && styles.rowCompact]}>
       <Pressable
         onPress={onHeart}
         style={({ pressed }) => [
-          styles.heartShell,
-          heartChrome,
-          { padding: pad },
-          pressed && styles.pressed,
+          heartShellStyle,
+          !compact && pressed && styles.pressed,
+          compact && pressed && styles.pressedIsland,
         ]}
         accessibilityRole="button"
         accessibilityLabel="Vault current track"
       >
-        <Heart size={icon} color={accent} strokeWidth={2.25} />
+        <Heart size={icon} color={compact ? ISLAND_ICON_CYAN : accent} strokeWidth={compact ? 2.1 : 2.25} />
       </Pressable>
-      <Animated.View style={[fireMax && fireShellPulseStyle, fireMax && { shadowColor: accent }]}>
+      <Animated.View style={[fireMax && fireShellPulseStyle, fireMax && { shadowColor: fireShadowColor }]}>
         <Pressable
           onPress={onFire}
-          style={({ pressed }) => [styles.fireShell, { padding: pad }, pressed && styles.pressed]}
+          style={({ pressed }) => [
+            fireShellBase,
+            !compact && { padding: pad },
+            !compact && pressed && styles.pressed,
+            compact && pressed && styles.pressedIsland,
+          ]}
           accessibilityRole="button"
           accessibilityLabel="Log high energy track"
         >
-          <Flame size={icon} color={NAV_BAR_PURPLE} strokeWidth={2.25} />
+          <Flame
+            size={icon}
+            color={compact ? ISLAND_ICON_CYAN : NAV_BAR_PURPLE}
+            strokeWidth={compact ? 2.1 : 2.25}
+          />
         </Pressable>
       </Animated.View>
     </View>
@@ -196,12 +219,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
+    paddingBottom: 2,
   },
   rowCompact: {
     gap: 8,
+    alignItems: 'center',
   },
   pressed: {
     opacity: 0.88,
+  },
+  pressedIsland: {
+    opacity: 0.82,
   },
   heartShell: {
     borderRadius: 14,
@@ -216,6 +244,23 @@ const styles = StyleSheet.create({
           shadowRadius: 8,
         }
       : { elevation: 6 }),
+  },
+  /** 44×44 touch target; 18px glyph — expanded island only. */
+  heartShellIsland: {
+    width: ISLAND_TOUCH,
+    height: ISLAND_TOUCH,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'ios'
+      ? {
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity: 0.35,
+          shadowRadius: 6,
+        }
+      : { elevation: 4 }),
   },
   fireShell: {
     borderRadius: 14,
@@ -232,5 +277,23 @@ const styles = StyleSheet.create({
           shadowRadius: 12,
         }
       : { elevation: 8 }),
+  },
+  fireShellIsland: {
+    width: ISLAND_TOUCH,
+    height: ISLAND_TOUCH,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(0,229,255,0.35)',
+    backgroundColor: 'rgba(0,229,255,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'ios'
+      ? {
+          shadowColor: '#00E5FF',
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity: 0.5,
+          shadowRadius: 8,
+        }
+      : { elevation: 5 }),
   },
 });

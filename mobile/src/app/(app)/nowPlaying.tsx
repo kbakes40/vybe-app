@@ -979,13 +979,14 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
             </View>
 
             {/* Artwork / Video */}
-            <View className="items-center justify-center flex-1 px-10">
+            <View className="items-center justify-center flex-1 px-10" style={{ minHeight: 0, overflow: 'visible' }}>
               <View
                 style={{
                   position: 'relative',
                   width: ARTWORK_SIZE,
                   height: artworkSlotHeight,
                   alignSelf: 'center',
+                  overflow: 'visible',
                 }}
               >
               {isYouTubeMusic && ytVideoId ? (
@@ -1092,6 +1093,7 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                     borderRadius: ARTWORK_OUTER_RADIUS,
                     borderWidth: 1,
                     borderColor: ARTWORK_EDGE,
+                    overflow: 'visible',
                   }]}
                 >
                   <Image
@@ -1137,7 +1139,9 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
             </View>
 
             {/* Track Info */}
-            <Animated.View style={[INFO_STATIC_STYLE, { paddingHorizontal: 28, marginTop: 20 }]}>
+            <Animated.View
+              style={[INFO_STATIC_STYLE, { paddingHorizontal: 28, marginTop: sheetLayout ? 26 : 20 }]}
+            >
               <View className="flex-row items-center justify-between">
                 <View className="flex-1 mr-4">
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>

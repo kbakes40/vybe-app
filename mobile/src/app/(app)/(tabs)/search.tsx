@@ -45,6 +45,7 @@ import {
   BOTTOM_DOCK_HEIGHT,
   SEARCH_BROWSE_GRID_PADDING_EXTRA,
 } from '@/constants/Layout';
+import { useLouisOledChrome } from '@/hooks/useLouisOledChrome';
 import { filterDeadYoutubeQueueTracks } from '@/lib/queueSanitize';
 import { NeonVybeSearchSectionHeader } from '@/components/SearchResults';
 import { VIBRANT_BLUE, SHADOW_BLUE_SOFT } from '@/constants/machinedTheme';
@@ -166,6 +167,7 @@ const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> =>
 export default function SearchScreen() {
   useCancelPrefetchOnBlur();
   const insets = useSafeAreaInsets();
+  const { louis, kickTranslateStyle, tabListTopPadding } = useLouisOledChrome(insets.top);
   const { width: windowWidth } = useWindowDimensions();
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
@@ -468,7 +470,8 @@ export default function SearchScreen() {
       behavior="padding"
       keyboardVerticalOffset={0}
     >
-      <View style={{ paddingHorizontal: 20, paddingTop: insets.top + 100, paddingBottom: 14 }}>
+      <Animated.View style={[{ flex: 1 }, louis && kickTranslateStyle]}>
+      <View style={{ paddingHorizontal: 20, paddingTop: tabListTopPadding, paddingBottom: 14 }}>
         {!selectedGenre ? (
           <Text
             style={{
@@ -784,6 +787,7 @@ export default function SearchScreen() {
         ) : null}
       </ScrollView>
       )}
+      </Animated.View>
     </KeyboardAvoidingView>
   );
 }

@@ -83,6 +83,7 @@ import { MixDefinition, RelatedTrack, Track } from '@/types/music';
 import { prefetchHeroColors } from '@/lib/usePlaylistHeroColors';
 import { createMMKVCache, TTL } from '@/lib/mmkv-cache';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
+import { useLouisOledChrome } from '@/hooks/useLouisOledChrome';
 import { isDeadYoutubeQueueTitle } from '@/lib/queueSanitize';
 import { DECADES_VAULT_CARDS } from '@/constants/decadesVault';
 import { MachinedGradientText } from '@/components/MachinedGradientText';
@@ -100,11 +101,6 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const SECTION_GAP = 32;
 const ART_RADIUS = 16;
 const SCREEN_W = Dimensions.get('window').width;
-/**
- * Scroll padding under the status bar so “Your Vybe” clears the in-app Dynamic Island pill.
- * Expanded pill is 112pt tall (`DynamicIsland` GEO.expanded); extra space absorbs cyan glow + a gap.
- */
-const HOME_HEADER_CLEAR_BELOW_PILL_PT = 112 + 2 + 4;
 const AnimatedText = Animated.createAnimatedComponent(Text);
 
 // ─── Mood tabs ────────────────────────────────────────────────────────────────
@@ -1102,6 +1098,7 @@ function HomeVybeVideoRail({
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
+  const { louis, kickTranslateStyle, tabListTopPadding } = useLouisOledChrome(insets.top);
   const router = useRouter();
   const playTrack = usePlaybackController(s => s.playTrack);
   const currentTrack = usePlaybackController(s => s.currentTrack);
@@ -1731,7 +1728,7 @@ export default function HomeScreen() {
   }, [quickPicks.slice(0, 4).map(t => t.artwork).join()]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#000000' }}>
+    <Animated.View style={[{ flex: 1, backgroundColor: '#000000' }, louis && kickTranslateStyle]}>
       <Animated.ScrollView
         style={{ flex: 1, backgroundColor: '#000000' }}
         contentContainerStyle={{
@@ -1754,7 +1751,7 @@ export default function HomeScreen() {
         <Animated.View style={listMotionStyle}>
         <View
           style={{
-            paddingTop: insets.top + HOME_HEADER_CLEAR_BELOW_PILL_PT,
+            paddingTop: tabListTopPadding,
             backgroundColor: '#000000',
             paddingHorizontal: 20,
             alignItems: 'flex-start',
@@ -2858,6 +2855,6 @@ export default function HomeScreen() {
         </Animated.View>
       </Animated.ScrollView>
 
-    </View>
+    </Animated.View>
   );
 }

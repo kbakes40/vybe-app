@@ -35,6 +35,7 @@ import { CRATE_TILE_TINT_GRADIENT, VIBRANT_BLUE } from '@/constants/machinedThem
 import { MachinedGradientText } from '@/components/MachinedGradientText';
 import { ShadowArtworkImage } from '@/components/ShadowArtworkImage';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
+import { useLouisOledChrome } from '@/hooks/useLouisOledChrome';
 import { DiscoveryRailSection } from '@/components/Discovery/Section';
 import { logUiTap } from '@/lib/uiTapLog';
 import { raceWithDiscoverTimeout, isDiscoverBackendFailure } from '@/lib/discoverRace';
@@ -799,6 +800,7 @@ hydrateDiscoverFromMMKV();
 export default function DiscoverScreen() {
   useCancelPrefetchOnBlur();
   const insets = useSafeAreaInsets();
+  const { louis, kickTranslateStyle, tabListTopPadding } = useLouisOledChrome(insets.top);
   const router = useRouter();
 
   // Downloads for local playlist sections
@@ -1157,21 +1159,27 @@ export default function DiscoverScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
+  const discoverGradTop = insets.top + tabListTopPadding + 56;
+
   return (
-    <View className="flex-1 bg-[#000000]">
-      {/* Background gradient */}
+    <Animated.View style={[{ flex: 1, backgroundColor: '#000000' }, louis && kickTranslateStyle]}>
+      {/* Background — Louis: pure OLED black (no blue-grey wash). */}
       <LinearGradient
-        colors={['#0a1628', '#050c14', '#0A0A0A']}
+        colors={
+          louis
+            ? (['#000000', '#000000', '#000000'] as const)
+            : (['#0a1628', '#050c14', '#0A0A0A'] as const)
+        }
         style={{
           position: 'absolute',
           top: 0,
           left: 0,
           right: 0,
-          height: insets.top + 120,
+          height: discoverGradTop,
         }}
       />
 
-      <View style={{ paddingTop: insets.top + 64, paddingHorizontal: H_PAD, paddingBottom: 10 }}>
+      <View style={{ paddingTop: tabListTopPadding, paddingHorizontal: H_PAD, paddingBottom: 10 }}>
         <Pressable onLongPress={handleEditPreferences} delayLongPress={550}>
           <MachinedGradientText neonGlow style={{ fontSize: 24, fontWeight: '800', letterSpacing: 0.35 }}>
             Discover
@@ -1271,6 +1279,6 @@ export default function DiscoverScreen() {
         renderItem={({ item }) => <CrateMasonryCell item={item} colW={colW} />}
       />
       </View>
-    </View>
+    </Animated.View>
   );
 }
