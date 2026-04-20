@@ -13,6 +13,9 @@ export type GlobalRadioStationId =
   | 'lofi'
   | 'country'
   | 'jazz'
+  /** Jazz hub sub-relays (SomaFM) — picked from Radio tab list, same JAZZ pill. */
+  | 'jazz_secret'
+  | 'jazz_beat'
   | 'ambient'
   | 'indie'
   /** Decades Vault — lossless / hi-res era relays */
@@ -21,6 +24,8 @@ export type GlobalRadioStationId =
   | 'vault_90s'
   | 'vault_00s'
   | 'vault_modern'
+  /** Pill hub — Worldwide / NTS / FIP / HÖR relays (see {@link GLOBAL_EXPANSION_STATION_ORDER}). */
+  | 'global_hub'
   /** Global expansion row (Worldwide, NTS, …) */
   | 'worldwide_fm'
   | 'nts_live'
@@ -52,6 +57,8 @@ export interface GlobalRadioStationDef {
   firePulse: GlobalRadioFirePulse;
   /** Shown as MPNowPlaying album / Island secondary line (e.g. `VAULT: 80S`). */
   islandAlbum?: string;
+  /** RADIO_UNITY_V6 — Island genre line (e.g. `GENRE: HOUSE`). Overrides `islandAlbum` when set. */
+  genreIslandLine?: string;
   /** Preferred buffer target (ms) before starting playback after load (FLAC vault). */
   bufferAheadMs?: number;
   bufferTimeoutMs?: number;
@@ -59,6 +66,8 @@ export interface GlobalRadioStationDef {
 
 const SOMA_GS = 'https://api.somafm.com/logos/256/groovesalad256.png';
 const SOMA_SU = 'https://api.somafm.com/logos/256/sonicuniverse256.png';
+const SOMA_SA = 'https://api.somafm.com/logos/256/secretagent256.png';
+const SOMA_BB = 'https://api.somafm.com/logos/256/beatblender256.png';
 const SOMA_DZ = 'https://api.somafm.com/logos/256/dronezone256.png';
 const SOMA_IP = 'https://api.somafm.com/logos/256/indiepop256.png';
 const LAUT_LOFI = 'https://assets.laut.fm/2589a089fedf5732fc8eb21f943aa73f?t=_120x120';
@@ -93,16 +102,19 @@ export const GLOBAL_RADIO_STATIONS: Record<GlobalRadioStationId, GlobalRadioStat
     metadataSource: 'radioparadise_api',
     diChannelTag: 'RP PARADISE',
     brandArtworkUrl: RADIO_PARADISE_BRAND_LOGO_URL,
+    genreIslandLine: 'GENRE: PARADISE',
     diLeading: 'default',
     firePulse: 'normal',
   },
   hiphop: {
     id: 'hiphop',
     pillLabel: 'HIP HOP',
+    /** The Lot’s live HLS (same endpoint surfaced on thelotradio.com). */
     streamUrl: 'https://livepeercdn.studio/hls/85c28sa2o8wppm58/index.m3u8',
     requestedStreamUrl: 'https://thelotradio.com/stream',
     metadataSource: 'static',
     diChannelTag: 'THE LOT',
+    genreIslandLine: 'GENRE: HIP HOP',
     brandArtworkUrl: HIP_HOP_BRAND,
     staticNowPlaying: {
       title: 'Live broadcast',
@@ -115,14 +127,19 @@ export const GLOBAL_RADIO_STATIONS: Record<GlobalRadioStationId, GlobalRadioStat
   house: {
     id: 'house',
     pillLabel: 'HOUSE',
+    /**
+     * Mixlr profile URL is the brief’s canonical mapping; Mixlr returns 404 today.
+     * Playback uses a stable house relay until a direct Defected/Mixlr audio URL is wired.
+     */
     streamUrl: 'https://ice1.somafm.com/groovesalad-128-mp3',
     requestedStreamUrl: 'https://mixlr.com/defectedradio',
     metadataSource: 'static',
     diChannelTag: 'DEFECTED',
+    genreIslandLine: 'GENRE: HOUSE',
     brandArtworkUrl: SOMA_GS,
     staticNowPlaying: {
-      title: 'Live relay',
-      artist: 'Defected · House stream',
+      title: 'Defected Radio (stream bridge)',
+      artist: 'House relay · hi-fi stream',
       artwork: SOMA_GS,
     },
     diLeading: 'default',
@@ -132,9 +149,11 @@ export const GLOBAL_RADIO_STATIONS: Record<GlobalRadioStationId, GlobalRadioStat
     id: 'lofi',
     pillLabel: 'LOFI',
     streamUrl: 'https://lofi.stream.laut.fm/lofi',
+    /** Product URL (stream-hires returns 404 on web); relay matches Lofi Girl–style feed. */
     requestedStreamUrl: 'https://lofigirl.com/stream-hires',
     metadataSource: 'static',
     diChannelTag: 'LOFI',
+    genreIslandLine: 'GENRE: LOFI',
     brandArtworkUrl: LAUT_LOFI,
     staticNowPlaying: {
       title: 'Hi‑Fi chill relay',
@@ -167,11 +186,46 @@ export const GLOBAL_RADIO_STATIONS: Record<GlobalRadioStationId, GlobalRadioStat
     requestedStreamUrl: 'https://somafm.com/sonicuniverse/',
     metadataSource: 'static',
     diChannelTag: 'SONIC UNIVERSE',
+    genreIslandLine: 'GENRE: JAZZ',
     brandArtworkUrl: SOMA_SU,
     staticNowPlaying: {
       title: 'Jazz fusion relay',
       artist: 'SomaFM · Sonic Universe',
       artwork: SOMA_SU,
+    },
+    diLeading: 'chill',
+    firePulse: 'normal',
+  },
+  jazz_secret: {
+    id: 'jazz_secret',
+    pillLabel: 'JAZZ',
+    streamUrl: 'https://ice1.somafm.com/secretagent-128-mp3',
+    requestedStreamUrl: 'https://somafm.com/secretagent/',
+    metadataSource: 'static',
+    diChannelTag: 'SECRET AGENT',
+    genreIslandLine: 'GENRE: JAZZ',
+    brandArtworkUrl: SOMA_SA,
+    staticNowPlaying: {
+      title: 'Lounge relay',
+      artist: 'SomaFM · Secret Agent',
+      artwork: SOMA_SA,
+    },
+    diLeading: 'chill',
+    firePulse: 'normal',
+  },
+  jazz_beat: {
+    id: 'jazz_beat',
+    pillLabel: 'JAZZ',
+    streamUrl: 'https://ice1.somafm.com/beatblender-128-mp3',
+    requestedStreamUrl: 'https://somafm.com/beatblender/',
+    metadataSource: 'static',
+    diChannelTag: 'BEAT BLENDER',
+    genreIslandLine: 'GENRE: JAZZ',
+    brandArtworkUrl: SOMA_BB,
+    staticNowPlaying: {
+      title: 'Mid-tempo relay',
+      artist: 'SomaFM · Beat Blender',
+      artwork: SOMA_BB,
     },
     diLeading: 'chill',
     firePulse: 'normal',
@@ -199,6 +253,7 @@ export const GLOBAL_RADIO_STATIONS: Record<GlobalRadioStationId, GlobalRadioStat
     requestedStreamUrl: 'https://somafm.com/indiepop/',
     metadataSource: 'static',
     diChannelTag: 'INDIE POP',
+    genreIslandLine: 'GENRE: INDIE',
     brandArtworkUrl: SOMA_IP,
     staticNowPlaying: {
       title: 'Indie pop relay',
@@ -210,13 +265,14 @@ export const GLOBAL_RADIO_STATIONS: Record<GlobalRadioStationId, GlobalRadioStat
   },
   vault_70s: {
     id: 'vault_70s',
-    pillLabel: '70S VAULT',
+    pillLabel: '70S',
     streamUrl: 'https://stream.biasradio.com/70s-flac',
     requestedStreamUrl: 'https://stream.biasradio.com/70s-flac',
     metadataSource: 'static',
     diChannelTag: 'BIAS 70S',
     brandArtworkUrl: VAULT_70S_ART,
     islandAlbum: 'VAULT: 70S',
+    genreIslandLine: 'GENRE: 70S',
     bufferAheadMs: 5000,
     bufferTimeoutMs: 22000,
     staticNowPlaying: {
@@ -229,13 +285,14 @@ export const GLOBAL_RADIO_STATIONS: Record<GlobalRadioStationId, GlobalRadioStat
   },
   vault_80s: {
     id: 'vault_80s',
-    pillLabel: '80S VAULT',
+    pillLabel: '80S',
     streamUrl: 'https://stream.radioclub80.ro/80s-flac',
     requestedStreamUrl: 'https://stream.radioclub80.ro/80s-flac',
     metadataSource: 'static',
     diChannelTag: 'RC80',
     brandArtworkUrl: VAULT_80S_ART,
     islandAlbum: 'VAULT: 80S',
+    genreIslandLine: 'GENRE: 80S',
     bufferAheadMs: 5000,
     bufferTimeoutMs: 22000,
     staticNowPlaying: {
@@ -248,13 +305,14 @@ export const GLOBAL_RADIO_STATIONS: Record<GlobalRadioStationId, GlobalRadioStat
   },
   vault_90s: {
     id: 'vault_90s',
-    pillLabel: '90S VAULT',
+    pillLabel: '90S',
     streamUrl: 'https://stream.thecheese.co.nz/90s-hires',
     requestedStreamUrl: 'https://stream.thecheese.co.nz/90s-hires',
     metadataSource: 'static',
     diChannelTag: 'THE CHEESE',
     brandArtworkUrl: VAULT_90S_ART,
     islandAlbum: 'VAULT: 90S',
+    genreIslandLine: 'GENRE: 90S',
     bufferAheadMs: 5000,
     bufferTimeoutMs: 22000,
     staticNowPlaying: {
@@ -267,13 +325,14 @@ export const GLOBAL_RADIO_STATIONS: Record<GlobalRadioStationId, GlobalRadioStat
   },
   vault_00s: {
     id: 'vault_00s',
-    pillLabel: '00S VAULT',
+    pillLabel: '00S',
     streamUrl: 'https://stream.decadesradio.uk/00s-high',
     requestedStreamUrl: 'https://stream.decadesradio.uk/00s-high',
     metadataSource: 'static',
     diChannelTag: 'DECADES UK',
     brandArtworkUrl: VAULT_00S_ART,
     islandAlbum: 'VAULT: 00S',
+    genreIslandLine: 'GENRE: 00S',
     bufferAheadMs: 5000,
     bufferTimeoutMs: 22000,
     staticNowPlaying: {
@@ -370,18 +429,58 @@ export const GLOBAL_RADIO_STATIONS: Record<GlobalRadioStationId, GlobalRadioStat
     diLeading: 'default',
     firePulse: 'max',
   },
+  /** Top-row GLOBAL pill — default relay Worldwide FM; list switches {@link GLOBAL_EXPANSION_STATION_ORDER}. */
+  global_hub: {
+    id: 'global_hub',
+    pillLabel: 'GLOBAL',
+    streamUrl: 'https://worldwidefm.out.airtime.pro/worldwidefm_a',
+    requestedStreamUrl: 'https://www.worldwidefm.net/',
+    metadataSource: 'static',
+    diChannelTag: 'VYBE GLOBAL',
+    brandArtworkUrl: WWFM_BRAND,
+    genreIslandLine: 'GENRE: GLOBAL',
+    staticNowPlaying: {
+      title: 'Global relays',
+      artist: 'Worldwide · NTS · FIP · HÖR',
+      artwork: WWFM_BRAND,
+    },
+    diLeading: 'default',
+    firePulse: 'normal',
+  },
 };
 
+/** RADIO_UNITY_V6 — single geometric pill row (GLOBAL hub → Paradise → Decades shortcuts). */
 export const GLOBAL_RADIO_STATION_ORDER: GlobalRadioStationId[] = [
+  'global_hub',
   'paradise',
   'hiphop',
   'house',
   'indie',
   'lofi',
   'jazz',
-  'ambient',
   'country',
+  'ambient',
+  'vault_70s',
+  'vault_80s',
+  'vault_90s',
+  'vault_00s',
 ];
+
+/** Sub-streams under the JAZZ pill (RadioUnityStationList + `jazzRelayId` in radio tab). */
+export const JAZZ_SUB_STATION_ORDER: GlobalRadioStationId[] = ['jazz', 'jazz_secret', 'jazz_beat'];
+
+export type GlobalRadioStreamBridgeKey = 'RP_MAIN';
+
+/**
+ * Stream bridge entrypoint — PARADISE pill must call `play('RP_MAIN')` → RP main mix.
+ * Resolves to the `paradise` station id used by {@link buildGlobalRadioTrack}.
+ */
+export function play(streamKey: GlobalRadioStreamBridgeKey): GlobalRadioStationId {
+  if (streamKey !== 'RP_MAIN') {
+    throw new Error(`GlobalRadioClient.play: unsupported key ${String(streamKey)}`);
+  }
+  return 'paradise';
+}
 
 /** Stations listed under the Era row when “GLOBAL” is selected. */
 export const GLOBAL_EXPANSION_STATION_ORDER: GlobalRadioStationId[] = [
@@ -455,7 +554,7 @@ export function buildGlobalRadioTrack(
     globalRadioDiTag: def.diChannelTag,
     globalRadioDiLeading: def.diLeading,
     globalRadioFirePulse: def.firePulse,
-    globalRadioIslandAlbum: def.islandAlbum,
+    globalRadioIslandAlbum: def.genreIslandLine ?? def.islandAlbum,
   };
 }
 

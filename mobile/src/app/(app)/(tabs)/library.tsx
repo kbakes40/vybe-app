@@ -1222,7 +1222,7 @@ export default function LibraryScreen() {
         >
           <View
             onLayout={(e) => setLibraryHeaderHeight(e.nativeEvent.layout.height)}
-            style={{ paddingTop: insets.top + 64, paddingHorizontal: 16, paddingBottom: 12 }}
+            style={{ paddingTop: insets.top + 100, paddingHorizontal: 16, paddingBottom: 12 }}
           >
             <View className="flex-row items-center justify-between mb-4">
               <MachinedGradientText

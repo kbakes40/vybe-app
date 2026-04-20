@@ -40,7 +40,7 @@ import {
   fetchSoundcloudMatchForYoutubeTrack,
   isYoutubeHardStreamFailure,
 } from '@/lib/soundcloudYoutubeBridge';
-import { raceSoundcloudMatchFirst, SC_MATCH_FIRST_BUDGET_MS } from '@/lib/mediaPlaybackResolver';
+import { raceSoundcloudMatchFirst, STEALTH_FADE_SC_FIRST_BUDGET_MS } from '@/lib/resolver';
 import { recordSoundcloudFireActivity } from '@/lib/api/social';
 import { useSocialActivityStore } from '@/stores/socialActivityStore';
 // Lazy-cached refs to avoid circular dependency + dynamic require overhead
@@ -841,7 +841,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       !!extractYoutubeVideoId(track) &&
       !!preemptBackend;
     const scMatchPromise = wantScMatch ? fetchSoundcloudMatchForYoutubeTrack(track) : Promise.resolve(null);
-    const scQuick = await raceSoundcloudMatchFirst(scMatchPromise, SC_MATCH_FIRST_BUDGET_MS);
+    const scQuick = await raceSoundcloudMatchFirst(scMatchPromise, STEALTH_FADE_SC_FIRST_BUDGET_MS);
     if (scQuick?.soundcloudUrl && isStillCurrent()) {
       useDynamicIslandSignal.getState().setScIgnitionGlow(true);
       const mergedQueue = newQueue.map((t) => (t.id === track.id ? scQuick : t));

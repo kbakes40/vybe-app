@@ -171,17 +171,18 @@ export function DynamicIslandChrome() {
             <Path
               d={VYBE_WAVE_PATH}
               stroke={OUTER_GLOW}
-              strokeWidth={3.2}
+              strokeWidth={1.4}
               strokeLinecap="round"
               fill="none"
-              opacity={0.35}
+              opacity={0.08}
             />
             <Path
               d={VYBE_WAVE_PATH}
               stroke={VIBRANT_BLUE}
-              strokeWidth={1.15}
+              strokeWidth={1.05}
               strokeLinecap="round"
               fill="none"
+              opacity={0.55}
             />
           </Svg>
         </Animated.View>

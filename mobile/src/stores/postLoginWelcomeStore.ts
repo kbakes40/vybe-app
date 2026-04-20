@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 /**
- * Queues the post-verification “Enjoy the Vibes” toast so it runs after
+ * Queues the post-verification “Enjoy the Vibes 😎” chill modal so it runs after
  * navigation lands on Home (popup survives stack transitions).
  */
 type PostLoginWelcomeState = {

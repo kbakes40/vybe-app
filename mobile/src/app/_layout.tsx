@@ -21,6 +21,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { VybePopupProvider } from '@/components/VybePopup';
 import { ShadowInputAccessory } from '@/components/ShadowInputAccessory';
 import { DynamicIslandChrome } from '@/components/DynamicIslandChrome';
+import { StealthTopMask } from '@/components/StealthTopMask';
 import { DynamicIslandTopFade } from '@/components/DynamicIslandTopFade';
 import { DynamicIsland } from '@/components/DynamicIsland';
 import { ThemeArtworkAccentSync } from '@/components/ThemeArtworkAccentSync';
@@ -37,7 +38,8 @@ Appearance.setColorScheme('dark');
 SystemUI.setBackgroundColorAsync('#000000');
 
 export const unstable_settings = {
-  initialRouteName: 'sign-in',
+  /** `app/index.tsx` — routes signed-out → sign-in, signed-in → tabs or onboarding. */
+  initialRouteName: 'index',
 };
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
@@ -96,6 +98,7 @@ function RootLayoutNav() {
           gestureEnabled: false,
         }}
       >
+        <Stack.Screen name="index" options={{ gestureEnabled: false, animation: 'fade' }} />
         <Stack.Screen
           name="onboarding"
           options={{ gestureEnabled: false, animation: 'fade' }}
@@ -151,6 +154,7 @@ function RootLayoutNav() {
         gestureEnabled: false,
       }}
     >
+      <Stack.Screen name="index" options={{ gestureEnabled: false, animation: 'fade' }} />
       {/* Auth routes - gestures disabled */}
       <Stack.Screen
         name="sign-in"
@@ -191,10 +195,11 @@ export default function RootLayout() {
               <VybePopupProvider>
                 <GlobalKeyboardChrome />
                 <StatusBar style="light" translucent backgroundColor="transparent" />
-                <RootLayoutNav />
-                {/* PILL_LOCK_V2: PillLockSync + top fade (9997) / chrome (9998) / pill (9999) */}
+                {/* AUTH_LOCK_SYNC: PillLockSync runs first so `pillLockStore.hasUser` is set before app chrome (MiniPlayer, top masks, Island). */}
                 <PillLockSync />
+                <RootLayoutNav />
                 <ThemeArtworkAccentSync />
+                <StealthTopMask />
                 <DynamicIslandTopFade />
                 <DynamicIslandChrome />
                 <DynamicIsland />

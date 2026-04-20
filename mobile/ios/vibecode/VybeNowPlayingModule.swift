@@ -92,15 +92,21 @@ class VybeNowPlayingModule: RCTEventEmitter {
     currentTime: Double,
     isPlaying: Bool
   ) {
-    let info: [String: Any] = [
-      MPMediaItemPropertyTitle: trackTitle,
-      MPMediaItemPropertyArtist: artistName,
-      MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
-      MPMediaItemPropertyPlaybackDuration: duration,
-      MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
-      MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
-    ]
+    print("--- NATIVE ACTIVITY REQUESTED ---")
+    // Merge into existing metadata — do **not** replace the whole dictionary.
+    // JS calls `VybeNowPlaying.updateNowPlaying` then `VybeNowPlayingActivity.startNowPlaying`;
+    // a full replace here races on `DispatchQueue.main.async` and can strip
+    // `MPNowPlayingInfoPropertyMediaType` + artwork the Activity module just set,
+    // which prevents Dynamic Island elevation.
     DispatchQueue.main.async {
+      var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+      info[MPMediaItemPropertyTitle] = trackTitle
+      info[MPMediaItemPropertyArtist] = artistName
+      info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
+      info[MPMediaItemPropertyPlaybackDuration] = duration
+      info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+      info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
+      info[MPNowPlayingInfoPropertyMediaType] = NSNumber(value: MPMediaType.music.rawValue)
       MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 

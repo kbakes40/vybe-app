@@ -20,11 +20,11 @@ import { OLED_BLACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
 import { useThemeStore } from '@/stores/themeStore';
 import { hexToRgba } from '@/lib/themeColorUtils';
 import { ListDisclosureMark } from '@/components/account/ListDisclosureMark';
-import { terminateAllPillNative } from '@/lib/NowPlayingActivityManager';
+import { activityTerminateAll } from '@/lib/NowPlayingActivityManager';
 
 async function bulletproofSignOut(replace: (path: string) => void) {
   console.log('[signOut:profile] starting…');
-  terminateAllPillNative();
+  activityTerminateAll();
   try {
     await authClient.signOut();
   } catch (e) {
@@ -111,7 +111,7 @@ export default function ProfileTabScreen() {
         showsVerticalScrollIndicator={false}
         automaticallyAdjustContentInsets={false}
       >
-        <View style={[styles.hero, { paddingTop: insets.top + 64 }]}>
+        <View style={[styles.hero, { paddingTop: insets.top + 100 }]}>
           <Text style={styles.kicker}>ACCOUNT</Text>
           {avatarUrl ? (
             <Image

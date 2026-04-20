@@ -1,3 +1,15 @@
+/**
+ * PILL_IGNITION_V9 — VybeNowPlayingActivity bridge (music Now Playing / Dynamic Island).
+ *
+ * - **Module key:** `NativeModules.VybeNowPlayingActivity` (spelling **Vybe**, not `Vibe`;
+ *   no `Module` suffix — matches `@objc(VybeNowPlayingActivity)` in Swift).
+ * - **JS entry:** `startNowPlayingActivity()` in this file calls the native selector
+ *   **`startNowPlaying`** (see `VybeNowPlayingActivityModule.m`). There is **no**
+ *   native method named `startNowPlayingActivity`; do not rename the Swift export
+ *   without updating `RCT_EXTERN_METHOD` + this file.
+ * - **ActivityKit `VybeActivityAttributes`:** used only by **download** Live Activities
+ *   (`VybeDownloadActivity`). This bridge uses **MPNowPlayingInfoCenter**, not that struct.
+ */
 import { NativeModules, Platform } from 'react-native';
 import { usePillLockStore } from '@/stores/pillLockStore';
 
@@ -13,6 +25,15 @@ const { VybeNowPlayingActivity, VybeDownloadActivity } = NativeModules as {
   VybeDownloadActivity?: { terminateAllActivities?: () => Promise<void> };
 };
 const isAvailable = Platform.OS === 'ios' && !!VybeNowPlayingActivity;
+
+if (__DEV__ && Platform.OS === 'ios') {
+  const nm = NativeModules as Record<string, unknown>;
+  if (!nm.VybeNowPlayingActivity) {
+    console.warn(
+      '[PILL_IGNITION_V9] NativeModules.VybeNowPlayingActivity is missing — clean rebuild the iOS app (VybeNowPlayingActivityModule must be in the main target).',
+    );
+  }
+}
 
 function isIslandSurfaceAllowed(): boolean {
   return usePillLockStore.getState().allowIslandSurfaces;
@@ -77,7 +98,23 @@ export async function startNowPlayingActivity(
   duration: number,
   albumTitle?: string,
 ): Promise<void> {
-  if (!isAvailable || !isIslandSurfaceAllowed()) return;
+  if (!isAvailable) {
+    if (__DEV__) console.log('[NowPlaying] start BLOCKED: bridge unavailable', { platform: Platform.OS, hasModule: !!VybeNowPlayingActivity });
+    return;
+  }
+  if (!isIslandSurfaceAllowed()) {
+    if (__DEV__) console.log('[NowPlaying] start BLOCKED: allowIslandSurfaces=false', { track: trackName });
+    return;
+  }
+  if (__DEV__) {
+    console.log('[NowPlaying] → startNowPlaying', {
+      track: trackName,
+      artist: artistName,
+      artLen: (artworkURL ?? '').length,
+      duration,
+      album: albumTitle ?? '',
+    });
+  }
   try {
     await VybeNowPlayingActivity.startNowPlaying(
       trackName,
@@ -86,7 +123,10 @@ export async function startNowPlayingActivity(
       Math.max(0, duration),
       albumTitle ?? '',
     );
-  } catch {}
+    if (__DEV__) console.log('[NowPlaying] startNowPlaying OK');
+  } catch (e) {
+    if (__DEV__) console.log('[NowPlaying] startNowPlaying THREW', String(e));
+  }
 }
 
 /**
@@ -172,4 +212,9 @@ export function terminateAllPillNative(): void {
   try {
     VybeDownloadActivity?.terminateAllActivities?.();
   } catch {}
+}
+
+/** STEALTH_FADE_V3 auth handshake — alias for sign-out / auth surfaces (ActivityKit + Now Playing). */
+export function activityTerminateAll(): void {
+  terminateAllPillNative();
 }

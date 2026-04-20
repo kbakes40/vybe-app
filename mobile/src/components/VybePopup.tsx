@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Dimensions,
   Alert,
+  Platform,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import Animated, {
@@ -18,9 +19,20 @@ import Animated, {
   Easing,
 } from 'react-native-reanimated';
 import { AlertCircle, CheckCircle, Info, AlertTriangle, X } from 'lucide-react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
+import { MACHINED_CYAN } from '@/constants/machinedTheme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+/** Subtle outer glow on primary actions (machined cyan). */
+const CHILL_OK_OUTER_GLOW = {
+  shadowColor: MACHINED_CYAN,
+  shadowOffset: { width: 0, height: 0 },
+  shadowOpacity: 0.55,
+  shadowRadius: 14,
+  ...(Platform.OS === 'android' ? { elevation: 14 } : {}),
+} as const;
 
 // Types
 export type VybePopupType = 'info' | 'success' | 'warning' | 'error' | 'confirm';
@@ -35,6 +47,8 @@ export interface VybePopupConfig {
   title: string;
   message?: string;
   type?: VybePopupType;
+  /** Relaxed typography + cyan glass / OK glow (post-login welcome, etc.). */
+  visualTone?: 'default' | 'chill';
   icon?: React.ReactNode;
   showCloseButton?: boolean;
   actions?: VybePopupAction[];
@@ -55,7 +69,15 @@ interface VybePopupContextType {
 const VybePopupContext = createContext<VybePopupContextType | null>(null);
 
 // Icon component based on type
-function PopupIcon({ type, customIcon }: { type?: VybePopupType; customIcon?: React.ReactNode }) {
+function PopupIcon({
+  type,
+  customIcon,
+  visualTone,
+}: {
+  type?: VybePopupType;
+  customIcon?: React.ReactNode;
+  visualTone?: 'default' | 'chill';
+}) {
   if (customIcon) return <>{customIcon}</>;
 
   const iconSize = 32;
@@ -63,7 +85,12 @@ function PopupIcon({ type, customIcon }: { type?: VybePopupType; customIcon?: Re
 
   switch (type) {
     case 'success':
-      return <CheckCircle {...iconProps} color="#10B981" />;
+      return (
+        <CheckCircle
+          {...iconProps}
+          color={visualTone === 'chill' ? MACHINED_CYAN : '#10B981'}
+        />
+      );
     case 'warning':
       return <AlertTriangle {...iconProps} color="#F59E0B" />;
     case 'error':
@@ -77,10 +104,10 @@ function PopupIcon({ type, customIcon }: { type?: VybePopupType; customIcon?: Re
 }
 
 // Get icon background color based on type
-function getIconBgColor(type?: VybePopupType): string {
+function getIconBgColor(type?: VybePopupType, visualTone?: 'default' | 'chill'): string {
   switch (type) {
     case 'success':
-      return 'rgba(16, 185, 129, 0.15)';
+      return visualTone === 'chill' ? 'rgba(0, 255, 255, 0.14)' : 'rgba(16, 185, 129, 0.15)';
     case 'warning':
       return 'rgba(245, 158, 11, 0.15)';
     case 'error':
@@ -99,14 +126,17 @@ function PopupButton({
   isLoading,
   onPress,
   isLast,
+  visualTone,
 }: {
   action: VybePopupAction;
   isLoading: boolean;
   onPress: () => void;
   isLast: boolean;
+  visualTone?: 'default' | 'chill';
 }) {
   const isDestructive = action.style === 'destructive';
   const isCancel = action.style === 'cancel';
+  const chillPrimary = visualTone === 'chill' && !isDestructive && !isCancel;
 
   return (
     <Pressable
@@ -115,30 +145,43 @@ function PopupButton({
       }}
       onPress={onPress}
       disabled={isLoading}
+      hitSlop={{ top: 10, bottom: 10, left: 8, right: 8 }}
       className={`flex-1 py-3.5 rounded-xl items-center justify-center ${
         isDestructive
           ? 'bg-red-500/20'
           : isCancel
           ? 'bg-white/10'
+          : chillPrimary
+          ? ''
           : 'bg-[#8B5CF6]'
       } ${!isLast ? 'mr-3' : ''}`}
       style={({ pressed }) => ({
         opacity: isLoading ? 0.6 : pressed ? 0.8 : 1,
+        ...(chillPrimary
+          ? {
+              backgroundColor: MACHINED_CYAN,
+              ...CHILL_OK_OUTER_GLOW,
+            }
+          : {}),
       })}
     >
       {isLoading ? (
         <ActivityIndicator
-          color={isDestructive ? '#EF4444' : isCancel ? '#fff' : '#fff'}
+          color={
+            isDestructive ? '#EF4444' : isCancel ? '#fff' : chillPrimary ? '#0A0A0A' : '#fff'
+          }
           size="small"
         />
       ) : (
         <Text
-          className={`font-semibold text-base ${
+          className={`text-base ${
             isDestructive
-              ? 'text-red-400'
+              ? 'font-semibold text-red-400'
               : isCancel
-              ? 'text-white/80'
-              : 'text-white'
+              ? 'font-semibold text-white/80'
+              : chillPrimary
+              ? 'font-semibold text-[#0A0A0A]'
+              : 'font-semibold text-white'
           }`}
         >
           {action.text}
@@ -182,6 +225,8 @@ function VybePopupModal({
     ],
   }));
 
+  const chill = state.visualTone === 'chill';
+
   const handleClose = useCallback(() => {
     opacity.value = withTiming(0, { duration: 150 });
     scale.value = withTiming(0.9, { duration: 150 });
@@ -203,8 +248,16 @@ function VybePopupModal({
       statusBarTranslucent
       onRequestClose={handleClose}
     >
-      <View className="flex-1 items-center justify-center">
-        {/* Dark backdrop with blur */}
+      {/*
+        GestureHandlerRootView: RNGH + transparent Modal often drops Pressable taps
+        on the root tree; inner wrapper fixes “OK” not responding (Enjoy the Vibes).
+      */}
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <View
+          style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}
+          pointerEvents="box-none"
+        >
+        {/* Dark backdrop with blur — zIndex 0 so card + actions stay above for hit-testing */}
         <Animated.View
           style={[
             {
@@ -213,6 +266,7 @@ function VybePopupModal({
               left: 0,
               right: 0,
               bottom: 0,
+              zIndex: 0,
             },
             animatedBackdrop,
           ]}
@@ -227,12 +281,14 @@ function VybePopupModal({
           />
         </Animated.View>
 
-        {/* Popup Card */}
+        {/* Popup Card — above backdrop so OK / actions receive touches */}
         <Animated.View
           style={[
             {
               width: SCREEN_WIDTH - 48,
               maxWidth: 400,
+              zIndex: 1,
+              elevation: Platform.OS === 'android' ? 24 : 0,
             },
             animatedCard,
           ]}
@@ -241,11 +297,11 @@ function VybePopupModal({
             className="bg-[#1A1A1A] rounded-2xl overflow-hidden"
             style={{
               borderWidth: 1,
-              borderColor: 'rgba(255, 255, 255, 0.1)',
-              shadowColor: '#000',
-              shadowOffset: { width: 0, height: 10 },
-              shadowOpacity: 0.5,
-              shadowRadius: 20,
+              borderColor: chill ? 'rgba(0, 255, 255, 0.42)' : 'rgba(255, 255, 255, 0.1)',
+              shadowColor: chill ? MACHINED_CYAN : '#000',
+              shadowOffset: { width: 0, height: chill ? 0 : 10 },
+              shadowOpacity: chill ? 0.22 : 0.5,
+              shadowRadius: chill ? 18 : 20,
               elevation: 20,
             }}
           >
@@ -265,19 +321,35 @@ function VybePopupModal({
               {/* Icon */}
               <View
                 className="w-16 h-16 rounded-full items-center justify-center self-center mb-4"
-                style={{ backgroundColor: getIconBgColor(state.type) }}
+                style={{
+                  backgroundColor: getIconBgColor(state.type, state.visualTone),
+                }}
               >
-                <PopupIcon type={state.type} customIcon={state.icon} />
+                <PopupIcon
+                  type={state.type}
+                  customIcon={state.icon}
+                  visualTone={state.visualTone}
+                />
               </View>
 
               {/* Title */}
-              <Text className="text-white text-xl font-bold text-center mb-2">
+              <Text
+                className={`text-white text-xl text-center mb-2 ${
+                  chill ? 'font-medium' : 'font-bold'
+                }`}
+              >
                 {state.title}
               </Text>
 
               {/* Message */}
               {state.message ? (
-                <Text className="text-white/70 text-base text-center leading-6">
+                <Text
+                  className={`text-base text-center leading-6 ${
+                    chill
+                      ? 'font-normal text-[#67E8F9]'
+                      : 'font-normal text-white/70'
+                  }`}
+                >
                   {state.message}
                 </Text>
               ) : null}
@@ -293,13 +365,15 @@ function VybePopupModal({
                     isLoading={Boolean(state.loading && state.loadingActionIndex === index)}
                     onPress={() => onActionPress(index)}
                     isLast={index === actions.length - 1}
+                    visualTone={state.visualTone}
                   />
                 ))}
               </View>
             </View>
           </View>
         </Animated.View>
-      </View>
+        </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }

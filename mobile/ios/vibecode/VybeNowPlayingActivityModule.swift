@@ -4,7 +4,14 @@ import AVFoundation
 import UIKit
 import React
 
-/// Manages the Now Playing Live Activity state.
+/// PILL_IGNITION_V9 — **Music** Now Playing / Dynamic Island via `MPNowPlayingInfoCenter`.
+///
+/// This is **not** ActivityKit: fields here are **not** `VybeActivityAttributes`.
+/// `VybeActivityAttributes` + `ActivityKit` apply only to **download** progress
+/// (`VybeDownloadActivityModule` + `VybeDownloadWidgetExtension`). JS must pass
+/// non-empty **title**, **artist**, and a resolvable **https** artwork URL for
+/// best Island elevation (see `loadArtworkAsync`).
+///
 /// iOS auto-creates the Dynamic Island music pill only when ALL of these hold:
 ///   1. MPNowPlayingInfoCenter has title + artist + artwork
 ///   2. AVAudioSession is .playback and active
@@ -39,6 +46,7 @@ class VybeNowPlayingActivityModule: RCTEventEmitter {
     duration: Double,
     albumTitle: String
   ) {
+    print("--- NATIVE ACTIVITY REQUESTED ---")
     isActive = true
     ensurePlaybackSession()
     setupRemoteCommandsOnce()

@@ -22,7 +22,7 @@ import {
 } from 'lucide-react-native';
 import Svg, { Path } from 'react-native-svg';
 import { authClient } from '@/lib/auth/auth-client';
-import { terminateAllPillNative } from '@/lib/NowPlayingActivityManager';
+import { activityTerminateAll } from '@/lib/NowPlayingActivityManager';
 import { clearSessionBearerToken } from '@/lib/auth/sessionBearer';
 import { useVybePopup } from '@/components/VybePopup';
 import { OLED_BLACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
@@ -260,7 +260,7 @@ export default function AccountsScreen() {
           text: 'Sign Out All',
           style: 'destructive',
           onPress: async () => {
-            terminateAllPillNative();
+            activityTerminateAll();
             await authClient.signOut();
             await clearSessionBearerToken();
           },

@@ -13,14 +13,9 @@ import * as Haptics from 'expo-haptics';
 import { OtpInput } from 'react-native-otp-entry';
 import { authClient } from '@/lib/auth/auth-client';
 import { persistSessionBearerFromAuthResult } from '@/lib/auth/sessionBearer';
-import { api } from '@/lib/api/api';
-import { useUpgradePromptStore } from '@/stores/upgradePromptStore';
+import { getPostAuthDestination } from '@/lib/auth/postAuthDestination';
 import { useVybePopup } from '@/components/VybePopup';
 import { usePostLoginWelcomeStore } from '@/stores/postLoginWelcomeStore';
-
-interface UserPreferences {
-  onboardingDone: boolean;
-}
 
 export default function VerifyOtpScreen() {
   const insets = useSafeAreaInsets();
@@ -29,7 +24,6 @@ export default function VerifyOtpScreen() {
   const { email } = useLocalSearchParams<{ email: string }>();
   const [isLoading, setIsLoading] = useState(false);
   const [isResending, setIsResending] = useState(false);
-  const hasSeenPrompt = useUpgradePromptStore((s) => s.hasSeenPrompt);
 
   const handleVerify = async (otp: string) => {
     if (otp.length !== 6) return;
@@ -52,25 +46,11 @@ export default function VerifyOtpScreen() {
       /** Shown on Home after navigation so the toast is not wiped by the stack transition. */
       usePostLoginWelcomeStore.getState().queueEnjoyVibes();
 
-      let onboardingDone = false;
-      try {
-        const preferences = await api.get<UserPreferences>('/api/user/preferences');
-        onboardingDone = !!preferences?.onboardingDone;
-      } catch {
-        onboardingDone = false;
-      }
       if (router.canDismiss()) {
         router.dismissAll();
       }
-      if (onboardingDone) {
-        if (!hasSeenPrompt) {
-          router.replace('/(app)/upgrade');
-        } else {
-          router.replace('/(app)/(tabs)');
-        }
-      } else {
-        router.replace('/onboarding');
-      }
+      const dest = await getPostAuthDestination();
+      router.replace(dest);
     } catch (error: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       showVybePopup({

@@ -1,42 +1,49 @@
 import { create } from 'zustand';
 
 /**
- * PILL_LOCK_V2 — single source for whether Dynamic Island / Now Playing native
- * metadata and in-app chrome may run. Synced from root `PillLockSync` (auth + route).
+ * AUTH_LOCK_SYNC — session mirror for chrome that must not thrash on scroll/navigation.
+ * `hasUser` and `allowIslandSurfaces` stay in lockstep; update only via `syncAuthLockFromSession`.
  */
 export type PillLockState = {
-  /** When false: do not start/update native Now Playing; hide in-app pill chrome. */
+  /** Mirrors Better Auth `!!session?.user` — MiniPlayer + top masks read this. */
+  hasUser: boolean;
+  /** Same as `hasUser` — native Now Playing / Dynamic Island bridge + in-app pill. */
   allowIslandSurfaces: boolean;
-  setAllowIslandSurfaces: (v: boolean) => void;
+  /** Prefer this over ad-hoc setters — keeps `hasUser` / `allow` aligned (AUTH_LOCK_SYNC). */
+  syncAuthLockFromSession: (hasUser: boolean) => void;
 };
 
 export const usePillLockStore = create<PillLockState>((set) => ({
-  /**
-   * Default TRUE. PillLockSync fires in a useLayoutEffect (before paint) and
-   * flips to false on the real sign-in / onboarding / verify-otp surfaces,
-   * so the "cold sign-in" flash is still prevented — but a default of `false`
-   * leaves the pill permanently invisible whenever session resolution hiccups
-   * (Better Auth token refresh can briefly drop `session.user`), which is the
-   * failure mode users actually report.
-   */
-  allowIslandSurfaces: true,
-  setAllowIslandSurfaces: (v) => set({ allowIslandSurfaces: v }),
+  hasUser: false,
+  allowIslandSurfaces: false,
+  syncAuthLockFromSession: (hasUser) =>
+    set((s) => {
+      if (s.hasUser === hasUser && s.allowIslandSurfaces === hasUser) {
+        if (__DEV__) console.log('[PillLock] sync no-op', { hasUser, allow: s.allowIslandSurfaces });
+        return s;
+      }
+      if (__DEV__) {
+        console.log('[PillLock] sync FLIP', {
+          from: { hasUser: s.hasUser, allow: s.allowIslandSurfaces },
+          to: { hasUser, allow: hasUser },
+        });
+      }
+      return { hasUser, allowIslandSurfaces: hasUser };
+    }),
 }));
 
-/** True when user is signed in and not on login / onboarding / OTP surfaces. */
+/**
+ * In-app sign-in / verify-otp modals while authenticated do **not** change `hasUser`
+ * (session stays populated), so this stays TRUE and the pill remains visible.
+ */
 export function computeAllowIslandSurfaces(opts: {
   isPending: boolean;
   hasUser: boolean;
   pathname: string;
   segments: string[];
 }): boolean {
-  // Do not gate on `isPending`: Better Auth often leaves `isPending` true during
-  // background refresh while `user` is still populated — that hid the in-app
-  // pill + native Now Playing bridge for long stretches.
-  if (!opts.hasUser) return false;
-  const p = (opts.pathname || '').toLowerCase();
-  if (/(^|[/])(sign-in|login|verify-otp|onboarding)([/]|$)/.test(p)) return false;
-  const s0 = (opts.segments[0] || '').toLowerCase();
-  if (s0 === 'sign-in' || s0 === 'login' || s0 === 'verify-otp' || s0 === 'onboarding') return false;
-  return true;
+  void opts.isPending;
+  void opts.pathname;
+  void opts.segments;
+  return opts.hasUser;
 }

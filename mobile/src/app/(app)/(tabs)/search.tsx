@@ -468,7 +468,7 @@ export default function SearchScreen() {
       behavior="padding"
       keyboardVerticalOffset={0}
     >
-      <View style={{ paddingHorizontal: 20, paddingTop: insets.top + 64, paddingBottom: 14 }}>
+      <View style={{ paddingHorizontal: 20, paddingTop: insets.top + 100, paddingBottom: 14 }}>
         {!selectedGenre ? (
           <Text
             style={{

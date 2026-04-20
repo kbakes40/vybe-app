@@ -32,7 +32,10 @@ export type RadioParadiseSoulActionsLayout = 'full' | 'island_compact';
 
 export type RadioTabSoulContext = {
   stationId: GlobalRadioStationId;
+  /** Radio Paradise pill only — on-air from API poller. */
   rpPreview: { artist: string; title: string } | null;
+  /** Static relay stations — SomaFM / Laut.fm poll; heart & fire use this when set so actions match the card. */
+  livePreview?: { title: string; artist: string } | null;
 };
 
 export function RadioParadiseSoulActions({
@@ -95,18 +98,30 @@ export function RadioParadiseSoulActions({
 
   const onHeart = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    let showVaulted = false;
     if (tabDef) {
       if (useRpApi) {
         vaultRadioParadiseCurrentTrackFromApi();
+        showVaulted = true;
       } else if (tabDef.staticNowPlaying) {
-        queueVaultFromArtistTitle(tabDef.staticNowPlaying.artist, tabDef.staticNowPlaying.title);
+        const live = tabContext?.livePreview;
+        const a = (live?.artist?.trim() || tabDef.staticNowPlaying.artist || '').trim();
+        const t = (live?.title?.trim() || tabDef.staticNowPlaying.title || '').trim();
+        if (a || t) {
+          queueVaultFromArtistTitle(a, t);
+          showVaulted = true;
+        }
       }
     } else if (useRpApi) {
       vaultRadioParadiseCurrentTrackFromApi();
+      showVaulted = true;
     } else if (currentTrack?.artist || currentTrack?.title) {
       queueVaultFromArtistTitle(currentTrack!.artist, currentTrack!.title);
+      showVaulted = true;
     }
-    useShadowPlaybackToastStore.getState().showMicroToast('VAULTED', { placement: 'top' });
+    if (showVaulted) {
+      useShadowPlaybackToastStore.getState().showMicroToast('VAULTED', { placement: 'top' });
+    }
   };
 
   const onFire = () => {
@@ -120,8 +135,9 @@ export function RadioParadiseSoulActions({
           artist = meta?.artist ?? '';
           title = meta?.title ?? '';
         } else if (tabDef.staticNowPlaying) {
-          artist = tabDef.staticNowPlaying.artist;
-          title = tabDef.staticNowPlaying.title;
+          const live = tabContext?.livePreview;
+          artist = (live?.artist?.trim() || tabDef.staticNowPlaying.artist || '').trim();
+          title = (live?.title?.trim() || tabDef.staticNowPlaying.title || '').trim();
         }
       } else {
         artist = currentTrack?.artist ?? '';

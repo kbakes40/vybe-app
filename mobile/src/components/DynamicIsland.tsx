@@ -6,7 +6,6 @@ import { Image } from 'expo-image';
 import Animated, {
   cancelAnimation,
   Easing,
-  interpolateColor,
   type SharedValue,
   useAnimatedStyle,
   useSharedValue,
@@ -24,9 +23,9 @@ import { useDynamicIslandSignal } from '@/stores/dynamicIslandStore';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { hexToRgb, hexToRgba } from '@/lib/themeColorUtils';
-import { islandAlignedPillTop } from '@/constants/iosIslandLayout';
 import { RadioParadiseSoulActions } from '@/components/radio/RadioParadiseSoulActions';
 import { usePillLockStore } from '@/stores/pillLockStore';
+import { getExpandedIslandThemeLabel, getIslandLosslessTag } from '@/lib/pillStreamQuality';
 
 /**
  * Global interactive pill mounted above navigation chrome.
@@ -45,7 +44,8 @@ const NEON_RED = '#FF3355';
 const SOUNDCLOUD_IGNITION_ORANGE = '#FF3300';
 /** Baby blue pulse while the backend auto-heals a failed YouTube vault (SHADOW_HEALING). */
 const BABY_BLUE = '#9FD9FF';
-const OLED = '#000000';
+/** Machined cyan — pill border + outer glow (RESTORE_PILL_GLOW). */
+const PILL_CYAN = '#00E5FF';
 
 const SPRING = { stiffness: 200, damping: 20, mass: 0.7 } as const;
 
@@ -55,7 +55,7 @@ type DIState = 'idle' | 'playing' | 'expanded' | 'davinci' | 'recovery' | 'succe
 // Playing morphs to 95% of the screen width per the IMG_3643 "Integrated Notch"
 // spec; expanded anchors to the same width so the mini-controller feels like a
 // continuation. Idle pill is vertically centered on the hardware Dynamic Island
-// band (see `islandAlignedPillTop`); expanded state grows downward from there.
+// band (hardware DI alignment); expanded state grows downward from there.
 const SCREEN_W = Dimensions.get('window').width;
 const ACTIVE_W = Math.round(SCREEN_W * 0.95);
 
@@ -169,6 +169,21 @@ export function DynamicIsland() {
     isLiveRadio && diTag
       ? `${diTag} · ${currentTrack?.artist ?? ''}`.replace(/\s·\s$/, '')
       : currentTrack?.artist ?? '';
+
+  const losslessTag = useMemo(
+    () => getIslandLosslessTag(currentTrack ?? undefined, currentSource ?? undefined),
+    [currentTrack, currentSource],
+  );
+  const expandedThemeLabel = useMemo(
+    () =>
+      getExpandedIslandThemeLabel(
+        currentTrack ?? undefined,
+        currentSource ?? undefined,
+        losslessTag,
+        isPremium,
+      ),
+    [currentTrack, currentSource, losslessTag, isPremium],
+  );
   const isStreamResolving =
     !!currentTrack &&
     (currentSource === 'youtube' || currentSource === 'youtube_music') &&
@@ -249,8 +264,8 @@ export function DynamicIsland() {
       },
       successLabel: { color: accentColor },
       hdBadge: {
-        backgroundColor: hexToRgba(accentColor, 0.18),
-        borderColor: accentColor,
+        backgroundColor: 'transparent',
+        borderWidth: 0,
       },
       hdBadgeText: { color: accentColor },
     }),
@@ -516,46 +531,41 @@ export function DynamicIsland() {
   }, []);
 
   // ── Animated styles ───────────────────────────────────────────────────────
+  /**
+   * RESTORE_PILL_GLOW — thin 1px cyan capsule, fully transparent fill, soft outer glow
+   * breathing with playback energy (`glowIntensitySV`).
+   */
   const pillAnimatedStyle = useAnimatedStyle(() => {
     const g = glowIntensitySV.value;
     const r = resolvePulse.value * isResolvingSV.value;
     const flare = fireFlareSV.value;
     const radioPulse = radioCyanPulseSV.value;
-    const ring = g + r * 1.15 + flare * 1.2 + radioPulse * 0.85;
-    const capped = ring > 1.6 ? 1.6 : ring;
-    const egg = borderHueSV.value;
-    const sc = scIgnitionSV.value;
-    const machined = `rgb(${Math.round(accentR.value)}, ${Math.round(accentG.value)}, ${Math.round(accentB.value)})`;
-    // Fire flare wins the border colour while active: SC-Orange overrides
-    // both the egg amber and the steady ignition orange so the user feels
-    // the burn the instant they tap. Falls back to the prior hot color.
-    const baseColor =
-      egg > 0.5
-        ? interpolateColor(egg, [0.5, 1], [machined, NEON_AMBER])
-        : interpolateColor(sc, [0, 1], [machined, SOUNDCLOUD_IGNITION_ORANGE]);
-    const hotColor = interpolateColor(
-      flare,
-      [0, 1],
-      [baseColor, SOUNDCLOUD_IGNITION_ORANGE],
-    );
-    const withRadio =
-      radioPulse > 0.002
-        ? interpolateColor(radioPulse, [0, 1], [hotColor, machined])
-        : hotColor;
+    const ring = g + r * 0.85 + flare * 0.9 + radioPulse * 0.5;
+    const capped = ring > 1.45 ? 1.45 : ring;
+    const glow = 0.22 + capped * 0.38;
+    const radius = 999;
     return {
       width: widthSV.value,
       height: heightSV.value,
-      borderWidth: 1 + flare * 0.8 + radioPulse * 0.55,
-      borderColor: withRadio,
-      shadowColor: withRadio,
-      shadowOpacity: 0.25 + capped * 0.78 + radioPulse * 0.22,
-      shadowRadius: 6 + capped * 22 + radioPulse * 10,
+      borderRadius: radius,
+      borderWidth: 1,
+      borderColor: PILL_CYAN,
+      backgroundColor: 'transparent',
+      shadowColor: PILL_CYAN,
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: glow,
+      shadowRadius: 6 + capped * 14,
+      elevation: Platform.OS === 'android' ? Math.min(12, 4 + Math.round(capped * 6)) : 0,
     };
   });
 
-  /** Pull the pill into the status bar while expanded so it briefly covers the clock. */
+  /**
+   * FIX_PILL_COLLISION — expanded pill must grow DOWNWARD from its resting
+   * position, not lift up into the hardware Dynamic Island cutout. Removing
+   * the -18pt lift keeps the cyan border clearly below Apple's system overlay.
+   */
   const pillWrapLiftStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: -18 * expandedOpacity.value }],
+    transform: [{ translateY: 0 * expandedOpacity.value }],
   }));
 
   const magentaDotStyle = useAnimatedStyle(() => ({
@@ -605,7 +615,9 @@ export function DynamicIsland() {
   // sit inside the status bar area end up with the clock visually on top and
   // the middle content occluded. Sitting 8pt below insets.top keeps the pill
   // fully visible while still feeling anchored to the top.
-  const pillTop = insets.top;
+  // FIX_PILL_COLLISION — pill anchor lifted 8pt above the safe-area top so
+  // it rides up against the hardware Dynamic Island / notch on 14-15 Pro.
+  const pillTop = insets.top - 8;
 
   /** HD badge appears for premium subs whenever audio is engaged. */
   const showHdBadge = isPremium && (isPlaying || isStreamResolving);
@@ -661,9 +673,16 @@ export function DynamicIsland() {
                 <Text numberOfLines={1} style={styles.metaTitle}>
                   {currentTrack?.title ?? 'Now Playing'}
                 </Text>
-                <Text numberOfLines={1} style={styles.metaArtist}>
-                  {metaArtistLine}
-                </Text>
+                <View style={styles.metaArtistRow}>
+                  <Text numberOfLines={1} style={styles.metaArtist}>
+                    {metaArtistLine}
+                  </Text>
+                  {losslessTag ? (
+                    <Text style={styles.metaFormatBadge} accessibilityLabel={`${losslessTag} stream`}>
+                      {losslessTag}
+                    </Text>
+                  ) : null}
+                </View>
                 {healingStreamActive && isStreamResolving ? (
                   <Animated.Text
                     numberOfLines={1}
@@ -715,9 +734,21 @@ export function DynamicIsland() {
                 <Text numberOfLines={1} style={styles.expandedTitle}>
                   {currentTrack?.title ?? 'Nothing playing'}
                 </Text>
-                <Text numberOfLines={1} style={styles.expandedArtist}>
-                  {currentTrack?.artist ?? 'Tap the pill any time to peek'}
-                </Text>
+                <View style={styles.expandedArtistRow}>
+                  <Text numberOfLines={1} style={styles.expandedArtist}>
+                    {currentTrack?.artist ?? 'Tap the pill any time to peek'}
+                  </Text>
+                  {losslessTag ? (
+                    <Text style={styles.expandedFormatBadge} accessibilityLabel={`${losslessTag} stream`}>
+                      {losslessTag}
+                    </Text>
+                  ) : null}
+                </View>
+                {expandedThemeLabel ? (
+                  <Text numberOfLines={1} style={styles.expandedSourceBadge}>
+                    {expandedThemeLabel}
+                  </Text>
+                ) : null}
                 <Pressable
                   onLongPress={handlePoweredByDavinciLongPress}
                   delayLongPress={520}
@@ -853,19 +884,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   pill: {
-    backgroundColor: OLED,
+    backgroundColor: 'transparent',
     borderRadius: 999,
-    borderWidth: 1,
-    overflow: 'hidden',
+    overflow: 'visible',
     justifyContent: 'center',
     alignItems: 'center',
     ...Platform.select({
       ios: {
         shadowOffset: { width: 0, height: 0 },
       },
-      android: {
-        elevation: 9,
-      },
+      android: {},
       default: {},
     }),
   },
@@ -874,9 +902,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   metaRow: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     width: '100%',
     height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   metaThumb: {
     width: 22,
@@ -907,7 +937,9 @@ const styles = StyleSheet.create({
     opacity: 0.55,
   },
   metaText: {
-    flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: Math.round(SCREEN_W * 0.58),
     marginLeft: 10,
     marginRight: 8,
   },
@@ -916,19 +948,30 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     letterSpacing: 0.2,
-    textShadowColor: 'rgba(0,0,0,0.82)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 5,
+  },
+  metaArtistRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 1,
+    minWidth: 0,
+    flexShrink: 1,
   },
   metaArtist: {
-    color: 'rgba(255,255,255,0.6)',
+    color: '#67E8F9',
     fontSize: 10,
-    fontWeight: '500',
-    marginTop: 1,
+    fontWeight: '600',
     letterSpacing: 0.15,
-    textShadowColor: 'rgba(0,0,0,0.75)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  metaFormatBadge: {
+    marginLeft: 6,
+    paddingHorizontal: 4,
+    color: PILL_CYAN,
+    fontSize: 8,
+    fontWeight: '900',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
   },
   healingLine: {
     marginTop: 3,
@@ -938,24 +981,15 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '900',
     letterSpacing: 1.4,
-    textShadowColor: '#00FFFF',
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 6,
   },
   heartbeat: {
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: NEON_MAGENTA,
-    shadowColor: NEON_MAGENTA,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 1,
-    shadowRadius: 6,
   },
   heartbeatHeal: {
     backgroundColor: BABY_BLUE,
-    shadowColor: BABY_BLUE,
-    shadowOpacity: 0.95,
   },
   expandedRoot: {
     flexDirection: 'row',
@@ -979,26 +1013,46 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0.2,
-    textShadowColor: 'rgba(0,0,0,0.82)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 5,
+  },
+  expandedArtistRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+    minWidth: 0,
   },
   expandedArtist: {
-    color: 'rgba(255,255,255,0.65)',
+    color: '#67E8F9',
     fontSize: 12,
-    fontWeight: '500',
-    marginTop: 2,
-    textShadowColor: 'rgba(0,0,0,0.75)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+    fontWeight: '600',
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  expandedFormatBadge: {
+    marginLeft: 8,
+    color: PILL_CYAN,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  expandedSourceBadge: {
+    marginTop: 5,
+    color: PILL_CYAN,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 2.2,
+    textTransform: 'uppercase',
+    opacity: 0.92,
   },
   expandedPoweredBy: {
-    color: '#6E6E73',
-    fontSize: 8,
-    fontWeight: '700',
-    letterSpacing: 1.8,
-    marginTop: 6,
+    color: 'rgba(148,148,158,0.92)',
+    fontSize: 7,
+    fontWeight: '800',
+    letterSpacing: 2.35,
+    marginTop: 5,
     textTransform: 'uppercase',
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+    fontVariant: ['tabular-nums'],
   },
   expandedSoul: {
     marginTop: 8,
@@ -1113,13 +1167,11 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   hdBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 5,
     marginRight: 8,
-    backgroundColor: 'rgba(0,229,255,0.18)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#00E5FF',
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
   },
   hdBadgeText: {
     color: '#00E5FF',

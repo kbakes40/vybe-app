@@ -31,10 +31,10 @@ import Animated, {
 } from 'react-native-reanimated';
 import { authClient } from '@/lib/auth/auth-client';
 import { persistSessionBearerFromAuthResult } from '@/lib/auth/sessionBearer';
+import { getPostAuthDestination } from '@/lib/auth/postAuthDestination';
 import { api } from '@/lib/api/api';
 import { VybeIcon } from '@/components/VybeIcon';
 import { useVybePopup } from '@/components/VybePopup';
-import { useUpgradePromptStore } from '@/stores/upgradePromptStore';
 import { usePostLoginWelcomeStore } from '@/stores/postLoginWelcomeStore';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import {
@@ -74,10 +74,6 @@ WebBrowser.maybeCompleteAuthSession();
 
 const GOOGLE_IOS_CLIENT_ID =
   '405236221156-rg9n0cquvqrh7rcg7nrbmgc20i46kgpn.apps.googleusercontent.com';
-
-interface UserPreferences {
-  onboardingDone: boolean;
-}
 
 type AuthView = 'main' | 'email';
 
@@ -127,7 +123,6 @@ export default function SignInScreen() {
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isAppleAvailable, setIsAppleAvailable] = useState(false);
-  const hasSeenPrompt = useUpgradePromptStore((s) => s.hasSeenPrompt);
   const browserOpenRef = useRef(false);
   const logoRef = useRef<View>(null);
 
@@ -137,15 +132,16 @@ export default function SignInScreen() {
   });
 
   /**
-   * YouTube cookies are injected on the server (`YOUTUBE_COOKIES`); this flag only skips the
-   * sign-in chrome in **development** so you land on the Decades Vault tab immediately.
-   * Set `EXPO_PUBLIC_DEV_VAULT_ENTRY=1` in `.env` (never ship to production stores).
+   * Dev-only bypass: when `EXPO_PUBLIC_DEV_VAULT_ENTRY=1`, skip the sign-in chrome
+   * and drop into `/onboarding` so the standard onboarding → tabs flow still runs
+   * (previously jumped straight to tabs and skipped onboarding entirely).
+   * Never ship to production stores.
    */
   useEffect(() => {
     if (!__DEV__) return;
     if (process.env.EXPO_PUBLIC_DEV_VAULT_ENTRY !== '1') return;
     const id = requestAnimationFrame(() => {
-      router.replace('/(app)/(tabs)');
+      void getPostAuthDestination().then((dest) => router.replace(dest));
     });
     return () => cancelAnimationFrame(id);
   }, [router]);
@@ -201,26 +197,11 @@ export default function SignInScreen() {
 
   const navigateAfterAuth = async () => {
     usePostLoginWelcomeStore.getState().queueEnjoyVibes();
-    try {
-      const preferences = await api.get<UserPreferences>('/api/user/preferences');
-      if (router.canDismiss()) {
-        router.dismissAll();
-      }
-      if (preferences?.onboardingDone) {
-        if (!hasSeenPrompt) {
-          replaceWithOptionalMorph('/(app)/upgrade');
-        } else {
-          replaceWithOptionalMorph('/(app)/(tabs)');
-        }
-      } else {
-        replaceWithOptionalMorph('/onboarding');
-      }
-    } catch {
-      if (router.canDismiss()) {
-        router.dismissAll();
-      }
-      replaceWithOptionalMorph('/(app)/(tabs)');
+    if (router.canDismiss()) {
+      router.dismissAll();
     }
+    const dest = await getPostAuthDestination();
+    replaceWithOptionalMorph(dest);
   };
 
   const handleGoogleToken = async (idToken: string) => {

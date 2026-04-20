@@ -60,7 +60,9 @@ import {
   Bug,
 } from 'lucide-react-native';
 import { authClient } from '@/lib/auth/auth-client';
-import { terminateAllPillNative } from '@/lib/NowPlayingActivityManager';
+import { activityTerminateAll, startNowPlayingActivity } from '@/lib/NowPlayingActivityManager';
+import { usePillLockStore } from '@/stores/pillLockStore';
+import { NativeModules } from 'react-native';
 import { clearSessionBearerToken } from '@/lib/auth/sessionBearer';
 import { useDiscoveryStore } from '@/stores/discoveryStore';
 import { useDownloadsStore, formatFileSize } from '@/stores/downloadsStore';
@@ -488,7 +490,7 @@ export default function SettingsScreen() {
 
   const handleSignOut = async () => {
     console.log('[signOut] starting…');
-    terminateAllPillNative();
+    activityTerminateAll();
     // Step 1: best-effort backend sign-out (don't let a backend hiccup block local cleanup).
     try {
       await authClient.signOut();
@@ -1113,6 +1115,36 @@ export default function SettingsScreen() {
               switchValue={debugOverlayVisible}
               onSwitchChange={(val) => {
                 if (val !== debugOverlayVisible) toggleDebugOverlay();
+              }}
+            />
+            <SettingsItem
+              searchQuery={q}
+              icon={<CategoryIcon category="developer"><Bug /></CategoryIcon>}
+              title="Force Start Pill"
+              subtitle="Manually ignite the Dynamic Island bridge (diagnostic)"
+              showChevron
+              onPress={async () => {
+                const s = usePillLockStore.getState();
+                const bridge = (NativeModules as { VybeNowPlayingActivity?: unknown }).VybeNowPlayingActivity;
+                console.log('[ForceStartPill] pre-flight', {
+                  hasUser: s.hasUser,
+                  allow: s.allowIslandSurfaces,
+                  bridgeAvailable: !!bridge,
+                });
+                showVybePopup({
+                  title: 'Force Start Pill',
+                  message: `hasUser: ${s.hasUser}\nallow: ${s.allowIslandSurfaces}\nbridge: ${!!bridge}\n\nCheck logs for startNowPlaying trace.`,
+                  type: 'info',
+                  actions: [{ text: 'OK', style: 'default' }],
+                });
+                await startNowPlayingActivity(
+                  'Vybe Diagnostic',
+                  'ForceStartPill',
+                  'https://i.scdn.co/image/ab67616d00001e020f8a5c94e0b47d4bdcbe8c2a',
+                  180,
+                  'Diagnostic',
+                );
+                void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
               }}
             />
             <SettingsItem

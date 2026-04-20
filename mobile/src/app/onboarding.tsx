@@ -26,14 +26,16 @@ import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '@/lib/api/api';
+import {
+  hasOnboardingCompleted,
+  ONBOARDING_VIBES_STORAGE_KEY,
+} from '@/lib/auth/postAuthDestination';
 import { vybe } from '@/theme/vybeTokens';
 import { useFireMixStore } from '@/stores/fireMixStore';
 
 const NEON_CYAN = '#00FFFF';
 const BABY_BLUE_FLASH = 'rgba(159, 217, 255, 0.72)';
 const OLED_BLACK = '#000000';
-
-const VIBE_PREFS_KEY = '@vybe/onboarding_vibes';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const CARD_GAP = 12;
@@ -176,6 +178,18 @@ export default function OnboardingScreen() {
   const [loading, setLoading] = useState(false);
   const [flashNonce, setFlashNonce] = useState(0);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (await hasOnboardingCompleted()) {
+        if (!cancelled) router.replace('/(app)/(tabs)' as never);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
+
   const exitScale = useSharedValue(1);
   const exitOpacity = useSharedValue(1);
 
@@ -194,23 +208,30 @@ export default function OnboardingScreen() {
     const genres = VYBE_STYLES.filter((s) => selected.has(s.id)).map((s) => s.label);
     useFireMixStore.getState().buildFromGenres(genres);
     try {
-      await AsyncStorage.setItem(VIBE_PREFS_KEY, JSON.stringify({ genres, savedAt: Date.now() }));
+      await AsyncStorage.setItem(
+        ONBOARDING_VIBES_STORAGE_KEY,
+        JSON.stringify({ genres, savedAt: Date.now() }),
+      );
     } catch {
       /* non-fatal */
     }
-    try {
-      await api.post('/api/user/preferences', {
-        genres,
-        mood: null,
-        eraPreference: null,
-        onboardingDone: true,
-      });
-    } catch (e) {
-      console.warn('[onboarding] preferences save', e);
-    }
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setLoading(false);
-    router.replace('/(app)/(tabs)/index' as never);
+    // Same href as the rest of the app — `/(app)/(tabs)/index` is not used elsewhere and can fail to match the file route.
+    router.replace('/(app)/(tabs)' as never);
+
+    void (async () => {
+      try {
+        await api.post('/api/user/preferences', {
+          genres,
+          mood: null,
+          eraPreference: null,
+          onboardingDone: true,
+        });
+      } catch (e) {
+        console.warn('[onboarding] preferences save', e);
+      }
+    })();
   }, [router, selected]);
 
   const screenExitStyle = useAnimatedStyle(() => ({
@@ -229,12 +250,13 @@ export default function OnboardingScreen() {
       exitOpacity.value = withTiming(
         0,
         { duration: 420, easing: Easing.in(Easing.cubic) },
-        (finished) => {
-          if (finished) {
-            runOnJS(() => {
-              void persistAndGoHome();
-            })();
-          }
+        () => {
+          'worklet';
+          // Always continue — if `finished` is false (animation interrupted), we still
+          // navigate; otherwise the screen stays at opacity 0 and feels like a force-quit.
+          // Pass the stable useCallback ref directly — wrapping an inline arrow inside
+          // runOnJS from a worklet crashes on recent Reanimated (can't serialize closure).
+          runOnJS(persistAndGoHome)();
         },
       );
     };
@@ -274,7 +296,7 @@ export default function OnboardingScreen() {
         </ScrollView>
       </Animated.View>
 
-      <View
+      <Animated.View
         pointerEvents="box-none"
         style={[
           styles.sticky,
@@ -282,6 +304,7 @@ export default function OnboardingScreen() {
             paddingBottom: Math.max(insets.bottom, 12) + 8,
             borderTopColor: 'rgba(255,255,255,0.08)',
           },
+          screenExitStyle,
         ]}
       >
         <Pressable
@@ -299,7 +322,7 @@ export default function OnboardingScreen() {
             <Text style={[styles.nextBtnText, canContinue && styles.nextBtnTextActive]}>Next</Text>
           )}
         </Pressable>
-      </View>
+      </Animated.View>
     </View>
   );
 }

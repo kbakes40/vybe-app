@@ -37,6 +37,7 @@ import { LoadingRing } from '@/components/LoadingRing';
 import * as Haptics from 'expo-haptics';
 import { MINI_PLAYER_HEIGHT, TAB_BAR_HEIGHT } from '@/constants/Layout';
 import { useThemeStore } from '@/stores/themeStore';
+import { usePillLockStore } from '@/stores/pillLockStore';
 import { hexToRgb } from '@/lib/themeColorUtils';
 
 const AnimatedRect = Animated.createAnimatedComponent(Rect);
@@ -97,6 +98,7 @@ type MiniPlayerProps = {
 };
 
 function MiniPlayerInner({ bottomLift }: MiniPlayerProps) {
+  const hasUser = usePillLockStore((s) => s.hasUser);
   const insets = useSafeAreaInsets();
   const sheetExpanded = useNowPlayingSheetStore((s) => s.isExpanded);
   const keyboardVisible = useKeyboardChromeStore((s) => s.keyboardVisible);
@@ -575,6 +577,8 @@ function MiniPlayerInner({ bottomLift }: MiniPlayerProps) {
       ),
     };
   });
+
+  if (!hasUser) return null;
 
   return (
     <Animated.View

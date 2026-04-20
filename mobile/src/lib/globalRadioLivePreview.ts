@@ -56,6 +56,8 @@ const POLL_ROWS: PollRow[] = [
   { id: 'country', kind: 'lautfm', slug: 'country' },
   { id: 'house', kind: 'somafm', songsId: 'groovesalad' },
   { id: 'jazz', kind: 'somafm', songsId: 'sonicuniverse' },
+  { id: 'jazz_secret', kind: 'somafm', songsId: 'secretagent' },
+  { id: 'jazz_beat', kind: 'somafm', songsId: 'beatblender' },
   { id: 'ambient', kind: 'somafm', songsId: 'dronezone' },
   { id: 'indie', kind: 'somafm', songsId: 'indiepop' },
 ];

@@ -1,54 +1,63 @@
-import React, { useEffect, useLayoutEffect, useRef } from 'react';
-import { usePathname, useSegments } from 'expo-router';
+import React, { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { authClient } from '@/lib/auth/auth-client';
-import {
-  computeAllowIslandSurfaces,
-  usePillLockStore,
-} from '@/stores/pillLockStore';
+import { usePillLockStore } from '@/stores/pillLockStore';
 import {
   startNowPlayingActivity,
-  terminateAllPillNative,
+  activityTerminateAll,
 } from '@/lib/NowPlayingActivityManager';
 import { usePlaybackController } from '@/stores/playbackController';
 
 /**
- * Root-only sync: maps session + route → pill lock store (layout effect so
- * consumers read the correct flag before first paint), terminates native
- * pill / ActivityKit when disallowed, and re-seeds MPNowPlaying when allowed
- * again with an active track (tab-hopping safe).
+ * AUTH_LOCK_SYNC — root `_layout.tsx` only.
+ * - Writes `hasUser` / `allowIslandSurfaces` only when session **identity** changes
+ *   (`hasUser` boolean + id/email key), not on pathname / scroll.
+ * - In-app `sign-in` modal while authenticated: session user remains → stays TRUE → pill visible.
+ * - Logout: `hasUser` false → `activityTerminateAll()` on the falling edge (hardware clear).
  */
 export function PillLockSync() {
-  const { data: session, isPending } = authClient.useSession();
-  const pathname = usePathname();
-  const segments = useSegments();
+  const { data: session } = authClient.useSession();
 
-  const allow = computeAllowIslandSurfaces({
-    isPending,
-    hasUser: !!session?.user,
-    pathname: String(pathname ?? ''),
-    segments: segments as string[],
-  });
+  const hasUser = !!session?.user;
+  const authSyncKey = useMemo(() => {
+    const u = session?.user;
+    if (!u) return null;
+    const id = (u as { id?: string }).id;
+    const email = (u as { email?: string }).email;
+    return `${id ?? ''}|${email ?? ''}`;
+  }, [session?.user?.id, session?.user?.email]);
 
   useLayoutEffect(() => {
-    usePillLockStore.getState().setAllowIslandSurfaces(allow);
-  }, [allow]);
+    if (__DEV__) console.log('[PillLockSync] layoutEffect → sync', { hasUser, authSyncKey });
+    usePillLockStore.getState().syncAuthLockFromSession(hasUser);
+  }, [hasUser, authSyncKey]);
 
-  const prevAllow = useRef(allow);
+  const prevHasUser = useRef(false);
   useEffect(() => {
-    const prev = prevAllow.current;
-    prevAllow.current = allow;
+    const prev = prevHasUser.current;
+    prevHasUser.current = hasUser;
+    if (__DEV__) console.log('[PillLockSync] transition', { prev, hasUser });
 
-    if (prev && !allow) {
-      terminateAllPillNative();
+    if (prev && !hasUser) {
+      if (__DEV__) console.log('[PillLockSync] → terminate (sign-out)');
+      activityTerminateAll();
       return;
     }
 
-    if (!prev && allow) {
+    if (!prev && hasUser) {
       const { currentTrack, playbackState } = usePlaybackController.getState();
+      if (__DEV__) {
+        console.log('[PillLockSync] sign-in reseed check', {
+          hasTrack: !!currentTrack,
+          playbackState,
+          title: currentTrack?.title,
+          album: currentTrack?.globalRadioIslandAlbum,
+        });
+      }
       if (
         currentTrack &&
         (playbackState === 'playing' || playbackState === 'buffering' || playbackState === 'loading')
       ) {
+        if (__DEV__) console.log('[PillLockSync] → startNowPlayingActivity (reseed)');
         void startNowPlayingActivity(
           currentTrack.title,
           currentTrack.artist,
@@ -58,7 +67,7 @@ export function PillLockSync() {
         );
       }
     }
-  }, [allow]);
+  }, [hasUser]);
 
   return null;
 }

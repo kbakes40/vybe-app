@@ -1225,8 +1225,9 @@ export default function HomeScreen() {
       if (usePostLoginWelcomeStore.getState().consumeEnjoyVibes()) {
         showVybePopup({
           title: 'Enjoy the Vibes 😎',
-          message: "You're in. Your session is live.",
+          message: 'Frequency found. Stay a while.',
           type: 'success',
+          visualTone: 'chill',
         });
       }
       return () => {};
@@ -1748,14 +1749,14 @@ export default function HomeScreen() {
         <Animated.View style={listMotionStyle}>
         <View
           style={{
-            paddingTop: insets.top + 64,
+            paddingTop: insets.top + 78,
             backgroundColor: '#000000',
             paddingHorizontal: 20,
             alignItems: 'flex-start',
             width: '100%',
           }}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', paddingTop: 4 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch', paddingTop: 0 }}>
             <VybeHeaderMark size={36} />
             <Animated.View
               style={[
@@ -1776,9 +1777,6 @@ export default function HomeScreen() {
                   fontWeight: '800',
                   letterSpacing: -0.5,
                   textAlign: 'left',
-                  textShadowColor: 'rgba(34, 211, 238, 0.6)',
-                  textShadowOffset: { width: 0, height: 0 },
-                  textShadowRadius: 12,
                 }}
               >
                 <AnimatedText style={headlineCyanPulseStyle}>Your Vybe</AnimatedText>

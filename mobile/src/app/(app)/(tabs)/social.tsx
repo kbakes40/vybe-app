@@ -467,7 +467,7 @@ export default function SocialScreen() {
   return (
     <SocialStylesCtx.Provider value={styles}>
     <View style={styles.screen}>
-      <View style={[styles.topBar, { paddingTop: insets.top + 64 }]}>
+      <View style={[styles.topBar, { paddingTop: insets.top + 100 }]}>
         <View style={styles.topBarRow}>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={styles.screenTitle}>Vybe Activity</Text>

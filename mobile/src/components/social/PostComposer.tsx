@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   InputAccessoryView,
+  InteractionManager,
   Keyboard,
   Platform,
   Pressable,
@@ -465,22 +466,23 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
   }, [visible, currentTrack, animationConfigs]);
 
   const handleSheetChange = useCallback((index: number) => {
-    if (index === 0 && !focusedFirstSnapRef.current) {
-      focusedFirstSnapRef.current = true;
-      requestAnimationFrame(() => {
-        inputRef.current?.focus();
-      });
-    }
+    if (index !== 0 || focusedFirstSnapRef.current) return;
+    focusedFirstSnapRef.current = true;
+    // Defer focus until after sheet + backdrop finish — opening the keyboard in
+    // the same frame as the sheet snap caused iOS keyboard layout to thrash.
+    InteractionManager.runAfterInteractions(() => {
+      inputRef.current?.focus();
+    });
   }, []);
 
-  /** If `onChange` misses the first snap, still focus once the sheet is up. */
+  /** Fallback if `onChange` never fires at index 0 (rare cold-mount race). */
   useEffect(() => {
     if (!visible) return;
     const t = setTimeout(() => {
       if (focusedFirstSnapRef.current) return;
       focusedFirstSnapRef.current = true;
-      inputRef.current?.focus();
-    }, 520);
+      InteractionManager.runAfterInteractions(() => inputRef.current?.focus());
+    }, 640);
     return () => clearTimeout(t);
   }, [visible]);
 
@@ -632,9 +634,10 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
       enablePanDownToClose
       enableDismissOnClose
       enableContentPanningGesture={false}
-      keyboardBlurBehavior="restore"
-      // Extend the sheet with the keyboard; nesting KeyboardAvoidingView on top of Gorhom collapses the compose area on iOS.
-      keyboardBehavior="extend"
+      // `restore` + `extend` fought the keyboard on iOS (layout thrash / “keys jumping”).
+      // `interactive` tracks keyboard height in sync with Gorhom’s default behavior.
+      keyboardBlurBehavior="none"
+      keyboardBehavior="interactive"
       android_keyboardInputMode="adjustResize"
       topInset={insets.top}
       animationConfigs={animationConfigs}
@@ -647,6 +650,7 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
       <BottomSheetScrollView
         style={{ flex: 1 }}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="none"
         contentContainerStyle={[styles.body, { paddingBottom: 8 + insets.bottom }]}
       >
           {/* Tight header — close X on left, title pill, POST chip on right */}

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,13 +10,13 @@ import { fetchRadioParadiseNowPlaying } from '@/lib/radioParadiseApi';
 import { RadioParadiseSoulActions } from '@/components/radio/RadioParadiseSoulActions';
 import {
   buildGlobalRadioTrack,
+  play as globalRadioPlayBridge,
   type GlobalRadioStationId,
-  type DecadesEraTab,
   GLOBAL_RADIO_STATIONS,
+  JAZZ_SUB_STATION_ORDER,
 } from '@/lib/GlobalRadioClient';
 import { GlobalRadioPillBar } from '@/components/radio/GlobalRadioPillBar';
-import { DecadesVaultEraStrip } from '@/components/radio/DecadesVaultEraStrip';
-import { GlobalExpansionRadioList } from '@/components/radio/GlobalExpansionRadioList';
+import { RadioUnityStationList } from '@/components/radio/RadioUnityStationList';
 import { useThemeStore } from '@/stores/themeStore';
 import { hexToRgba } from '@/lib/themeColorUtils';
 import {
@@ -34,8 +34,10 @@ export default function GlobalRadioTabScreen() {
   const play = usePlaybackController((s) => s.play);
 
   const [genrePill, setGenrePill] = useState<GlobalRadioStationId>('paradise');
-  const [eraTab, setEraTab] = useState<DecadesEraTab>('global');
-  const [expansionPick, setExpansionPick] = useState<GlobalRadioStationId | null>(null);
+  /** When GLOBAL pill is selected, which expansion relay is active / playing. */
+  const [globalRelayId, setGlobalRelayId] = useState<GlobalRadioStationId>('worldwide_fm');
+  /** When JAZZ pill is selected, which SomaFM sub-relay is active / playing. */
+  const [jazzRelayId, setJazzRelayId] = useState<GlobalRadioStationId>('jazz');
 
   const [rpPreview, setRpPreview] = useState<{ title: string; artist: string; artwork: string } | null>(null);
   const [rpLoading, setRpLoading] = useState(true);
@@ -43,16 +45,8 @@ export default function GlobalRadioTabScreen() {
     Partial<Record<GlobalRadioStationId, GlobalRadioLivePreview>>
   >({});
 
-  useEffect(() => {
-    if (eraTab !== 'global') setExpansionPick(null);
-  }, [eraTab]);
-
-  const streamStation: GlobalRadioStationId = useMemo(() => {
-    if (eraTab === 'global') {
-      return expansionPick ?? genrePill;
-    }
-    return eraTab as GlobalRadioStationId;
-  }, [eraTab, expansionPick, genrePill]);
+  const streamStation: GlobalRadioStationId =
+    genrePill === 'global_hub' ? globalRelayId : genrePill === 'jazz' ? jazzRelayId : genrePill;
 
   const streamDef = GLOBAL_RADIO_STATIONS[streamStation];
   const isThisStation =
@@ -109,16 +103,6 @@ export default function GlobalRadioTabScreen() {
     [liveByStation],
   );
 
-  const pillLiveArtwork = useMemo(() => {
-    const o: Partial<Record<GlobalRadioStationId, string>> = {};
-    (Object.entries(liveByStation) as Array<[GlobalRadioStationId, GlobalRadioLivePreview]>).forEach(
-      ([k, v]) => {
-        if (v?.artwork) o[k] = v.artwork;
-      },
-    );
-    return o;
-  }, [liveByStation]);
-
   const onPlay = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const tr = buildGlobalRadioTrack(
@@ -145,14 +129,60 @@ export default function GlobalRadioTabScreen() {
 
   const onSelectGenrePill = useCallback(
     (id: GlobalRadioStationId) => {
-      setGenrePill(id);
-      if (eraTab !== 'global' || expansionPick !== null) return;
+      const resolved = id === 'paradise' ? globalRadioPlayBridge('RP_MAIN') : id;
+
+      let nextPill: GlobalRadioStationId = resolved;
+      let streamId: GlobalRadioStationId = resolved;
+
+      if (resolved === 'global_hub') {
+        nextPill = 'global_hub';
+        if (genrePill !== 'global_hub') {
+          setGlobalRelayId('worldwide_fm');
+          streamId = 'worldwide_fm';
+        } else {
+          streamId = globalRelayId;
+        }
+      } else if (resolved === 'jazz') {
+        nextPill = 'jazz';
+        if (genrePill !== 'jazz') {
+          setJazzRelayId('jazz');
+          streamId = 'jazz';
+        } else {
+          streamId = jazzRelayId;
+        }
+      }
+
+      setGenrePill(nextPill);
+
       const playing = usePlaybackController.getState();
       const cur = playing.currentTrack;
       const shouldSwap =
         cur?.source === 'global_radio' &&
         (playing.playbackState === 'playing' || playing.playbackState === 'paused');
       if (!shouldSwap) return;
+
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      const tr = buildGlobalRadioTrack(
+        streamId,
+        GLOBAL_RADIO_STATIONS[streamId].metadataSource === 'radioparadise_api' ? rpPreview : null,
+        staticLiveFor(streamId),
+      );
+      void playTrack(tr, [tr], { expandNowPlaying: false });
+    },
+    [playTrack, rpPreview, staticLiveFor, genrePill, globalRelayId, jazzRelayId],
+  );
+
+  const onPickJazzRelay = useCallback(
+    (id: GlobalRadioStationId) => {
+      if (!JAZZ_SUB_STATION_ORDER.includes(id)) return;
+      setJazzRelayId(id);
+      const playing = usePlaybackController.getState();
+      const cur = playing.currentTrack;
+      const shouldSwap =
+        cur?.source === 'global_radio' &&
+        (playing.playbackState === 'playing' || playing.playbackState === 'paused');
+      if (!shouldSwap) return;
+
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       const tr = buildGlobalRadioTrack(
         id,
@@ -161,16 +191,28 @@ export default function GlobalRadioTabScreen() {
       );
       void playTrack(tr, [tr], { expandNowPlaying: false });
     },
-    [playTrack, rpPreview, staticLiveFor, eraTab, expansionPick],
+    [playTrack, rpPreview, staticLiveFor],
   );
 
-  const onExpansionPick = useCallback(
+  const onPickGlobalRelay = useCallback(
     (id: GlobalRadioStationId) => {
-      setExpansionPick(id);
-      const tr = buildGlobalRadioTrack(id, null, staticLiveFor(id));
+      setGlobalRelayId(id);
+      const playing = usePlaybackController.getState();
+      const cur = playing.currentTrack;
+      const shouldSwap =
+        cur?.source === 'global_radio' &&
+        (playing.playbackState === 'playing' || playing.playbackState === 'paused');
+      if (!shouldSwap) return;
+
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      const tr = buildGlobalRadioTrack(
+        id,
+        GLOBAL_RADIO_STATIONS[id].metadataSource === 'radioparadise_api' ? rpPreview : null,
+        staticLiveFor(id),
+      );
       void playTrack(tr, [tr], { expandNowPlaying: false });
     },
-    [playTrack, staticLiveFor],
+    [playTrack, rpPreview, staticLiveFor],
   );
 
   const liveSnap = needsRpPreview ? null : liveByStation[streamStation];
@@ -187,86 +229,81 @@ export default function GlobalRadioTabScreen() {
       ? rpPreview?.artist ?? ''
       : liveSnap?.artist ?? streamDef.staticNowPlaying?.artist ?? streamDef.diChannelTag;
 
-  const showGlobalList = eraTab === 'global';
-  const showCard = !showGlobalList || expansionPick !== null;
-
   return (
-    <View style={[styles.root, { paddingTop: insets.top + 64, paddingBottom: insets.bottom + 24 }]}>
-      <GlobalRadioPillBar
-        selectedId={genrePill}
-        onSelect={onSelectGenrePill}
-        paradiseArtUri={rpPreview?.artwork?.trim() ? rpPreview.artwork : null}
-        liveArtworkById={pillLiveArtwork}
-      />
+    <View style={[styles.root, { paddingTop: insets.top + 100, paddingBottom: insets.bottom + 24 }]}>
+      <GlobalRadioPillBar selectedId={genrePill} onSelect={onSelectGenrePill} />
 
-      <DecadesVaultEraStrip selected={eraTab} onSelect={setEraTab} />
+      <RadioUnityStationList
+        stationId={genrePill}
+        accent={accent}
+        globalRelayId={globalRelayId}
+        onPickGlobalRelay={onPickGlobalRelay}
+        jazzRelayId={jazzRelayId}
+        onPickJazzRelay={onPickJazzRelay}
+      />
 
       <View style={styles.headerRow}>
         <Radio color={accent} size={22} strokeWidth={2.2} />
         <Text style={styles.header}>Vybe Radio</Text>
       </View>
       <Text style={styles.sub}>
-        {eraTab === 'global' ? 'Global relays' : 'Decades Vault'} · {streamDef.pillLabel}
+        Live stream ·{' '}
+        {genrePill === 'global_hub'
+          ? `GLOBAL · ${GLOBAL_RADIO_STATIONS[streamStation].pillLabel}`
+          : streamDef.pillLabel}
       </Text>
 
-      {showGlobalList ? (
-        <View style={[styles.listShell, { borderColor: hexToRgba(accent, 0.28) }]}>
-          <Text style={styles.listHint}>Select a station</Text>
-          <GlobalExpansionRadioList
-            selectedId={expansionPick}
-            accent={accent}
-            onPick={onExpansionPick}
-          />
-        </View>
-      ) : null}
-
-      {showCard ? (
-        <View style={[styles.card, { borderColor: hexToRgba(accent, 0.35) }]}>
-          {needsRpPreview && rpLoading && !rpPreview ? (
-            <ActivityIndicator color={accent} style={{ marginVertical: 40 }} />
-          ) : (
-            <>
-              <View style={styles.artWrap}>
-                <Image source={{ uri: artUri }} style={styles.art} contentFit="cover" transition={200} />
-                <Pressable
-                  onPress={onToggle}
-                  style={styles.artPlayOverlay}
-                  accessibilityRole="button"
-                  accessibilityLabel={isPlayingStation ? 'Pause stream' : 'Play stream'}
+      <View style={[styles.card, { borderColor: hexToRgba(accent, 0.35) }]}>
+        {needsRpPreview && rpLoading && !rpPreview ? (
+          <ActivityIndicator color={accent} style={{ marginVertical: 40 }} />
+        ) : (
+          <>
+            <View style={styles.artWrap}>
+              <Image source={{ uri: artUri }} style={styles.art} contentFit="cover" transition={200} />
+              <Pressable
+                onPress={onToggle}
+                style={styles.artPlayOverlay}
+                accessibilityRole="button"
+                accessibilityLabel={isPlayingStation ? 'Pause stream' : 'Play stream'}
+              >
+                <View
+                  style={[
+                    styles.artPlayFab,
+                    { borderColor: hexToRgba(accent, 0.95), backgroundColor: 'rgba(0,0,0,0.42)' },
+                  ]}
                 >
-                  <View
-                    style={[
-                      styles.artPlayFab,
-                      { borderColor: hexToRgba(accent, 0.95), backgroundColor: 'rgba(0,0,0,0.42)' },
-                    ]}
-                  >
-                    {isThisStation &&
-                    (playbackState === 'loading' || playbackState === 'buffering') ? (
-                      <ActivityIndicator color={accent} />
-                    ) : isPlayingStation ? (
-                      <Pause size={30} color={accent} fill={accent} />
-                    ) : (
-                      <Play size={30} color={accent} fill={accent} style={{ marginLeft: 3 }} />
-                    )}
-                  </View>
-                </Pressable>
-              </View>
-              <Text style={styles.onAir} numberOfLines={1}>
-                {titlePreview}
-              </Text>
-              <Text style={[styles.onAirArtist, { color: accent }]} numberOfLines={2}>
-                {artistPreview}
-              </Text>
-              <View style={styles.soulOverlay}>
-                <RadioParadiseSoulActions
-                  layout="full"
-                  tabContext={{ stationId: streamStation, rpPreview }}
-                />
-              </View>
-            </>
-          )}
-        </View>
-      ) : null}
+                  {isThisStation && (playbackState === 'loading' || playbackState === 'buffering') ? (
+                    <ActivityIndicator color={accent} />
+                  ) : isPlayingStation ? (
+                    <Pause size={30} color={accent} fill={accent} />
+                  ) : (
+                    <Play size={30} color={accent} fill={accent} style={{ marginLeft: 3 }} />
+                  )}
+                </View>
+              </Pressable>
+            </View>
+            <Text style={styles.onAir} numberOfLines={1}>
+              {titlePreview}
+            </Text>
+            <Text style={[styles.onAirArtist, { color: accent }]} numberOfLines={2}>
+              {artistPreview}
+            </Text>
+            <View style={styles.soulOverlay}>
+              <RadioParadiseSoulActions
+                layout="full"
+                tabContext={{
+                  stationId: streamStation,
+                  rpPreview: needsRpPreview ? rpPreview : null,
+                  livePreview:
+                    needsRpPreview || !liveSnap
+                      ? null
+                      : { title: liveSnap.title, artist: liveSnap.artist },
+                }}
+              />
+            </View>
+          </>
+        )}
+      </View>
 
       <Pressable
         onPress={onToggle}
@@ -292,23 +329,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000000',
     paddingHorizontal: 16,
-  },
-  listShell: {
-    marginTop: 14,
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 12,
-    paddingTop: 12,
-    paddingBottom: 8,
-    backgroundColor: '#050505',
-  },
-  listHint: {
-    color: 'rgba(255,255,255,0.45)',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1.4,
-    marginBottom: 10,
-    textTransform: 'uppercase',
   },
   headerRow: {
     flexDirection: 'row',
