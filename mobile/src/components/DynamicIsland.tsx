@@ -788,44 +788,42 @@ export function DynamicIsland() {
             />
 
             {/* ── EXPANDED mini-controller ───────────────────────────────── */}
-            {/*
-             * EDGE_TO_EDGE_PILL — LEFT anchor: art + track text. RIGHT anchor:
-             * fidelity badges + heart + transport. Wrapper is `space-between`,
-             * so the architectural center stays empty (Machined gap). Strict
-             * 8pt margin from the cyan border on both art and rightmost icon.
-             */}
             <Animated.View
               pointerEvents={stateRef.current === 'expanded' ? 'auto' : 'none'}
               style={[StyleSheet.absoluteFill, styles.expandedRoot, expandedStyle]}
             >
-              <View style={styles.expandedLeftGroup}>
-                {expandedArtUri ? (
-                  <Image
-                    source={{ uri: expandedArtUri }}
-                    style={styles.expandedArt}
-                    contentFit="cover"
-                    transition={160}
-                  />
-                ) : (
-                  <View
-                    style={[styles.expandedArt, styles.metaThumbFallback, accentChrome.metaThumbFallback]}
-                  />
-                )}
-                <View style={styles.expandedText}>
-                  <Text
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                    style={styles.expandedTitle}
-                  >
-                    {currentTrack?.title ?? 'Nothing playing'}
-                  </Text>
-                  <Text
-                    numberOfLines={1}
-                    ellipsizeMode="tail"
-                    style={styles.expandedArtist}
-                  >
+              {expandedArtUri ? (
+                <Image
+                  source={{ uri: expandedArtUri }}
+                  style={styles.expandedArt}
+                  contentFit="cover"
+                  transition={160}
+                />
+              ) : (
+                <View
+                  style={[styles.expandedArt, styles.metaThumbFallback, accentChrome.metaThumbFallback]}
+                />
+              )}
+              <View style={[styles.expandedText, isLouis && styles.expandedTextLouis]}>
+                <Text numberOfLines={1} style={styles.expandedTitle}>
+                  {currentTrack?.title ?? 'Nothing playing'}
+                </Text>
+                <View style={styles.expandedArtistRow}>
+                  <Text numberOfLines={1} style={styles.expandedArtist}>
                     {currentTrack?.artist ?? 'Tap the pill any time to peek'}
                   </Text>
+                  {losslessTag ? (
+                    <Text style={styles.expandedFormatBadge} accessibilityLabel={`${losslessTag} stream`}>
+                      {losslessTag}
+                    </Text>
+                  ) : null}
+                </View>
+                {expandedThemeLabel ? (
+                  <Text numberOfLines={1} style={styles.expandedSourceBadge}>
+                    {expandedThemeLabel}
+                  </Text>
+                ) : null}
+                <View style={styles.expandedPoweredRow} pointerEvents="box-none">
                   <Pressable
                     onLongPress={handlePoweredByDavinciLongPress}
                     delayLongPress={520}
@@ -838,32 +836,14 @@ export function DynamicIsland() {
                       POWERED_BY_DAVINCI
                     </Text>
                   </Pressable>
+                  {isLiveRadio ? (
+                    <View style={styles.expandedSoulInline} pointerEvents="box-none">
+                      <RadioParadiseSoulActions layout="island_compact" />
+                    </View>
+                  ) : null}
                 </View>
               </View>
-
-              <View style={styles.expandedRightGroup} pointerEvents="box-none">
-                {losslessTag || expandedThemeLabel ? (
-                  <View style={styles.expandedBadgeStack} pointerEvents="none">
-                    {losslessTag ? (
-                      <Text
-                        style={styles.expandedFormatBadge}
-                        accessibilityLabel={`${losslessTag} stream`}
-                      >
-                        {losslessTag}
-                      </Text>
-                    ) : null}
-                    {expandedThemeLabel ? (
-                      <Text numberOfLines={1} style={styles.expandedSourceBadge}>
-                        {expandedThemeLabel}
-                      </Text>
-                    ) : null}
-                  </View>
-                ) : null}
-                {isLiveRadio ? (
-                  <View style={styles.expandedSoulInline} pointerEvents="box-none">
-                    <RadioParadiseSoulActions layout="island_compact" />
-                  </View>
-                ) : null}
+              <View style={styles.expandedTransport}>
                 <Pressable
                   onPress={() => {
                     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -985,9 +965,6 @@ const styles = StyleSheet.create({
   },
   pillLouisBlurFill: {
     borderRadius: 999,
-    // EDGE_TO_EDGE_PILL — solid OLED black under the 25-blur so the pill
-    // reads as a true #000000 plate, not a frosted screen tint.
-    backgroundColor: '#000000',
   },
   pill: {
     backgroundColor: 'transparent',
@@ -1101,24 +1078,10 @@ const styles = StyleSheet.create({
   expandedRoot: {
     flexDirection: 'row',
     alignItems: 'center',
-    // EDGE_TO_EDGE_PILL — `space-between` pushes art/text to the left edge
-    // and badges/heart/transport to the right edge, leaving a Machined
-    // architectural gap in the middle. 8pt horizontal padding gives the
-    // strict 8pt margin from the cyan border on both sides.
-    justifyContent: 'space-between',
-    paddingHorizontal: 8,
-    // UNIFY_PRO_MAX_LAYOUT — 20pt bottom pad so the row sits clear of
-    // the pill's lower edge on both 14 and 15 Pro Max.
+    paddingHorizontal: 14,
+    // UNIFY_PRO_MAX_LAYOUT — 20pt bottom pad so Heart/Fire + POWERED_BY_DAVINCI
+    // row sits clear of the pill's lower edge on both 14 and 15 Pro Max.
     paddingBottom: 20,
-  },
-  /** LEFT ANCHOR — album art + title/artist; max 50% of the pill width. */
-  expandedLeftGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    flexShrink: 1,
-    minWidth: 0,
-    maxWidth: Math.floor(ACTIVE_W / 2) - 8,
   },
   expandedArt: {
     width: 64,
@@ -1127,10 +1090,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#111',
   },
   expandedText: {
-    flexShrink: 1,
-    minWidth: 0,
+    flex: 1,
     marginLeft: 12,
+    marginRight: 8,
     justifyContent: 'center',
+    minWidth: 0,
+  },
+  /** Louis — breathing room under hardware island for theme line (HI-FI / ZERO NOISE) + titles. */
+  expandedTextLouis: {
+    paddingTop: 10,
   },
   expandedTitle: {
     color: '#FFFFFF',
@@ -1138,19 +1106,51 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.2,
   },
+  expandedArtistRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+    minWidth: 0,
+  },
   expandedArtist: {
     color: '#67E8F9',
     fontSize: 12,
     fontWeight: '600',
-    marginTop: 2,
     flexShrink: 1,
     minWidth: 0,
   },
+  expandedFormatBadge: {
+    marginLeft: 8,
+    color: PILL_CYAN,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  expandedSourceBadge: {
+    marginTop: 4,
+    color: PILL_CYAN,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 2.2,
+    textTransform: 'uppercase',
+    opacity: 0.92,
+    flexShrink: 0,
+  },
+  /** Heart + Fire share a row with POWERED_BY_DAVINCI — same baseline, no vertical stack under HI-FI/FLAC. */
+  expandedPoweredRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    marginTop: 4,
+    marginBottom: 2,
+    minHeight: 44,
+    gap: 6,
+  },
   expandedPoweredByHit: {
+    flex: 1,
     minWidth: 0,
     justifyContent: 'center',
     paddingVertical: 2,
-    marginTop: 4,
   },
   expandedPoweredBy: {
     color: 'rgba(148,148,158,0.92)',
@@ -1161,39 +1161,13 @@ const styles = StyleSheet.create({
     fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
     fontVariant: ['tabular-nums'],
   },
-  /** RIGHT ANCHOR — fidelity badges + heart + transport, hugging the right cyan edge. */
-  expandedRightGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    flexShrink: 0,
-    gap: 6,
-  },
-  expandedBadgeStack: {
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-    marginRight: 2,
-  },
-  expandedFormatBadge: {
-    color: PILL_CYAN,
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-  },
-  expandedSourceBadge: {
-    marginTop: 2,
-    color: PILL_CYAN,
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 2.2,
-    textTransform: 'uppercase',
-    opacity: 0.92,
-    flexShrink: 0,
-  },
   expandedSoulInline: {
     flexShrink: 0,
     justifyContent: 'center',
+  },
+  expandedTransport: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   transportBtn: {
     width: 32,
@@ -1204,6 +1178,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,229,255,0.10)',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(0,229,255,0.55)',
+    marginLeft: 6,
   },
   davinciRoot: {
     alignItems: 'center',
