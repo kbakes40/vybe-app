@@ -1,5 +1,15 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import { Dimensions, Platform, StyleSheet, Text, View, Linking } from 'react-native';
+import {
+  Dimensions,
+  Linking,
+  NativeSyntheticEvent,
+  Platform,
+  StyleSheet,
+  Text,
+  TextLayoutEventData,
+  View,
+} from 'react-native';
+import { BlurView } from 'expo-blur';
 import { Pressable } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image } from 'expo-image';
@@ -18,7 +28,6 @@ import * as Haptics from 'expo-haptics';
 import { Check, Pause, Play, SkipForward } from 'lucide-react-native';
 import { usePlaybackController } from '@/stores/playbackController';
 import { RADIO_PARADISE_BRAND_LOGO_URL } from '@/constants/radioParadise';
-import { useNowPlayingSheetStore } from '@/stores/nowPlayingSheetStore';
 import { useDynamicIslandSignal } from '@/stores/dynamicIslandStore';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import { useThemeStore } from '@/stores/themeStore';
@@ -26,6 +35,16 @@ import { hexToRgb, hexToRgba } from '@/lib/themeColorUtils';
 import { RadioParadiseSoulActions } from '@/components/radio/RadioParadiseSoulActions';
 import { usePillLockStore } from '@/stores/pillLockStore';
 import { getExpandedIslandThemeLabel, getIslandLosslessTag } from '@/lib/pillStreamQuality';
+import { isLouisDevice } from '@/constants/louisOledProfile';
+import {
+  syncLouisPillExpandKickExpanded,
+  syncLouisPillKickDelta,
+} from '@/lib/louisPillExpandKick';
+import {
+  EXPANDED_EXTRA_TITLE_LINE_PT,
+  EXPANDED_PILL_MAX_HEIGHT_PT,
+  EXPANDED_PILL_MIN_HEIGHT_PT,
+} from '@/constants/pillIslandGeometry';
 
 /**
  * Global interactive pill mounted above navigation chrome.
@@ -49,6 +68,15 @@ const PILL_CYAN = '#00E5FF';
 
 const SPRING = { stiffness: 200, damping: 20, mass: 0.7 } as const;
 
+/**
+ * DISABLE_NOW_PLAYING_SNAP — pill geometry uses a weighted exp ease-out so the
+ * expansion feels mechanical rather than springy. Same timing is shared by the
+ * kick inset (see {@link louisPillExpandKick}) so the kick lands in lockstep.
+ */
+const PILL_EASE_DURATION_MS = 360;
+const PILL_GEO_EASE = Easing.out(Easing.exp);
+const PILL_GEO_TIMING = { duration: PILL_EASE_DURATION_MS, easing: PILL_GEO_EASE } as const;
+
 type DIState = 'idle' | 'playing' | 'expanded' | 'davinci' | 'recovery' | 'success';
 
 // Pill morphology per state (container width / height).
@@ -62,7 +90,7 @@ const ACTIVE_W = Math.round(SCREEN_W * 0.95);
 const GEO = {
   idle: { w: 124, h: 36 },
   playing: { w: ACTIVE_W, h: 44 },
-  expanded: { w: ACTIVE_W, h: 112 },
+  expanded: { w: ACTIVE_W, h: EXPANDED_PILL_MIN_HEIGHT_PT },
   davinci: { w: Math.min(ACTIVE_W, 300), h: 64 },
   recovery: { w: Math.min(ACTIVE_W, 320), h: 44 },
   success: { w: Math.min(ACTIVE_W, 280), h: 44 },
@@ -133,7 +161,6 @@ export function DynamicIsland() {
     s.playbackState === 'playing' ? s.pause : s.play,
   );
   const next = usePlaybackController((s) => s.next);
-  const expandSheet = useNowPlayingSheetStore((s) => s.expand);
   const currentSource = usePlaybackController((s) => s.currentSource);
   const playbackError = usePlaybackController((s) => s.error);
   const healingStreamActive = useDynamicIslandSignal((s) => s.healingStreamActive);
@@ -202,6 +229,10 @@ export function DynamicIsland() {
 
   /** PILL_LOCK_V2 — synced from root `PillLockSync` (session + route). */
   const suppress = !allowIslandSurfaces;
+  const isLouis = useMemo(() => isLouisDevice(), []);
+
+  /** Reset when leaving expanded so title `onTextLayout` can re-apply height after re-open. */
+  const expandedTitleLayoutKeyRef = useRef('');
 
   // Local UI state kept in a ref so handlers see the latest without stale closures.
   const stateRef = useRef<DIState>('idle');
@@ -281,10 +312,14 @@ export function DynamicIsland() {
   // Derive geometry targets from logical state.
   const applyState = useCallback(
     (next: DIState) => {
+      const prevState = stateRef.current;
+      if ((prevState === 'expanded') !== (next === 'expanded')) {
+        expandedTitleLayoutKeyRef.current = '';
+      }
       stateRef.current = next;
       const geo = GEO[next];
-      widthSV.value = withSpring(geo.w, SPRING);
-      heightSV.value = withSpring(geo.h, SPRING);
+      widthSV.value = withTiming(geo.w, PILL_GEO_TIMING);
+      heightSV.value = withTiming(geo.h, PILL_GEO_TIMING);
       stateSV.value = withTiming(
         next === 'idle'
           ? 0
@@ -304,6 +339,9 @@ export function DynamicIsland() {
       davinciOpacity.value = withTiming(next === 'davinci' ? 1 : 0, { duration: 180 });
       recoveryOpacity.value = withTiming(next === 'recovery' ? 1 : 0, { duration: 200 });
       successOpacity.value = withTiming(next === 'success' ? 1 : 0, { duration: 200 });
+      // UNIFY_PRO_MAX_LAYOUT — Kick fires on every device; 14 & 15 Pro Max
+      // both slide tab content down to clear the expanded pill.
+      syncLouisPillExpandKickExpanded(next === 'expanded');
     },
     [
       widthSV,
@@ -314,8 +352,32 @@ export function DynamicIsland() {
       davinciOpacity,
       recoveryOpacity,
       successOpacity,
+      isLouis,
     ],
   );
+
+  const onExpandedTitleTextLayout = useCallback(
+    (e: NativeSyntheticEvent<TextLayoutEventData>) => {
+      if (stateRef.current !== 'expanded') return;
+      const n = Math.min(2, Math.max(1, e.nativeEvent.lines.length));
+      const key = `${n}|${expandedThemeLabel ?? ''}|${currentTrack?.title ?? ''}`;
+      if (key === expandedTitleLayoutKeyRef.current) return;
+      expandedTitleLayoutKeyRef.current = key;
+      let h =
+        EXPANDED_PILL_MIN_HEIGHT_PT +
+        (n - 1) * EXPANDED_EXTRA_TITLE_LINE_PT +
+        (expandedThemeLabel ? 4 : 0) +
+        (isLiveRadio ? 14 : 0);
+      h = Math.min(EXPANDED_PILL_MAX_HEIGHT_PT, h);
+      heightSV.value = withTiming(h, PILL_GEO_TIMING);
+      syncLouisPillKickDelta(h - 44);
+    },
+    [currentTrack?.title, expandedThemeLabel, heightSV, isLouis, isLiveRadio],
+  );
+
+  useEffect(() => {
+    if (suppress) syncLouisPillKickDelta(0);
+  }, [suppress]);
 
   // Drive state from playback: idle ↔ playing ↔ recovery. Expanded / davinci
   // are transient user-driven modes that auto-revert.
@@ -488,16 +550,16 @@ export function DynamicIsland() {
   }, [isStreamResolving, isResolvingSV, resolvePulse]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
+  /**
+   * DISABLE_NOW_PLAYING_SNAP — pill expansion is fully decoupled from the
+   * Now Playing sheet. Tapping the pill toggles its own collapsed/expanded
+   * state in place. The page beneath stays anchored; only the pill grows
+   * and the kick logic pushes content down to make room.
+   */
   const handleTap = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const cur = stateRef.current;
     if (cur === 'expanded') {
-      // Second tap opens the full Now Playing sheet, then collapses the pill.
-      try {
-        expandSheet?.();
-      } catch {
-        /* sheet may not be registered yet — safe no-op */
-      }
       applyState(showAsPlayingBar ? 'playing' : 'idle');
       return;
     }
@@ -506,7 +568,7 @@ export function DynamicIsland() {
       return;
     }
     applyState('expanded');
-  }, [applyState, expandSheet, showAsPlayingBar]);
+  }, [applyState, showAsPlayingBar]);
 
   const handleLongPress = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -615,8 +677,12 @@ export function DynamicIsland() {
   // sit inside the status bar area end up with the clock visually on top and
   // the middle content occluded. Sitting 8pt below insets.top keeps the pill
   // fully visible while still feeling anchored to the top.
-  // FIX_PILL_COLLISION — pill anchor lifted 8pt above the safe-area top so
-  // it rides up against the hardware Dynamic Island / notch on 14-15 Pro.
+  /**
+   * UNIFY_PRO_MAX_LAYOUT — hand-tuned −8pt lift locked for BOTH 14 Pro Max
+   * and 15 Pro Max. Earlier device-split (`insets.top` on Louis) caused the
+   * pill to float lower on the 14 than on the 15; both now use the same
+   * baseline so the hardware DI alignment feels identical.
+   */
   const pillTop = insets.top - 8;
 
   /** HD badge appears for premium subs whenever audio is engaged. */
@@ -644,7 +710,15 @@ export function DynamicIsland() {
           delayLongPress={380}
           hitSlop={{ top: 6, bottom: 6, left: 12, right: 12 }}
         >
-          <Animated.View style={[styles.pill, pillAnimatedStyle]}>
+          <Animated.View style={[styles.pill, pillAnimatedStyle, isLouis && styles.pillLouisBlurHost]}>
+            {isLouis ? (
+              <BlurView
+                pointerEvents="none"
+                intensity={25}
+                tint="dark"
+                style={[StyleSheet.absoluteFillObject, styles.pillLouisBlurFill]}
+              />
+            ) : null}
             {/* ── IDLE / PLAYING compact content ─────────────────────────── */}
             <Animated.View
               pointerEvents="none"
@@ -730,7 +804,7 @@ export function DynamicIsland() {
                   style={[styles.expandedArt, styles.metaThumbFallback, accentChrome.metaThumbFallback]}
                 />
               )}
-              <View style={styles.expandedText}>
+              <View style={[styles.expandedText, isLouis && styles.expandedTextLouis]}>
                 <Text numberOfLines={1} style={styles.expandedTitle}>
                   {currentTrack?.title ?? 'Nothing playing'}
                 </Text>
@@ -749,22 +823,25 @@ export function DynamicIsland() {
                     {expandedThemeLabel}
                   </Text>
                 ) : null}
-                <Pressable
-                  onLongPress={handlePoweredByDavinciLongPress}
-                  delayLongPress={520}
-                  hitSlop={{ top: 6, bottom: 6, left: 10, right: 10 }}
-                  accessibilityLabel="Powered by DaVinci"
-                  accessibilityHint="Long press to simulate vault failure and shadow healing"
-                >
-                  <Text numberOfLines={1} style={styles.expandedPoweredBy}>
-                    POWERED_BY_DAVINCI
-                  </Text>
-                </Pressable>
-                {isLiveRadio ? (
-                  <View style={styles.expandedSoul} pointerEvents="box-none">
-                    <RadioParadiseSoulActions layout="island_compact" />
-                  </View>
-                ) : null}
+                <View style={styles.expandedPoweredRow} pointerEvents="box-none">
+                  <Pressable
+                    onLongPress={handlePoweredByDavinciLongPress}
+                    delayLongPress={520}
+                    hitSlop={{ top: 6, bottom: 6, left: 10, right: 10 }}
+                    style={styles.expandedPoweredByHit}
+                    accessibilityLabel="Powered by DaVinci"
+                    accessibilityHint="Long press to simulate vault failure and shadow healing"
+                  >
+                    <Text numberOfLines={1} style={styles.expandedPoweredBy}>
+                      POWERED_BY_DAVINCI
+                    </Text>
+                  </Pressable>
+                  {isLiveRadio ? (
+                    <View style={styles.expandedSoulInline} pointerEvents="box-none">
+                      <RadioParadiseSoulActions layout="island_compact" />
+                    </View>
+                  ) : null}
+                </View>
               </View>
               <View style={styles.expandedTransport}>
                 <Pressable
@@ -883,6 +960,12 @@ const styles = StyleSheet.create({
     right: 0,
     alignItems: 'center',
   },
+  pillLouisBlurHost: {
+    overflow: 'hidden',
+  },
+  pillLouisBlurFill: {
+    borderRadius: 999,
+  },
   pill: {
     backgroundColor: 'transparent',
     borderRadius: 999,
@@ -947,7 +1030,8 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
-    letterSpacing: 0.2,
+    // UNIFY_PRO_MAX_LAYOUT — wider 0.5pt tracking so the title fills the pill.
+    letterSpacing: 0.5,
   },
   metaArtistRow: {
     flexDirection: 'row',
@@ -995,6 +1079,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
+    // UNIFY_PRO_MAX_LAYOUT — 20pt bottom pad so Heart/Fire + POWERED_BY_DAVINCI
+    // row sits clear of the pill's lower edge on both 14 and 15 Pro Max.
+    paddingBottom: 20,
   },
   expandedArt: {
     width: 64,
@@ -1007,6 +1094,11 @@ const styles = StyleSheet.create({
     marginLeft: 12,
     marginRight: 8,
     justifyContent: 'center',
+    minWidth: 0,
+  },
+  /** Louis — breathing room under hardware island for theme line (HI-FI / ZERO NOISE) + titles. */
+  expandedTextLouis: {
+    paddingTop: 10,
   },
   expandedTitle: {
     color: '#FFFFFF',
@@ -1036,27 +1128,42 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   expandedSourceBadge: {
-    marginTop: 5,
+    marginTop: 4,
     color: PILL_CYAN,
     fontSize: 9,
     fontWeight: '900',
     letterSpacing: 2.2,
     textTransform: 'uppercase',
     opacity: 0.92,
+    flexShrink: 0,
+  },
+  /** Heart + Fire share a row with POWERED_BY_DAVINCI — same baseline, no vertical stack under HI-FI/FLAC. */
+  expandedPoweredRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    marginTop: 4,
+    marginBottom: 2,
+    minHeight: 44,
+    gap: 6,
+  },
+  expandedPoweredByHit: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+    paddingVertical: 2,
   },
   expandedPoweredBy: {
     color: 'rgba(148,148,158,0.92)',
     fontSize: 7,
     fontWeight: '800',
     letterSpacing: 2.35,
-    marginTop: 5,
     textTransform: 'uppercase',
     fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
     fontVariant: ['tabular-nums'],
   },
-  expandedSoul: {
-    marginTop: 8,
-    alignSelf: 'flex-start',
+  expandedSoulInline: {
+    flexShrink: 0,
+    justifyContent: 'center',
   },
   expandedTransport: {
     flexDirection: 'row',
