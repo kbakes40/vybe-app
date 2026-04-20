@@ -6,7 +6,6 @@ import {
   Modal,
   ActivityIndicator,
   Dimensions,
-  Alert,
   Platform,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
@@ -21,7 +20,7 @@ import Animated, {
 import { AlertCircle, CheckCircle, Info, AlertTriangle, X } from 'lucide-react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import * as Haptics from 'expo-haptics';
-import { MACHINED_CYAN } from '@/constants/machinedTheme';
+import { MACHINED_CYAN, DOCK_CYAN, OLED_BLACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -47,8 +46,11 @@ export interface VybePopupConfig {
   title: string;
   message?: string;
   type?: VybePopupType;
-  /** Relaxed typography + cyan glass / OK glow (post-login welcome, etc.). */
-  visualTone?: 'default' | 'chill';
+  /**
+   * `chill` — softer copy + brighter cyan body (welcome toasts).
+   * `vybe` / omitted — OLED shell, dock-cyan rim, machined OK (default for most alerts).
+   */
+  visualTone?: 'default' | 'chill' | 'vybe';
   icon?: React.ReactNode;
   showCloseButton?: boolean;
   actions?: VybePopupAction[];
@@ -76,47 +78,57 @@ function PopupIcon({
 }: {
   type?: VybePopupType;
   customIcon?: React.ReactNode;
-  visualTone?: 'default' | 'chill';
+  visualTone?: 'default' | 'chill' | 'vybe';
 }) {
   if (customIcon) return <>{customIcon}</>;
 
   const iconSize = 32;
   const iconProps = { size: iconSize };
+  const vybeShell =
+    visualTone === 'chill' ||
+    visualTone === 'vybe' ||
+    visualTone === 'default' ||
+    visualTone === undefined;
 
   switch (type) {
     case 'success':
       return (
         <CheckCircle
           {...iconProps}
-          color={visualTone === 'chill' ? MACHINED_CYAN : '#10B981'}
+          color={vybeShell ? DOCK_CYAN : '#10B981'}
         />
       );
     case 'warning':
-      return <AlertTriangle {...iconProps} color="#F59E0B" />;
+      return <AlertTriangle {...iconProps} color="#FBBF24" />;
     case 'error':
-      return <AlertCircle {...iconProps} color="#EF4444" />;
+      return <AlertCircle {...iconProps} color="#FB7185" />;
     case 'confirm':
-      return <AlertTriangle {...iconProps} color="#8B5CF6" />;
+      return <AlertTriangle {...iconProps} color={NAV_BAR_PURPLE} />;
     case 'info':
     default:
-      return <Info {...iconProps} color="#3B82F6" />;
+      return <Info {...iconProps} color={vybeShell ? DOCK_CYAN : '#3B82F6'} />;
   }
 }
 
 // Get icon background color based on type
-function getIconBgColor(type?: VybePopupType, visualTone?: 'default' | 'chill'): string {
+function getIconBgColor(type?: VybePopupType, visualTone?: 'default' | 'chill' | 'vybe'): string {
+  const vybe =
+    visualTone === 'chill' ||
+    visualTone === 'vybe' ||
+    visualTone === 'default' ||
+    visualTone === undefined;
   switch (type) {
     case 'success':
-      return visualTone === 'chill' ? 'rgba(0, 255, 255, 0.14)' : 'rgba(16, 185, 129, 0.15)';
+      return vybe ? 'rgba(0, 229, 255, 0.12)' : 'rgba(16, 185, 129, 0.15)';
     case 'warning':
-      return 'rgba(245, 158, 11, 0.15)';
+      return 'rgba(251, 191, 36, 0.12)';
     case 'error':
-      return 'rgba(239, 68, 68, 0.15)';
+      return 'rgba(251, 113, 133, 0.14)';
     case 'confirm':
-      return 'rgba(139, 92, 246, 0.15)';
+      return 'rgba(139, 92, 246, 0.18)';
     case 'info':
     default:
-      return 'rgba(59, 130, 246, 0.15)';
+      return vybe ? 'rgba(0, 229, 255, 0.12)' : 'rgba(59, 130, 246, 0.15)';
   }
 }
 
@@ -132,11 +144,18 @@ function PopupButton({
   isLoading: boolean;
   onPress: () => void;
   isLast: boolean;
-  visualTone?: 'default' | 'chill';
+  visualTone?: 'default' | 'chill' | 'vybe';
 }) {
   const isDestructive = action.style === 'destructive';
   const isCancel = action.style === 'cancel';
-  const chillPrimary = visualTone === 'chill' && !isDestructive && !isCancel;
+  /** Machined cyan primary — Vybe default + chill; not generic purple. */
+  const machinedPrimary =
+    !isDestructive &&
+    !isCancel &&
+    (visualTone === 'chill' ||
+      visualTone === 'vybe' ||
+      visualTone === 'default' ||
+      visualTone === undefined);
 
   return (
     <Pressable
@@ -151,13 +170,13 @@ function PopupButton({
           ? 'bg-red-500/20'
           : isCancel
           ? 'bg-white/10'
-          : chillPrimary
+          : machinedPrimary
           ? ''
           : 'bg-[#8B5CF6]'
       } ${!isLast ? 'mr-3' : ''}`}
       style={({ pressed }) => ({
         opacity: isLoading ? 0.6 : pressed ? 0.8 : 1,
-        ...(chillPrimary
+        ...(machinedPrimary
           ? {
               backgroundColor: MACHINED_CYAN,
               ...CHILL_OK_OUTER_GLOW,
@@ -168,7 +187,7 @@ function PopupButton({
       {isLoading ? (
         <ActivityIndicator
           color={
-            isDestructive ? '#EF4444' : isCancel ? '#fff' : chillPrimary ? '#0A0A0A' : '#fff'
+            isDestructive ? '#EF4444' : isCancel ? '#fff' : machinedPrimary ? '#0A0A0A' : '#fff'
           }
           size="small"
         />
@@ -179,7 +198,7 @@ function PopupButton({
               ? 'font-semibold text-red-400'
               : isCancel
               ? 'font-semibold text-white/80'
-              : chillPrimary
+              : machinedPrimary
               ? 'font-semibold text-[#0A0A0A]'
               : 'font-semibold text-white'
           }`}
@@ -225,7 +244,7 @@ function VybePopupModal({
     ],
   }));
 
-  const chill = state.visualTone === 'chill';
+  const isChill = state.visualTone === 'chill';
 
   const handleClose = useCallback(() => {
     opacity.value = withTiming(0, { duration: 150 });
@@ -272,11 +291,11 @@ function VybePopupModal({
           ]}
         >
           <BlurView
-            intensity={40}
+            intensity={28}
             tint="dark"
             style={{
               flex: 1,
-              backgroundColor: 'rgba(0, 0, 0, 0.75)',
+              backgroundColor: 'rgba(0, 0, 0, 0.88)',
             }}
           />
         </Animated.View>
@@ -294,14 +313,15 @@ function VybePopupModal({
           ]}
         >
           <View
-            className="bg-[#1A1A1A] rounded-2xl overflow-hidden"
+            className="rounded-2xl overflow-hidden"
             style={{
+              backgroundColor: isChill ? 'rgba(8, 12, 16, 0.98)' : OLED_BLACK,
               borderWidth: 1,
-              borderColor: chill ? 'rgba(0, 255, 255, 0.42)' : 'rgba(255, 255, 255, 0.1)',
-              shadowColor: chill ? MACHINED_CYAN : '#000',
-              shadowOffset: { width: 0, height: chill ? 0 : 10 },
-              shadowOpacity: chill ? 0.22 : 0.5,
-              shadowRadius: chill ? 18 : 20,
+              borderColor: isChill ? 'rgba(0, 255, 255, 0.38)' : 'rgba(0, 229, 255, 0.26)',
+              shadowColor: DOCK_CYAN,
+              shadowOffset: { width: 0, height: 0 },
+              shadowOpacity: isChill ? 0.26 : 0.22,
+              shadowRadius: isChill ? 20 : 16,
               elevation: 20,
             }}
           >
@@ -335,8 +355,18 @@ function VybePopupModal({
               {/* Title */}
               <Text
                 className={`text-white text-xl text-center mb-2 ${
-                  chill ? 'font-medium' : 'font-bold'
+                  isChill ? 'font-medium' : 'font-semibold'
                 }`}
+                style={
+                  !isChill
+                    ? {
+                        letterSpacing: 0.35,
+                        textShadowColor: 'rgba(0, 229, 255, 0.25)',
+                        textShadowOffset: { width: 0, height: 0 },
+                        textShadowRadius: 8,
+                      }
+                    : undefined
+                }
               >
                 {state.title}
               </Text>
@@ -345,9 +375,9 @@ function VybePopupModal({
               {state.message ? (
                 <Text
                   className={`text-base text-center leading-6 ${
-                    chill
+                    isChill
                       ? 'font-normal text-[#67E8F9]'
-                      : 'font-normal text-white/70'
+                      : 'font-normal text-[rgba(244,244,245,0.8)]'
                   }`}
                 >
                   {state.message}
@@ -441,7 +471,12 @@ export function VybePopupProvider({ children }: { children: React.ReactNode }) {
       } catch (e) {
         const msg =
           e instanceof Error ? e.message : typeof e === 'string' ? e : 'Something went wrong. Please try again.';
-        Alert.alert('Error', msg);
+        showVybePopup({
+          title: 'Error',
+          message: msg,
+          type: 'error',
+          visualTone: 'vybe',
+        });
       } finally {
         setState((prev) => ({
           ...prev,
@@ -453,7 +488,7 @@ export function VybePopupProvider({ children }: { children: React.ReactNode }) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       hideVybePopup();
     }
-  }, [hideVybePopup]);
+  }, [hideVybePopup, showVybePopup]);
 
   return (
     <VybePopupContext.Provider value={{ showVybePopup, hideVybePopup }}>

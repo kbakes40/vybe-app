@@ -8,6 +8,13 @@ const TTL_MS = 15 * 60 * 1000;
 const cache = new Map<string, { url: string; expires: number }>();
 const inflight = new Map<string, Promise<YoutubeResolveEnvelope | null>>();
 
+/** Bump when server changes CDN format preference (e.g. M4A before WebM for iOS). */
+const RESOLVE_CACHE_VERSION = 'a2';
+
+function resolveCacheKey(videoId: string): string {
+  return `${RESOLVE_CACHE_VERSION}\t${videoId}`;
+}
+
 export type YoutubeHealMeta = {
   soundcloudUrl: string;
   scTrackId: string;
@@ -50,9 +57,10 @@ function isRetriableResolveFetchError(e: unknown): boolean {
 
 export function invalidateYoutubeResolveCache(videoId: string): void {
   if (!videoId) return;
-  cache.delete(videoId);
+  cache.delete(resolveCacheKey(videoId));
+  const prefix = `${RESOLVE_CACHE_VERSION}\t${videoId}\t`;
   for (const key of [...inflight.keys()]) {
-    if (key.startsWith(`${videoId}\t`)) inflight.delete(key);
+    if (key.startsWith(prefix)) inflight.delete(key);
   }
 }
 
@@ -63,9 +71,10 @@ export function clearAllYoutubeResolveCaches(): void {
 }
 
 export function getCachedYoutubeResolveUrl(videoId: string): string | null {
-  const row = cache.get(videoId);
+  const k = resolveCacheKey(videoId);
+  const row = cache.get(k);
   if (!row || Date.now() > row.expires) {
-    cache.delete(videoId);
+    cache.delete(k);
     return null;
   }
   return row.url;
@@ -73,7 +82,7 @@ export function getCachedYoutubeResolveUrl(videoId: string): string | null {
 
 export function setCachedYoutubeResolveUrl(videoId: string, url: string): void {
   if (!videoId || !url.startsWith('http')) return;
-  cache.set(videoId, { url, expires: Date.now() + TTL_MS });
+  cache.set(resolveCacheKey(videoId), { url, expires: Date.now() + TTL_MS });
 }
 
 function parseResolveJson(
@@ -163,7 +172,7 @@ async function fetchResolveEnvelope(
 }
 
 function inflightKey(videoId: string, fresh: boolean, soundcloudUrl?: string, soundcloudId?: string): string {
-  return `${videoId}\t${fresh ? '1' : '0'}\t${soundcloudUrl ?? ''}\t${soundcloudId ?? ''}`;
+  return `${RESOLVE_CACHE_VERSION}\t${videoId}\t${fresh ? '1' : '0'}\t${soundcloudUrl ?? ''}\t${soundcloudId ?? ''}`;
 }
 
 function startResolveFetchEnvelope(

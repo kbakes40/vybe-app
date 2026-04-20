@@ -1,3 +1,4 @@
+import { randomBytes, randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { prisma } from "../prisma";
 import { auth } from "../auth";
@@ -142,7 +143,7 @@ userRouter.post("/subscription/ad-listened", async (c) => {
   return c.json({ data: { success: true } });
 });
 
-// Guest login - create anonymous user
+// Guest login — anonymous user + Better Auth `Session` row so bearer + `getSession` work on mobile.
 userRouter.post("/guest", async (c) => {
   const guestId = `guest_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
@@ -155,7 +156,6 @@ userRouter.post("/guest", async (c) => {
     },
   });
 
-  // Create default preferences and subscription
   await prisma.userPreferences.create({
     data: { userId: user.id },
   });
@@ -164,5 +164,19 @@ userRouter.post("/guest", async (c) => {
     data: { userId: user.id },
   });
 
-  return c.json({ data: { user, isGuest: true } });
+  const sessionToken = randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 60); // 60d
+
+  await prisma.session.create({
+    data: {
+      id: randomUUID(),
+      token: sessionToken,
+      userId: user.id,
+      expiresAt,
+    },
+  });
+
+  return c.json({
+    data: { user, isGuest: true, token: sessionToken },
+  });
 });

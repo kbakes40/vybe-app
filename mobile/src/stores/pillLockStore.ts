@@ -15,6 +15,7 @@ export type PillLockState = {
 
 export const usePillLockStore = create<PillLockState>((set) => ({
   hasUser: false,
+  /** Default CLOSED — no Dynamic Island pill until session confirms a signed-in user (auth shell stays clean). */
   allowIslandSurfaces: false,
   syncAuthLockFromSession: (hasUser) =>
     set((s) => {

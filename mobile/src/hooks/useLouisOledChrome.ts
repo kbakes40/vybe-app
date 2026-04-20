@@ -1,5 +1,6 @@
 import { useAnimatedStyle } from 'react-native-reanimated';
 import { louisPillExpandKickInsetSV } from '@/lib/louisPillExpandKick';
+import { LOUIS_TAB_CONTENT_START_OFFSET_PT } from '@/constants/Layout';
 
 /**
  * UNIFY_PRO_MAX_LAYOUT — canonical tab chrome math for both 14 Pro Max and
@@ -22,8 +23,7 @@ export function useLouisOledChrome(insetsTop: number) {
     transform: [{ translateY: louisPillExpandKickInsetSV.value }],
   }), []);
 
-  // 12pt below the collapsed pill bottom (insets.top + 36 + 12 = insets.top + 48).
-  const tabListTopPadding = insetsTop + 48;
+  const tabListTopPadding = insetsTop + LOUIS_TAB_CONTENT_START_OFFSET_PT;
 
   return { louis, kickTranslateStyle, tabListTopPadding };
 }

@@ -70,7 +70,6 @@ import { useDownloadsStore, formatFileSize } from '@/stores/downloadsStore';
 import { usePlaybackDebugStore } from '@/stores/playbackDebugStore';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useUserSettingsStore } from '@/stores/userSettingsStore';
-import { MINI_PLAYER_HEIGHT } from './_layout';
 import { useVybePopup } from '@/components/VybePopup';
 import { ShadowNeonSwitch } from '@/components/ShadowNeonSwitch';
 import {
@@ -429,10 +428,8 @@ export default function SettingsScreen() {
   const [crossfadeSec, setCrossfadeSec] = useState(4);
   const [pushNotifications, setPushNotifications] = useState(true);
 
-  const currentTrack = usePlaybackController((s) => s.currentTrack);
   const playbackVolume = usePlaybackController((s) => s.volume);
   const setPlaybackVolume = usePlaybackController((s) => s.setVolume);
-  const showMiniPlayer = !!currentTrack;
 
   const gapless = useUserSettingsStore((s) => s.gapless);
   const setGapless = useUserSettingsStore((s) => s.setGapless);
@@ -478,7 +475,7 @@ export default function SettingsScreen() {
 
   const deviceAccent = useThemeStore((s) => s.accentColor);
 
-  const bottomPadding = insets.bottom + (showMiniPlayer ? MINI_PLAYER_HEIGHT : 0) + 48;
+  const bottomPadding = insets.bottom + 48;
 
   const cycleAudioQuality = () => {
     void Haptics.selectionAsync();

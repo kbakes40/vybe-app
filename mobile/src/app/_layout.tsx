@@ -7,7 +7,7 @@ import '../../global.css';
 // RevenueCat: loading this module runs `bootstrapPurchases()` (see purchases.ts); we also
 // call `configurePurchases()` once on mount so the native singleton exists before any child tree runs.
 import { configurePurchases } from '@/lib/purchases';
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import * as SystemUI from 'expo-system-ui';
@@ -16,8 +16,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
-import { Appearance, Keyboard, LogBox, Platform } from 'react-native';
-import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { Appearance, AppState, Keyboard, LogBox, Platform, View } from 'react-native';
+import { useKeyboardChromeStore } from '@/stores/keyboardChromeStore';
+import { ErrorBoundary, InlineErrorBoundary } from '@/components/ErrorBoundary';
+
+export { ErrorBoundary };
 import { VybePopupProvider } from '@/components/VybePopup';
 import { ShadowInputAccessory } from '@/components/ShadowInputAccessory';
 import { DynamicIslandChrome } from '@/components/DynamicIslandChrome';
@@ -28,7 +31,6 @@ import { ThemeArtworkAccentSync } from '@/components/ThemeArtworkAccentSync';
 import { PillLockSync } from '@/components/PillLockSync';
 import { LoginMorphOverlay } from '@/components/LoginMorphOverlay';
 import { authClient } from '@/lib/auth/auth-client';
-import { useKeyboardChromeStore } from '@/stores/keyboardChromeStore';
 import { useThemeStore } from '@/stores/themeStore';
 
 LogBox.ignoreLogs(['Expo AV has been deprecated', 'Disconnected from Metro']);
@@ -57,15 +59,31 @@ function GlobalKeyboardChrome() {
         /* optional API — per-field keyboardAppearance still applies */
       }
     }
-    const show = Keyboard.addListener('keyboardDidShow', () => {
-      useKeyboardChromeStore.getState().setKeyboardVisible(true);
+
+    const setShown = () => useKeyboardChromeStore.getState().setKeyboardVisible(true);
+    const setHidden = () => useKeyboardChromeStore.getState().setKeyboardVisible(false);
+
+    const show = Keyboard.addListener('keyboardDidShow', setShown);
+    const hideDid = Keyboard.addListener('keyboardDidHide', setHidden);
+    // iOS: willHide fires in more dismiss paths than didHide (focus changes, interactive dismiss).
+    const hideWill =
+      Platform.OS === 'ios'
+        ? Keyboard.addListener('keyboardWillHide', setHidden)
+        : null;
+
+    const appSub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        requestAnimationFrame(() => {
+          if (!Keyboard.isVisible()) setHidden();
+        });
+      }
     });
-    const hide = Keyboard.addListener('keyboardDidHide', () => {
-      useKeyboardChromeStore.getState().setKeyboardVisible(false);
-    });
+
     return () => {
       show.remove();
-      hide.remove();
+      hideDid.remove();
+      hideWill?.remove();
+      appSub.remove();
     };
   }, []);
 
@@ -73,17 +91,14 @@ function GlobalKeyboardChrome() {
 }
 
 function RootLayoutNav() {
-  const { data: session, isPending } = authClient.useSession();
+  const { data: session } = authClient.useSession();
 
   useEffect(() => {
     SplashScreen.hideAsync();
   }, []);
 
-  // Only treat the user as authenticated once we've confirmed they have a
-  // real session. While the session check is in flight we render the auth
-  // stack so first-time users (no stored session) land on the sign-in
-  // screen immediately instead of briefly flashing the app stack.
-  const isAuthenticated = !isPending && !!session?.user;
+  // Real session drives the stack — bypass restored after mount diagnosis.
+  const isAuthenticated = Boolean(session?.user);
 
   // CRITICAL: Render ONLY auth stack OR app stack - never both
   // This prevents swipe-back from app to auth screens
@@ -184,34 +199,49 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
-        <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#000000' }}>
-          {/* SafeAreaProvider must wrap everything that calls useSafeAreaInsets
-              (DynamicIsland, MiniPlayer, tab bar, etc). Without it, insets.top
-              returns 0 and the DI pill renders behind the iPhone notch. */}
-          <SafeAreaProvider>
-            <KeyboardProvider>
-              <VybePopupProvider>
-                <GlobalKeyboardChrome />
-                {/* OLED_ROOT_FIX — `backgroundColor` prop is Android-only and can
-                    glitch on iOS 15 Pro Max (visible grey bar above the pill).
-                    Translucent + light style is enough; root View owns the black. */}
-                <StatusBar style="light" translucent />
-                {/* AUTH_LOCK_SYNC: PillLockSync runs first so `pillLockStore.hasUser` is set before app chrome (MiniPlayer, top masks, Island). */}
+    <QueryClientProvider client={queryClient}>
+      <GestureHandlerRootView style={{ flex: 1, backgroundColor: '#000000' }}>
+        {/* SafeAreaProvider must wrap everything that calls useSafeAreaInsets
+            (DynamicIsland, MiniPlayer, tab bar, etc). Without it, insets.top
+            returns 0 and the DI pill renders behind the iPhone notch. */}
+        <SafeAreaProvider>
+          <KeyboardProvider>
+            <VybePopupProvider>
+              <GlobalKeyboardChrome />
+              {/* OLED_ROOT_FIX — `backgroundColor` prop is Android-only and can
+                  glitch on iOS 15 Pro Max (visible grey bar above the pill).
+                  Translucent + light style is enough; root View owns the black. */}
+              <StatusBar style="light" translucent />
+              {/* AUTH_LOCK_SYNC: PillLockSync runs first so `pillLockStore.hasUser` is set before app chrome (MiniPlayer, top masks, Island). */}
+              <InlineErrorBoundary fallback={null}>
                 <PillLockSync />
+              </InlineErrorBoundary>
+              {/* Full-screen fallback only for route/navigation tree — not for floating chrome (Island can throw while native audio keeps playing). */}
+              <ErrorBoundary>
                 <RootLayoutNav />
+              </ErrorBoundary>
+              <InlineErrorBoundary fallback={null}>
                 <ThemeArtworkAccentSync />
+              </InlineErrorBoundary>
+              <InlineErrorBoundary fallback={null}>
                 <StealthTopMask />
+              </InlineErrorBoundary>
+              <InlineErrorBoundary fallback={null}>
                 <DynamicIslandTopFade />
+              </InlineErrorBoundary>
+              <InlineErrorBoundary fallback={null}>
                 <DynamicIslandChrome />
+              </InlineErrorBoundary>
+              <InlineErrorBoundary fallback={null}>
                 <DynamicIsland />
+              </InlineErrorBoundary>
+              <InlineErrorBoundary fallback={null}>
                 <LoginMorphOverlay />
-              </VybePopupProvider>
-            </KeyboardProvider>
-          </SafeAreaProvider>
-        </GestureHandlerRootView>
-      </QueryClientProvider>
-    </ErrorBoundary>
+              </InlineErrorBoundary>
+            </VybePopupProvider>
+          </KeyboardProvider>
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    </QueryClientProvider>
   );
 }

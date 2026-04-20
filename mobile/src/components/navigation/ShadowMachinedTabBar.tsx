@@ -3,7 +3,7 @@ import { View, StyleSheet, LayoutChangeEvent, Platform } from 'react-native';
 import { BottomTabBar, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { BlurView } from 'expo-blur';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
-import { VIBRANT_BLUE } from '@/constants/machinedTheme';
+import { DOCK_CYAN, OLED_BLACK } from '@/constants/machinedTheme';
 
 /** Five-tab doc — indicator tracks active slot. */
 const INDICATOR_W = 16;
@@ -11,11 +11,12 @@ const INDICATOR_H = 2;
 
 const SPRING = { damping: 22, stiffness: 300, mass: 0.55 };
 
-/** Blur behind the dock (iOS intensity; Android falls back to dark scrim). */
+/** Architectural blur behind the Doc (iOS BlurView intensity; Android uses dark scrim). */
 const DOCK_BLUR_INTENSITY = 25;
 
 /**
- * Bottom tab bar: 25pt-style blur underlay + 1px cyan top hairline (pill-adjacent spec).
+ * Bottom tab bar (the Doc): OLED #000 base + 25 blur underlay + 1px {@link DOCK_CYAN} top hairline.
+ * Renders {@link BottomTabBar} so tabs stay a child of the TabNavigator (never a separate stack).
  */
 export function ShadowMachinedTabBar(props: BottomTabBarProps) {
   const { state, insets } = props;
@@ -56,16 +57,19 @@ export function ShadowMachinedTabBar(props: BottomTabBarProps) {
 
   return (
     <View style={styles.wrap} onLayout={onLayout}>
+      <View style={[StyleSheet.absoluteFill, styles.oledBase]} pointerEvents="none" />
       <BlurView intensity={DOCK_BLUR_INTENSITY} tint="dark" style={StyleSheet.absoluteFill} />
       {Platform.OS === 'android' ? (
         <View style={[StyleSheet.absoluteFill, styles.androidBlurFallback]} pointerEvents="none" />
       ) : null}
+      {/* Full-bleed 1px hairline above blur so DOCK_CYAN reads edge-to-edge on 14/15 Pro Max. */}
+      <View style={styles.topHairline} pointerEvents="none" />
       <BottomTabBar {...props} />
       <Animated.View
         pointerEvents="none"
         style={[styles.indicatorHost, { bottom: bottomOffset }, lineStyle]}
       >
-        <View style={[styles.line, { backgroundColor: VIBRANT_BLUE, shadowColor: VIBRANT_BLUE }]} />
+        <View style={[styles.line, { backgroundColor: DOCK_CYAN, shadowColor: DOCK_CYAN }]} />
       </Animated.View>
     </View>
   );
@@ -74,9 +78,27 @@ export function ShadowMachinedTabBar(props: BottomTabBarProps) {
 const styles = StyleSheet.create({
   wrap: {
     position: 'relative',
+    zIndex: 100000,
+    elevation: 100000,
+    minHeight: 49,
     overflow: 'hidden',
-    borderTopWidth: 1,
-    borderTopColor: VIBRANT_BLUE,
+    width: '100%',
+    alignSelf: 'stretch',
+    backgroundColor: OLED_BLACK,
+  },
+  /** Single 1px DOCK_CYAN line (not hairlineWidth) — full width on 14/15 Pro Max. */
+  topHairline: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 1,
+    backgroundColor: DOCK_CYAN,
+    zIndex: 2,
+  },
+  /** OLED black under 25-intensity glass blur (Louis 14/15 Pro Max). */
+  oledBase: {
+    backgroundColor: OLED_BLACK,
   },
   androidBlurFallback: {
     backgroundColor: 'rgba(0,0,0,0.72)',

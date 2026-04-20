@@ -111,6 +111,7 @@ export const useDiscoverFeedStore = create<DiscoverFeedState>()(
         // Check cache validity
         if (state.isCacheValid() && state.sections.length > 0) {
           console.log('[DiscoverFeed] Using cached feed');
+          if (state.isLoadingFeed) set({ isLoadingFeed: false });
           return;
         }
 

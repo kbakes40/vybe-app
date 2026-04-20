@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, Pressable, Modal, Text, Image } from 'react-native';
+import { View, StyleSheet, Pressable, Modal, Text, Image, Platform } from 'react-native';
 import { Tabs, useRouter } from 'expo-router';
 import { Download, Headphones, Disc } from 'lucide-react-native';
 import {
@@ -8,28 +8,31 @@ import {
   VybeWavesNeonIcon,
 } from '@/assets/icons/VybeNeonSourceIcons';
 import {
+  ShadowHomeIcon,
   ShadowLibraryIcon,
   ShadowProfileIcon,
   ShadowSaxSearchIcon,
-  ShadowRadioDialIcon,
   ShadowTabIconShell,
   ShadowVaultWaveIcon,
 } from '@/components/navigation/ShadowTabBarIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import type { BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
-import { TAB_BAR_HEIGHT } from '@/constants/Layout';
-import { useKeyboardChromeStore } from '@/stores/keyboardChromeStore';
+import {
+  DOC_LABEL_GAP_PT,
+  DOC_ICON_ROW_MIN_HEIGHT_PT,
+} from '@/constants/Layout';
 import { ShadowMachinedTabBar } from '@/components/navigation/ShadowMachinedTabBar';
 import { LouisOledTabOverlays } from '@/components/LouisOledTabOverlays';
 import { useTabBarBloomStore } from '@/stores/tabBarBloomStore';
-import { VIBRANT_BLUE } from '@/constants/machinedTheme';
+import { DOCK_CYAN } from '@/constants/machinedTheme';
 
 const VYBE_TAB_ICON = require('../../../../assets/images/icon.png');
 
 /** Inactive tab icon: 0.4 opacity white on OLED black (spec). */
 const TAB_INACTIVE = 'rgba(255,255,255,0.4)';
-const TAB_ACTIVE = VIBRANT_BLUE;
+/** Active tab + labels — branded Doc cyan #00E5FF (see DOCK_CYAN). */
+const TAB_ACTIVE = DOCK_CYAN;
 
 const ICON_SIZE = 25;
 const CENTER_ICON_SIZE = 30;
@@ -56,6 +59,7 @@ function HapticTabButton(props: BottomTabBarButtonProps & { bloomRoute?: string 
   return (
     <Pressable
       {...rest}
+      hitSlop={{ top: 8, bottom: 12, left: 4, right: 4 }}
       unstable_pressDelay={0}
       onPressIn={() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -84,6 +88,7 @@ function SearchTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: 
   return (
     <Pressable
       {...rest}
+      hitSlop={{ top: 8, bottom: 12, left: 4, right: 4 }}
       unstable_pressDelay={0}
       onPressIn={() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -97,7 +102,7 @@ function SearchTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: 
   );
 }
 
-function LibraryTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: () => void; bloomRoute?: string }) {
+function VaultTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: () => void; bloomRoute?: string }) {
   const { children, onPress, accessibilityState, onAlreadySelected, bloomRoute, ...rest } = props;
   const isSelected = accessibilityState?.selected ?? false;
   const lastTapRef = React.useRef(0);
@@ -117,6 +122,7 @@ function LibraryTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?:
   return (
     <Pressable
       {...rest}
+      hitSlop={{ top: 8, bottom: 12, left: 4, right: 4 }}
       unstable_pressDelay={0}
       onPressIn={() => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -131,30 +137,21 @@ function LibraryTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?:
 }
 
 /**
- * Symmetric 5-tab doc: Search | Radio | Discover (center) | Library | Account.
- * Home / plan / social removed from tab bar (see stack routes `home`, `social`, `your-plan`).
+ * MAIN TABS (the Doc) — primary shell after auth.
+ *
+ * NAV_AUDIT:
+ * - Root: `app/_layout.tsx` → `RootLayoutNav` Stack → authenticated branch includes `Stack.Screen name="(app)"`.
+ * - App shell: `(app)/_layout.tsx` → `Stack.Screen name="(tabs)"` is the TabNavigator host (not duplicate stack routes for these five).
+ * - This file: `Tabs` registers exactly five children — `index`, `search`, `discover`, `vault`, `profile` — symmetric dock only (matches filenames).
+ * - `tabBarHideOnKeyboard: false`. Dock is always visible on tab routes.
+ * - Post-auth entry: `getPostAuthDestination()` → `/(app)/(tabs)/discover`; sign-in uses `router.replace(dest)` to land on MainTabs.
+ * - Safe area: `paddingBottom` uses `insets.bottom` + `TAB_BAR_HOME_CLEARANCE_PT` so labels sit above the home indicator.
  */
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const keyboardVisible = useKeyboardChromeStore((s) => s.keyboardVisible);
   const [showViewMenu, setShowViewMenu] = useState(false);
   const [showSearchMenu, setShowSearchMenu] = useState(false);
-
-  const tabBarChrome = keyboardVisible
-    ? {
-        display: 'none' as const,
-        height: 0,
-        opacity: 0,
-        paddingTop: 0,
-        paddingBottom: 0,
-        borderTopWidth: 0,
-      }
-    : {
-        height: TAB_BAR_HEIGHT + insets.bottom,
-        paddingTop: 10,
-        paddingBottom: insets.bottom > 0 ? insets.bottom : 8,
-      };
 
   return (
     <View style={styles.container}>
@@ -288,38 +285,73 @@ export default function TabLayout() {
       </Modal>
 
       <Tabs
-        initialRouteName="discover"
+        initialRouteName="index"
         tabBar={(tabProps) => <ShadowMachinedTabBar {...tabProps} />}
         screenOptions={{
           headerShown: false,
           lazy: true,
           freezeOnBlur: true,
-          tabBarShowLabel: false,
+          tabBarHideOnKeyboard: false,
+          tabBarShowLabel: true,
+          tabBarLabelPosition: 'below-icon',
+          tabBarLabelStyle: {
+            fontSize: 10,
+            lineHeight: 12,
+            fontWeight: '600',
+            letterSpacing: 0.6,
+            marginTop: DOC_LABEL_GAP_PT,
+            textAlign: 'center',
+            alignSelf: 'center',
+            width: '100%',
+            textTransform: 'uppercase',
+            ...(Platform.OS === 'ios' ? { fontVariant: ['small-caps' as const] } : {}),
+          },
+          tabBarItemStyle: {
+            paddingVertical: 4,
+          },
           tabBarStyle: {
             position: 'absolute',
-            bottom: 0,
+            bottom: 1
+            ,
             left: 0,
             right: 0,
             backgroundColor: 'transparent',
             borderTopWidth: 0,
-            zIndex: 1000,
-            elevation: 1000,
-            pointerEvents: 'box-none',
+            /* Must paint above tab scene content so the Doc is never covered by scroll layers. */
+            zIndex: 100000,
+            elevation: 100000,
             alignItems: 'center',
             justifyContent: 'center',
-            ...tabBarChrome,
+            paddingBottom: insets.bottom,
           },
           tabBarActiveTintColor: TAB_ACTIVE,
           tabBarInactiveTintColor: TAB_INACTIVE,
           tabBarIconStyle: {
-            width: ICON_SIZE,
-            height: ICON_SIZE,
+            minHeight: DOC_ICON_ROW_MIN_HEIGHT_PT,
             marginTop: 0,
             marginBottom: 0,
+            alignItems: 'center',
+            justifyContent: 'center',
             alignSelf: 'center',
           },
         }}
       >
+        <Tabs.Screen
+          name="index"
+          options={{
+            title: 'Home',
+            tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="index" />,
+            tabBarIcon: ({ focused, size }) => {
+              const dim = size ?? ICON_SIZE;
+              const c = focused ? TAB_ACTIVE : TAB_INACTIVE;
+              return (
+                <ShadowTabIconShell focused={focused} pressRoute="index">
+                  <ShadowHomeIcon size={dim} color={c} />
+                </ShadowTabIconShell>
+              );
+            },
+          }}
+        />
         <Tabs.Screen
           name="search"
           options={{
@@ -343,25 +375,10 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
-          name="radio"
-          options={{
-            title: 'Radio',
-            tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="radio" />,
-            tabBarIcon: ({ focused, size }) => {
-              const dim = size ?? ICON_SIZE;
-              const c = focused ? TAB_ACTIVE : TAB_INACTIVE;
-              return (
-                <ShadowTabIconShell focused={focused} pressRoute="radio">
-                  <ShadowRadioDialIcon size={dim} color={c} />
-                </ShadowTabIconShell>
-              );
-            },
-          }}
-        />
-        <Tabs.Screen
           name="discover"
           options={{
             title: 'Discover',
+            tabBarAccessibilityLabel: 'Vybe Discover',
             tabBarButton: (props) => <HapticTabButton {...props} bloomRoute="discover" />,
             tabBarIcon: ({ focused, size }) => {
               const dim = size ?? CENTER_ICON_SIZE;
@@ -375,7 +392,7 @@ export default function TabLayout() {
                       borderRadius: Math.max(6, dim * 0.22),
                       opacity: focused ? 1 : 0.4,
                     }}
-                    resizeMode="cover"
+                    resizeMode="contain"
                   />
                 </ShadowTabIconShell>
               );
@@ -383,13 +400,13 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
-          name="library"
+          name="vault"
           options={{
-            title: 'Library',
+            title: 'Vault',
             tabBarButton: (props) => (
-              <LibraryTabButton
+              <VaultTabButton
                 {...props}
-                bloomRoute="library"
+                bloomRoute="vault"
                 onAlreadySelected={() => setShowViewMenu(true)}
               />
             ),
@@ -397,7 +414,7 @@ export default function TabLayout() {
               const dim = size ?? ICON_SIZE;
               const c = focused ? TAB_ACTIVE : TAB_INACTIVE;
               return (
-                <ShadowTabIconShell focused={focused} pressRoute="library">
+                <ShadowTabIconShell focused={focused} pressRoute="vault">
                   <ShadowVaultWaveIcon size={dim} color={c} />
                 </ShadowTabIconShell>
               );

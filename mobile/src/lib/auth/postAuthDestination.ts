@@ -4,7 +4,19 @@ import { api } from '@/lib/api/api';
 /** Same key as `onboarding.tsx` — local proof the style picker finished. */
 export const ONBOARDING_VIBES_STORAGE_KEY = '@vybe/onboarding_vibes';
 
+/** Never block cold boot on preferences API — land in app and hydrate later. */
+const POST_AUTH_DESTINATION_TIMEOUT_MS = 3500;
+
 export type PostAuthHref = '/(app)/(tabs)/discover' | '/onboarding';
+
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => {
+      setTimeout(() => resolve(fallback), ms);
+    }),
+  ]);
+}
 
 async function hasLocalVibeOnboarding(): Promise<boolean> {
   try {
@@ -32,9 +44,15 @@ async function hasServerOnboardingDone(): Promise<boolean> {
  * back through the picker on every launch).
  */
 export async function getPostAuthDestination(): Promise<PostAuthHref> {
-  if (await hasLocalVibeOnboarding()) return '/(app)/(tabs)/discover';
-  if (await hasServerOnboardingDone()) return '/(app)/(tabs)/discover';
-  return '/onboarding';
+  return withTimeout(
+    (async (): Promise<PostAuthHref> => {
+      if (await hasLocalVibeOnboarding()) return '/(app)/(tabs)/discover';
+      if (await hasServerOnboardingDone()) return '/(app)/(tabs)/discover';
+      return '/onboarding';
+    })(),
+    POST_AUTH_DESTINATION_TIMEOUT_MS,
+    '/(app)/(tabs)/discover',
+  );
 }
 
 /** Used by onboarding screen to bounce returning users straight to tabs. */

@@ -1,13 +1,11 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { View, StyleSheet, AppState, Linking, Text, Pressable } from 'react-native';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
-import { Stack, usePathname, useRouter, useSegments } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NowPlayingSheet } from '@/components/NowPlayingSheet';
-import { MiniPlayer } from '@/components/MiniPlayer';
 import { AirPlayPill } from '@/components/AirPlayPill';
-import { usePlaybackController } from '@/stores/playbackController';
 import { SoundCloudWebViewPool, SoundCloudWebViewPoolRef } from '@/components/SoundCloudWebViewPool';
 import { YouTubeWebViewPool, YouTubeWebViewPoolRef } from '@/components/YouTubeWebViewPool';
 import { PlaybackDebugOverlay } from '@/components/PlaybackDebugOverlay';
@@ -25,10 +23,10 @@ import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming } fr
 import { X } from 'lucide-react-native';
 
 import { MINI_PLAYER_HEIGHT, MINI_PLAYER_TAB_FLUSH_OVERLAP_PX } from '@/constants/miniPlayer';
-import { TAB_BAR_HEIGHT, BOTTOM_DOCK_HEIGHT } from '@/constants/Layout';
+import { BOTTOM_DOCK_HEIGHT, miniPlayerBottomOffsetRaw } from '@/constants/Layout';
 
 // Re-export for screens that already import from this layout file
-export { MINI_PLAYER_HEIGHT, TAB_BAR_HEIGHT, BOTTOM_DOCK_HEIGHT };
+export { MINI_PLAYER_HEIGHT, BOTTOM_DOCK_HEIGHT };
 
 // Global refs to the warm WebView pools
 export let warmSoundCloudRef: React.RefObject<SoundCloudWebViewPoolRef | null> | null = null;
@@ -54,16 +52,12 @@ const PLATFORM_META: Record<MusicPlatform, { label: string; color: string; symbo
 };
 
 export default function AppLayout() {
-  // Unified playback store — mini player mirrors the same `currentTrack` as `MiniPlayer` / `NowPlayingSheet`.
-  const currentTrack = usePlaybackController((s) => s.currentTrack);
-  const playbackRevision = usePlaybackController((s) => s.playbackRevision);
+  // Playback store — `NowPlayingSheet` / Dynamic Island subscribe for UI.
   const insets = useSafeAreaInsets();
   /** Keep now-playing shell mounted so MMKV-hydrated metadata can show on cold start. */
   const mountNowPlayingChrome = true;
   const soundcloudPoolRef = useRef<SoundCloudWebViewPoolRef>(null);
   const youtubePoolRef = useRef<YouTubeWebViewPoolRef>(null);
-  const segments = useSegments();
-  const pathname = usePathname();
   const router = useRouter();
 
   // Clipboard banner state
@@ -248,30 +242,11 @@ export default function AppLayout() {
     return () => clearTimeout(t);
   }, []);
 
-  // Expo Router often omits `(tabs)` from `useSegments()` (e.g. `['index']` on Home). Combine checks
-  // so `miniPlayerBottom` stays `tabBarHeight` on tabs — otherwise it falls back to ~insets.bottom and
-  // the mini strip covers the tab icons.
-  const segs = segments as string[];
-  const tabLeaf = segs[segs.length - 1] ?? '';
-  const isKnownTabLeaf =
-    tabLeaf === 'search' ||
-    tabLeaf === 'library' ||
-    tabLeaf === 'discover' ||
-    tabLeaf === 'profile' ||
-    tabLeaf === 'radio';
-  const pathNorm = String(pathname ?? '/').replace(/\/$/, '') || '/';
-  const isTabPath =
-    pathNorm === '/' ||
-    pathNorm === '/search' ||
-    pathNorm === '/library' ||
-    pathNorm === '/discover' ||
-    pathNorm === '/profile' ||
-    pathNorm === '/radio';
-  const isTabScreen = segs.includes('(tabs)') || isKnownTabLeaf || isTabPath;
-
-  const miniPlayerBottom = isTabScreen
-    ? Math.max(0, TAB_BAR_HEIGHT + insets.bottom - MINI_PLAYER_TAB_FLUSH_OVERLAP_PX)
-    : Math.max(insets.bottom, 0);
+  /** Bottom inset for collapsed full-player sheet — tab dock + gap (no bottom mini strip). */
+  const miniPlayerBottom = Math.max(
+    0,
+    miniPlayerBottomOffsetRaw(insets.bottom) - MINI_PLAYER_TAB_FLUSH_OVERLAP_PX,
+  );
 
   return (
     <BottomSheetModalProvider>
@@ -282,6 +257,7 @@ export default function AppLayout() {
           contentStyle: { backgroundColor: '#000000' },
         }}
       >
+        {/* Scene recovery: `(tabs)` hosts ShadowMachinedTabBar (25 blur). Pushing `nowPlaying` / `settings` covers it; pop back restores the Doc. Tabs also hide the bar when global segments match those routes (pageSheet can leave tabs mounted). */}
         <Stack.Screen name="(tabs)" />
         <Stack.Screen
           name="nowPlaying"
@@ -469,24 +445,6 @@ export default function AppLayout() {
           }}
         >
           <NowPlayingSheet miniPlayerBottom={miniPlayerBottom} />
-        </View>
-      ) : null}
-
-      {mountNowPlayingChrome ? (
-        <View
-          key={`mini-${currentTrack?.id ?? 'none'}-${playbackRevision}`}
-          pointerEvents="box-none"
-          style={{
-            position: 'absolute',
-            left: 0,
-            right: 0,
-            top: 0,
-            bottom: 0,
-            zIndex: 9999,
-            elevation: 9999,
-          }}
-        >
-          <MiniPlayer bottomLift={miniPlayerBottom} />
         </View>
       ) : null}
 

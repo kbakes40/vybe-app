@@ -7,7 +7,6 @@
     "dev": "bun run --hot src/index.ts",
     "build": "bunx prisma generate",
     "start": "bunx prisma generate && bun run src/index.ts",
-    "start:content": "bun run src/contentServer.ts",
     "studio": "cloud-studio --port 3001 --hostname 0.0.0.0",
     "typecheck": "tsc --noEmit"
   },

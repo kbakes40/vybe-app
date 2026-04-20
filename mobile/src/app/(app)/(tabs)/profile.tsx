@@ -12,7 +12,7 @@ import Animated from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { Crown, Settings, Smartphone, HelpCircle, Home, Users } from 'lucide-react-native';
+import { Crown, Settings, Smartphone, HelpCircle, Home, Users, Radio } from 'lucide-react-native';
 import { Image } from 'expo-image';
 import { authClient } from '@/lib/auth/auth-client';
 import { clearSessionBearerToken } from '@/lib/auth/sessionBearer';
@@ -136,7 +136,7 @@ export default function ProfileTabScreen() {
           <MenuItem
             icon={<Home size={20} color={NAV_BAR_PURPLE} strokeWidth={2} />}
             label="Home Feed"
-            onPress={() => router.push('/(app)/home' as never)}
+            onPress={() => router.push('/(app)/(tabs)' as never)}
           />
           <MenuItem
             icon={<Users size={20} color={NAV_BAR_PURPLE} strokeWidth={2} />}
@@ -162,6 +162,15 @@ export default function ProfileTabScreen() {
             icon={<HelpCircle size={20} color={NAV_BAR_PURPLE} strokeWidth={2} />}
             label="Support"
             onPress={() => {}}
+          />
+        </View>
+
+        <Text style={[styles.sectionKicker, { marginTop: 12 }]}>More</Text>
+        <View style={[styles.menuCard, { borderColor: hexToRgba(accent, 0.22) }]}>
+          <MenuItem
+            icon={<Radio size={20} color={NAV_BAR_PURPLE} strokeWidth={2} />}
+            label="Radio"
+            onPress={() => router.push('/(app)/radio' as never)}
             isLast
           />
         </View>
@@ -212,6 +221,14 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 3.5,
     marginBottom: 18,
+  },
+  sectionKicker: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 2.5,
+    marginBottom: 10,
+    paddingHorizontal: 20,
   },
   avatar: {
     width: 92,

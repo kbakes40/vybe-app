@@ -1,8 +1,12 @@
 /**
  * YouTube / YouTube Music → expo-av playback bridge.
  * Stream URLs come from the Railway resolver (CDN) with /api/youtube/audio/:id proxy fallback.
+ *
+ * SoundCloud: playable URLs are resolved server-side (`/api/soundcloud/stream-url`, `/api/soundcloud/audio`).
+ * Do not embed `client_id` in the mobile app — backend holds credentials.
  */
 
+import { Image } from 'react-native';
 import type { Track } from '@/types/music';
 import {
   resolveYoutubeEnvelopeForPlaybackWithBudget,
@@ -177,4 +181,71 @@ export function trackToPlayerDebugPayload(
     artwork: track.artwork ?? '',
     duration: track.duration ?? 0,
   };
+}
+
+/** Local bundled fallback — `assets/8k/placeholder-artwork.png` (copy of app icon until a dedicated 8K asset ships). */
+const PLACEHOLDER_ARTWORK_MODULE = require('../../../assets/8k/placeholder-artwork.png');
+
+function getSoundcloudPlaceholderArtworkUri(): string {
+  const src = Image.resolveAssetSource(PLACEHOLDER_ARTWORK_MODULE);
+  return src?.uri ?? '';
+}
+
+/**
+ * Maps SoundCloud API-style `artwork_url` (or mobile `artwork`) to a safe high-res HTTPS URL.
+ * Null / empty / invalid URIs fall back to the bundled placeholder so native image loaders never get `null`.
+ */
+export function resolveSoundcloudArtworkUrl(raw?: string | null): string {
+  const fallback = getSoundcloudPlaceholderArtworkUri();
+  if (raw == null || typeof raw !== 'string') return fallback;
+  const t = raw.trim();
+  if (!t) return fallback;
+  if (!/^https?:\/\//i.test(t)) return fallback;
+  return t.replace('-large', '-t500x500');
+}
+
+/**
+ * Strict defaults + artwork normalization before expo-av / lock-screen handoff.
+ * Call at the start of `playTrack` for `source === 'soundcloud'`.
+ */
+export function normalizeSoundcloudTrackForPlayback(track: Track): Track {
+  const title = (track.title && String(track.title).trim()) || 'Unknown Technical Track';
+  const artist = (track.artist && String(track.artist).trim()) || 'Unknown Artist';
+  const artwork = resolveSoundcloudArtworkUrl(track.artwork);
+  const soundcloudUrl = track.soundcloudUrl?.trim();
+  const soundcloudId = track.soundcloudId?.trim();
+  const duration = Number.isFinite(track.duration) && track.duration >= 0 ? track.duration : 0;
+
+  return {
+    ...track,
+    title,
+    artist,
+    artwork,
+    duration,
+    soundcloudUrl: soundcloudUrl || track.soundcloudUrl,
+    soundcloudId: soundcloudId || track.soundcloudId,
+  };
+}
+
+/** JSON-safe snapshot for `FINAL_TRACK_OBJECT` logging (expo-av — not react-native-track-player). */
+export function serializeTrackForPlaybackLog(track: Track, playUri?: string): Record<string, unknown> {
+  return {
+    id: track.id,
+    title: track.title,
+    artist: track.artist,
+    artwork: track.artwork,
+    duration: track.duration,
+    source: track.source,
+    soundcloudUrl: track.soundcloudUrl,
+    soundcloudId: track.soundcloudId,
+    playUri: playUri ?? null,
+  };
+}
+
+/** Classify expo-AV / NSURLError strings from SoundCloud stream failures. */
+export function classifySoundcloudStreamError(message: string): '401' | '404' | 'other' {
+  const m = message.toLowerCase();
+  if (/\b401\b|unauthorized/.test(m)) return '401';
+  if (/\b404\b|not\s*found/.test(m)) return '404';
+  return 'other';
 }

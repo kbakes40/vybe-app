@@ -13,7 +13,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useTabBarBloomStore } from '@/stores/tabBarBloomStore';
-import { VIBRANT_BLUE } from '@/constants/machinedTheme';
+import { DOCK_CYAN, VIBRANT_BLUE } from '@/constants/machinedTheme';
 
 /** Shadow tab chrome — shared across tab bar icons. */
 export const SHADOW_TAB_STROKE = 1.5;
@@ -141,15 +141,25 @@ export function ShadowTabIconShell({
     };
   });
 
+  const inner = (
+    <Animated.View
+      style={[styles.shell, isVybe && styles.shellVybe, shellAnimatedStyle]}
+      renderToHardwareTextureAndroid
+      collapsable={false}
+    >
+      {children}
+    </Animated.View>
+  );
+
   return (
     <View style={styles.wrapCol} pointerEvents="box-none">
-      <Animated.View
-        style={[styles.shell, isVybe && styles.shellVybe, shellAnimatedStyle]}
-        renderToHardwareTextureAndroid
-        collapsable={false}
-      >
-        {children}
-      </Animated.View>
+      {isVybe ? (
+        <View style={styles.vybePowerRing} pointerEvents="box-none">
+          {inner}
+        </View>
+      ) : (
+        inner
+      )}
     </View>
   );
 }
@@ -271,7 +281,9 @@ export function ShadowLibraryIcon({ size, color }: IconBase) {
   );
 }
 
-/** User silhouette inside a thin outer ring. */
+/**
+ * Account tab — vector circle-user glyph (24×24 viewBox, sharp at @3x; no raster blur).
+ */
 export function ShadowProfileIcon({ size, color }: IconBase) {
   const s = size;
   return (
@@ -390,6 +402,26 @@ const styles = StyleSheet.create({
   wrapCol: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  /** 1px cyan Power Ring (slot 3) — ambient glow reads as illuminating the Dock slightly. */
+  vybePowerRing: {
+    borderWidth: 1,
+    borderColor: DOCK_CYAN,
+    borderRadius: 16,
+    padding: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Platform.select({
+      ios: {
+        shadowColor: DOCK_CYAN,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.34,
+        shadowRadius: 20,
+      },
+      android: {
+        elevation: 14,
+      },
+    }),
   },
   shell: {
     alignItems: 'center',

@@ -6,8 +6,25 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import YTDlpWrap from "yt-dlp-wrap";
 import { createCache, searchCacheKey, CACHEABLE_HEADERS } from "../lib/memory-cache";
+import { env } from "../env";
 
 const ytDlp = new YTDlpWrap();
+
+/** Normalized row for Discover / SoundCloud public API + yt-dlp fallback */
+export type ScDiscoverTrackRow = {
+  trackId: string;
+  title: string;
+  artist: string;
+  artwork: string;
+  duration: number;
+  soundcloudUrl: string;
+  likeCount: number;
+};
+
+type ScDiscoverFeedPayload = {
+  collections: Array<{ slot: "trending" | "explore" | "spotlight"; track: ScDiscoverTrackRow }>;
+  crateTracks: ScDiscoverTrackRow[];
+};
 
 // In-memory response caches for hot read endpoints.
 const SC_ONE_HOUR_MS = 60 * 60 * 1000;
@@ -20,6 +37,7 @@ const scSearchCache = createCache<Array<{
   duration: number;
   soundcloudUrl: string;
 }>>(SC_ONE_HOUR_MS);
+const scDiscoverFeedCache = createCache<ScDiscoverFeedPayload>(SC_ONE_HOUR_MS);
 /** Direct progressive/HLS URL for native AVPlayer — avoids full-file /audio download. */
 const scStreamUrlCache = createCache<string>(4 * 60 * 60 * 1000);
 const scMixesCache = createCache<unknown>(SC_ONE_DAY_MS);
@@ -1402,6 +1420,194 @@ export async function searchSoundCloud(query: string, maxResults: number): Promi
 
   return tracks;
 }
+
+const VIBE_SPOTLIGHT: Record<string, string> = {
+  all: "electronic trending",
+  chill: "chill lofi relax",
+  fast: "drum and bass uptempo",
+  phonk: "phonk drift",
+  gym: "workout gym bass",
+  late: "late night ambient",
+  focus: "focus study instrumental",
+};
+
+/** Explore slot search — aligned with Discover vibe chips */
+const VIBE_EXPLORE: Record<string, string> = {
+  all: "electronic dance new uploads",
+  chill: "chill ambient lofi discovery",
+  fast: "uptempo rave bass music new",
+  phonk: "phonk memphis drift new",
+  gym: "gym workout trap bass power",
+  late: "late night nocturnal downtempo",
+  focus: "instrumental focus study deep",
+};
+
+function scNormalizeArtwork(url: string | null | undefined): string {
+  if (!url) return "https://a-v2.sndcdn.com/assets/images/sc-icons/ios-a62dfc8fe7.png";
+  return String(url).replace("-large", "-t500x500");
+}
+
+function scNormalizeDuration(raw: number): number {
+  if (!raw || !Number.isFinite(raw)) return 0;
+  return raw > 10_000 ? Math.round(raw / 1000) : Math.round(raw);
+}
+
+function scFromApiTrack(raw: Record<string, unknown>): ScDiscoverTrackRow | null {
+  const id = raw?.id;
+  if (id == null) return null;
+  const permalink = String(raw.permalink_url ?? "");
+  if (!permalink) return null;
+  const user = raw.user as { username?: string } | undefined;
+  const likes = Number(raw.favoritings_count ?? raw.likes_count ?? 0) || 0;
+  return {
+    trackId: String(id),
+    title: String(raw.title ?? "Unknown"),
+    artist: String(user?.username ?? "Unknown"),
+    artwork: scNormalizeArtwork(raw.artwork_url as string | null),
+    duration: scNormalizeDuration(Number(raw.duration ?? 0)),
+    soundcloudUrl: permalink,
+    likeCount: likes,
+  };
+}
+
+function scFromSearchRow(t: {
+  trackId: string;
+  title: string;
+  artist: string;
+  artwork: string;
+  duration: number;
+  soundcloudUrl: string;
+}): ScDiscoverTrackRow {
+  return { ...t, likeCount: 0 };
+}
+
+async function scFetchJson<T>(url: string, timeoutMs: number): Promise<T | null> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { signal: ac.signal });
+    if (!r.ok) return null;
+    return (await r.json()) as T;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function scFetchChartsTrending(clientId: string, limit: number): Promise<ScDiscoverTrackRow[]> {
+  const u = `https://api-v2.soundcloud.com/charts/top?kind=trending&genre=soundcloud:genres:all-music&region=soundcloud:regions:worldwide&client_id=${encodeURIComponent(clientId)}&limit=${limit}&offset=0`;
+  const j = await scFetchJson<{ collection?: Array<{ track?: Record<string, unknown> }> }>(u, 12_000);
+  if (!j?.collection) return [];
+  const out: ScDiscoverTrackRow[] = [];
+  for (const c of j.collection) {
+    const tr = c.track;
+    if (!tr) continue;
+    const n = scFromApiTrack(tr);
+    if (n) out.push(n);
+  }
+  return out;
+}
+
+async function scFetchTracksSearchV1(clientId: string, q: string, limit: number): Promise<ScDiscoverTrackRow[]> {
+  const u = `https://api.soundcloud.com/tracks?client_id=${encodeURIComponent(clientId)}&q=${encodeURIComponent(q)}&limit=${limit}&linked_partitioning=1`;
+  const j = await scFetchJson<unknown>(u, 12_000);
+  const arr = Array.isArray(j) ? j : [];
+  const out: ScDiscoverTrackRow[] = [];
+  for (const raw of arr) {
+    const n = scFromApiTrack(raw as Record<string, unknown>);
+    if (n) out.push(n);
+  }
+  return out;
+}
+
+export async function buildDiscoverFeedPayload(vibe: string, crateLimit: number): Promise<ScDiscoverFeedPayload> {
+  const cid = env.SOUNDCLOUD_CLIENT_ID?.trim();
+  const spotlightQ: string = VIBE_SPOTLIGHT[vibe] ?? VIBE_SPOTLIGHT.all ?? "electronic";
+  const exploreQ: string = VIBE_EXPLORE[vibe] ?? VIBE_EXPLORE.all ?? "electronic dance new uploads";
+
+  let trending: ScDiscoverTrackRow[] = [];
+  let explore: ScDiscoverTrackRow[] = [];
+  let spotlight: ScDiscoverTrackRow[] = [];
+
+  if (cid) {
+    trending = (await scFetchChartsTrending(cid, 15)) ?? [];
+    explore = (await scFetchTracksSearchV1(cid, exploreQ, 12)) ?? [];
+    spotlight = (await scFetchTracksSearchV1(cid, spotlightQ, 12)) ?? [];
+  }
+
+  if (trending.length === 0) {
+    const rows = await searchSoundCloud("trending electronic music", 10);
+    trending = rows.map(scFromSearchRow);
+  }
+  if (explore.length === 0) {
+    const rows = await searchSoundCloud(`${exploreQ} soundcloud`, 14);
+    explore = rows.map(scFromSearchRow);
+  }
+  if (spotlight.length === 0) {
+    const rows = await searchSoundCloud(spotlightQ, 14);
+    spotlight = rows.map(scFromSearchRow);
+  }
+
+  const uniq = new Map<string, ScDiscoverTrackRow>();
+  const add = (t: ScDiscoverTrackRow) => {
+    if (!uniq.has(t.trackId)) uniq.set(t.trackId, t);
+  };
+  for (const t of trending) add(t);
+  for (const t of explore) add(t);
+  for (const t of spotlight) add(t);
+
+  const maxC = Math.min(Math.max(crateLimit, 24), 80);
+  const crateTracks = [...uniq.values()].slice(0, maxC);
+
+  const collections: ScDiscoverFeedPayload["collections"] = [];
+  const usedCol = new Set<string>();
+  const takeSlot = (slot: "trending" | "explore" | "spotlight", arr: ScDiscoverTrackRow[]) => {
+    for (const t of arr) {
+      if (!usedCol.has(t.trackId)) {
+        usedCol.add(t.trackId);
+        collections.push({ slot, track: t });
+        return;
+      }
+    }
+    for (const t of crateTracks) {
+      if (!usedCol.has(t.trackId)) {
+        usedCol.add(t.trackId);
+        collections.push({ slot, track: t });
+        return;
+      }
+    }
+  };
+  takeSlot("trending", trending);
+  takeSlot("explore", explore);
+  takeSlot("spotlight", spotlight);
+
+  return { collections, crateTracks };
+}
+
+/**
+ * GET /api/soundcloud/discover-feed?vibe=all&limit=36
+ * Live SoundCloud charts/search when SOUNDCLOUD_CLIENT_ID is set; yt-dlp search fallback otherwise.
+ */
+soundcloudRouter.get("/discover-feed", async (c) => {
+  const vibe = (c.req.query("vibe") ?? "all").trim().toLowerCase() || "all";
+  const crateLimit = Math.min(parseInt(c.req.query("limit") ?? "36", 10), 80);
+  const cacheKey = searchCacheKey("soundcloud:discover-feed", vibe, crateLimit);
+  const hit = scDiscoverFeedCache.get(cacheKey);
+  if (hit) {
+    c.header("Cache-Control", CACHEABLE_HEADERS["Cache-Control"]);
+    return c.json({ data: hit });
+  }
+  try {
+    const payload = await buildDiscoverFeedPayload(vibe, crateLimit);
+    scDiscoverFeedCache.set(cacheKey, payload);
+    c.header("Cache-Control", CACHEABLE_HEADERS["Cache-Control"]);
+    return c.json({ data: payload });
+  } catch (e) {
+    console.error("[SoundCloud] discover-feed:", e);
+    return c.json({ data: { collections: [], crateTracks: [] } }, 200);
+  }
+});
 
 /**
  * Resolve a SoundCloud track page to a direct CDN/HLS URL (shared cache with GET /stream-url).

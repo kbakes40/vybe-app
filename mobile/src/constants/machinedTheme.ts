@@ -4,6 +4,8 @@
 export const MACHINED_CYAN = '#00FFFF';
 /** Legacy app cyan — prefer {@link MACHINED_CYAN} on Account / Settings / Plan. */
 export const VIBRANT_BLUE = '#00E5FF';
+/** Bottom Doc hairline, active tab, and Vybe Discover glow — same token as {@link VIBRANT_BLUE}. */
+export const DOCK_CYAN = '#00E5FF';
 /** Tab bar / account list iconography — unified purple (not “DaVinci blue”). */
 export const NAV_BAR_PURPLE = '#8B5CF6';
 /** Secondary lines — artist, sizes, live/source labels */

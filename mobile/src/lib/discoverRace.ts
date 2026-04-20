@@ -1,6 +1,28 @@
 /** Shared 5s cap for discover feed + home mix pipelines (Railway slow / 502 bursts). */
 export const DISCOVER_FETCH_TIMEOUT_MS = 5000;
 
+/** SoundCloud discover-feed row — fail fast so Discover never sits behind Suspense/spinner. */
+export const SC_DISCOVER_FEED_TIMEOUT_MS = 3000;
+
+export function raceWithScDiscoverTimeout<T>(p: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return new Promise<T>((resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error('SC_DISCOVER_FEED_TIMEOUT'));
+    }, SC_DISCOVER_FEED_TIMEOUT_MS);
+    p.then(
+      (v) => {
+        if (timer) clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        if (timer) clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
 export function raceWithDiscoverTimeout<T>(p: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return new Promise<T>((resolve, reject) => {
@@ -22,5 +44,5 @@ export function raceWithDiscoverTimeout<T>(p: Promise<T>): Promise<T> {
 
 export function isDiscoverBackendFailure(err: unknown): boolean {
   const m = err instanceof Error ? err.message : String(err);
-  return /HTTP_500|HTTP_502|\b500\b|\b502\b|DISCOVER_FETCH_TIMEOUT/i.test(m);
+  return /HTTP_500|HTTP_502|\b500\b|\b502\b|DISCOVER_FETCH_TIMEOUT|SC_DISCOVER_FEED_TIMEOUT/i.test(m);
 }

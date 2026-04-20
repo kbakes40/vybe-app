@@ -1,4 +1,11 @@
 {
+  "extends": "expo/tsconfig.base",
   "compilerOptions": {},
-  "extends": "expo/tsconfig.base"
+  /**
+   * `mobile/` has its own `tsconfig.json` with `@/*` → `./src/*`.
+   * Without excluding `mobile` here, the repo-root config can also pick up
+   * `mobile/**/*.tsx` and fail every `@/…` import — Cursor shows the whole
+   * `src/app` tree red even though `cd mobile && tsc` passes.
+   */
+  "exclude": ["mobile", "backend", "admin", "node_modules"]
 }

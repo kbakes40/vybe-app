@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { usePathname } from 'expo-router';
 import { authClient } from '@/lib/auth/auth-client';
 import { usePillLockStore } from '@/stores/pillLockStore';
 import {
@@ -15,9 +16,17 @@ import { usePlaybackController } from '@/stores/playbackController';
  * - Logout: `hasUser` false → `activityTerminateAll()` on the falling edge (hardware clear).
  */
 export function PillLockSync() {
-  const { data: session } = authClient.useSession();
+  const { data: session, isPending } = authClient.useSession();
+  const pathname = usePathname();
 
   const hasUser = !!session?.user;
+  /** Auth stack / cold boot — never show in-app pill chrome until we are in the main app shell. */
+  const suppressIslandSurfaces =
+    pathname === '/sign-in' ||
+    pathname === '/verify-otp' ||
+    pathname?.endsWith('/sign-in') ||
+    pathname?.endsWith('/verify-otp') ||
+    pathname === '/onboarding';
   const authSyncKey = useMemo(() => {
     const u = session?.user;
     if (!u) return null;
@@ -27,9 +36,17 @@ export function PillLockSync() {
   }, [session?.user?.id, session?.user?.email]);
 
   useLayoutEffect(() => {
+    if (isPending) {
+      usePillLockStore.setState({ hasUser: false, allowIslandSurfaces: false });
+      return;
+    }
+    if (suppressIslandSurfaces) {
+      usePillLockStore.setState({ hasUser, allowIslandSurfaces: false });
+      return;
+    }
     if (__DEV__) console.log('[PillLockSync] layoutEffect → sync', { hasUser, authSyncKey });
     usePillLockStore.getState().syncAuthLockFromSession(hasUser);
-  }, [hasUser, authSyncKey]);
+  }, [hasUser, authSyncKey, isPending, suppressIslandSurfaces]);
 
   const prevHasUser = useRef(false);
   useEffect(() => {

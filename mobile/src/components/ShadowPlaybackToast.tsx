@@ -2,7 +2,7 @@ import React from 'react';
 import { Text, StyleSheet, View } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { TAB_BAR_HEIGHT, MINI_PLAYER_HEIGHT } from '@/constants/Layout';
+import { miniPlayerBottomOffsetRaw } from '@/constants/Layout';
 import { MINI_PLAYER_TAB_FLUSH_OVERLAP_PX } from '@/constants/miniPlayer';
 import { useShadowPlaybackToastStore } from '@/stores/shadowPlaybackToastStore';
 
@@ -13,8 +13,8 @@ export function ShadowPlaybackToast() {
 
   if (!message) return null;
 
-  const tabShelf = TAB_BAR_HEIGHT + Math.max(insets.bottom, 0) - MINI_PLAYER_TAB_FLUSH_OVERLAP_PX;
-  const bottomAboveDock = tabShelf + MINI_PLAYER_HEIGHT + 10;
+  const tabShelf = miniPlayerBottomOffsetRaw(Math.max(insets.bottom, 0)) - MINI_PLAYER_TAB_FLUSH_OVERLAP_PX;
+  const bottomAboveDock = tabShelf + 10;
   const isTop = placement === 'top';
 
   return (

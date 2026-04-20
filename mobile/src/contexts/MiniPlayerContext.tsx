@@ -1,7 +1,7 @@
 import React, { createContext, useContext } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePlaybackController } from '@/stores/playbackController';
-import { TAB_BAR_HEIGHT } from '@/constants/Layout';
+import { tabBarChromeHeight } from '@/constants/Layout';
 
 // Mini player height constants
 export const MINI_PLAYER_HEIGHT = 64; // 48px artwork + 8px padding top + 8px padding bottom
@@ -27,9 +27,10 @@ export function MiniPlayerProvider({ children }: { children: React.ReactNode }) 
   const currentTrack = usePlaybackController(s => s.currentTrack);
 
   const isPlayerVisible = !!currentTrack;
-  const tabBarHeight = TAB_BAR_HEIGHT + insets.bottom;
+  const tabBarHeight = tabBarChromeHeight(insets.bottom);
   const miniPlayerHeight = isPlayerVisible ? MINI_PLAYER_TOTAL_HEIGHT : 0;
-  const totalBottomInset = tabBarHeight + miniPlayerHeight;
+  /** No bottom mini strip — lists only clear the Doc. */
+  const totalBottomInset = tabBarHeight;
 
   return (
     <MiniPlayerContext.Provider

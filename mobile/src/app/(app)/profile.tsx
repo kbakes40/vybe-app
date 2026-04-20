@@ -20,7 +20,6 @@ import { useRecentsStore } from '@/stores/recentsStore';
 import { useDownloadsStore } from '@/stores/downloadsStore';
 import { VybeIcon } from '@/components/VybeIcon';
 import { VybePlusWordmark } from '@/components/VybePlusWordmark';
-import { MINI_PLAYER_HEIGHT } from './_layout';
 import { Track } from '@/types/music';
 import { authClient } from '@/lib/auth/auth-client';
 import { OLED_BLACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
@@ -102,7 +101,6 @@ export default function ProfileScreen() {
   const router = useRouter();
   const accent = useThemeStore((s) => s.accentColor);
   const tier = useSubscriptionStore(s => s.tier);
-  const currentTrack = usePlaybackController(s => s.currentTrack);
   const likedTrackIds = usePlaybackController(s => s.likedTracks);
   const userPlaylists = useUserPlaylistStore(s => s.playlists);
   const recentTracks = useRecentsStore(s => s.recentTracks);
@@ -123,8 +121,7 @@ export default function ProfileScreen() {
   // matches the same dominant-color pattern used on playlists / Vybe Mix
   // / Vybe Beats. Falls back to the default purple palette while loading
   // and for users with no avatar.
-  const showMiniPlayer = !!currentTrack;
-  const bottomPadding = insets.bottom + (showMiniPlayer ? MINI_PLAYER_HEIGHT : 0) + 40;
+  const bottomPadding = insets.bottom + 40;
 
   // Derive top artists from recents + downloads, ranked by play frequency
   const topArtists = useMemo(() => {

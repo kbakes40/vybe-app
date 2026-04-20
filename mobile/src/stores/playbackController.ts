@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { MMKV } from 'react-native-mmkv';
 import { AppState, AppStateStatus, InteractionManager, NativeEventEmitter, NativeModules, Platform } from 'react-native';
 /** expo-av → native AVPlayer/ExoPlayer (RN invokes the module over the Turbo/JSI bridge when enabled). */
-import { Audio, AVPlaybackStatus, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
+import { Audio, AVPlaybackStatus } from 'expo-av';
 import { Track, TrackSource, RepeatMode } from '@/types/music';
 import * as Haptics from 'expo-haptics';
 import { isEventObject, isValidTrack, isValidId } from '@/lib/eventGuard';
@@ -11,7 +11,7 @@ import { updateNowPlaying, updateNowPlayingProgress, clearNowPlaying, registerRe
 import { startNowPlayingActivity, updateNowPlayingActivity, endNowPlayingActivity } from '@/lib/NowPlayingActivityManager';
 import { usePlaybackSettingsStore } from '@/stores/playbackSettingsStore';
 import { useRecommendationSignalStore } from '@/stores/recommendationSignalStore';
-import { useDownloadsStore, downloadSoundCloudTrack, enqueueDownload } from '@/stores/downloadsStore';
+import { useDownloadsStore } from '@/stores/downloadsStore';
 import { openNowPlayingSheet } from '@/lib/openNowPlayingSheet';
 import { getPlaybackBufferConfig } from '@/constants/playbackBuffer';
 import { useShadowPlaybackToastStore } from '@/stores/shadowPlaybackToastStore';
@@ -23,11 +23,14 @@ import {
 } from '@/lib/youtubeResolvePreloadCache';
 import type { YoutubeHealMeta } from '@/lib/youtubeResolvePreloadCache';
 import {
+  classifySoundcloudStreamError,
   createYoutubeAvPlaybackSource,
   extractYoutubeVideoId,
+  normalizeSoundcloudTrackForPlayback,
   normalizeYoutubeTrackForPlayback,
   resolveYoutubeStreamForVideoId,
 } from '@/lib/audio/playbackService';
+import { ensurePlaybackSetup, invalidatePlaybackSetup } from '@/services/PlaybackService';
 import {
   preResolveSoundcloudStreamUrl,
   resolveSoundcloudStreamUrlForPlayback,
@@ -127,9 +130,6 @@ let vybeSound: Audio.Sound | null = null;
 // Global adapter refs (set by WebView components)
 let youtubeAdapterRef: PlayerAdapter | null = null;
 let soundcloudAdapterRef: PlayerAdapter | null = null;
-
-// Track if audio session is initialized
-let audioSessionInitialized = false;
 
 // ONE PLAYER RULE: monotonically increasing ID for each playTrack call.
 // Each call captures its own ID; before starting audio it checks if it's
@@ -561,28 +561,6 @@ const waitForSoundCloudAdapter = async (maxMs: number): Promise<PlayerAdapter | 
   return soundcloudAdapterRef;
 };
 
-// Initialize audio session with proper settings
-const initializeAudioSession = async (): Promise<void> => {
-  if (audioSessionInitialized) return;
-
-  try {
-    await Audio.setAudioModeAsync({
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: true,
-      shouldDuckAndroid: true,
-      allowsRecordingIOS: false,
-      interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-      interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-    });
-    audioSessionInitialized = true;
-  } catch (error) {
-    console.error('[PlaybackController] Failed to initialize audio session:', error);
-  }
-};
-
-// Initialize on module load
-initializeAudioSession();
-
 // Register lock screen / Control Center remote handlers once at startup
 registerRemoteHandlers({
   onPlay:     () => usePlaybackController.getState().play(),
@@ -683,8 +661,7 @@ const stopVybeAudio = async (): Promise<void> => {
       // Ignore cleanup errors
     }
     vybeSound = null;
-    // Reset flag so the next track re-activates the iOS audio session
-    audioSessionInitialized = false;
+    invalidatePlaybackSetup();
   }
 };
 
@@ -816,6 +793,10 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       source = 'soundcloud';
     }
 
+    if (source === 'soundcloud') {
+      track = normalizeSoundcloudTrackForPlayback(track);
+    }
+
     const playTapAt = Date.now();
     useDynamicIslandSignal.getState().setScIgnitionGlow(false);
     const preemptBackend = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
@@ -829,7 +810,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     if (!isStillCurrent()) return;
 
     // Re-activate audio session after stopping (unloadAsync deactivates it on iOS)
-    await initializeAudioSession();
+    await ensurePlaybackSetup();
 
     // Bail again after async session init
     if (!isStillCurrent()) { await stopVybeAudio(); return; }
@@ -1395,17 +1376,47 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
       return;
     }
 
-    // SoundCloud: prefer direct HLS/progressive URL from /stream-url (native AVPlayer),
-    // parallel unbounded resolve + fall back to low-quality proxy if budget misses.
+    // SoundCloud live stream only — no client HQ download/swap after play (avoids -11829 / OOM); offline saves use DownloadButton.
+    // iOS: `/api/soundcloud/audio` returns a monolithic file — long tracks OOM / crash; use direct HLS first when duration > threshold.
+    // Android: direct /stream-url first, else proxy.
     const scUrl = (track as Track & { soundcloudUrl?: string }).soundcloudUrl;
     if (source === 'soundcloud' && scUrl) {
       const backendBase = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '');
-      const hqProxyUrl = `${backendBase}/api/soundcloud/audio?url=${encodeURIComponent(scUrl)}&quality=high`;
+      const soundcloudProxyUrl = `${backendBase}/api/soundcloud/audio?url=${encodeURIComponent(scUrl)}&quality=high`;
 
       preResolveSoundcloudStreamUrl(scUrl);
       void resolveSoundcloudStreamUrlForPlayback(scUrl);
-      const directSc = await resolveSoundcloudStreamUrlWithBudget(scUrl, 3_200);
-      const playScUri = directSc ?? hqProxyUrl;
+      /** Longer budget so direct HLS is often ready before loadAsync (short iOS used to ignore it and hit proxy only). */
+      const directSc = await resolveSoundcloudStreamUrlWithBudget(scUrl, 8_000);
+      /** Long SC tracks + monolithic proxy = memory crash on iOS (expo-av loads full HTTP body). */
+      const SC_PROXY_MONOLITH_SAFE_MAX_SEC = 20 * 60;
+      const scDurationSec =
+        typeof track.duration === 'number' && Number.isFinite(track.duration) && track.duration > 0
+          ? track.duration
+          : 0;
+      const iosUseDirectStreamFirst =
+        Platform.OS === 'ios' && scDurationSec > SC_PROXY_MONOLITH_SAFE_MAX_SEC;
+
+      if (iosUseDirectStreamFirst && (!directSc || !directSc.startsWith('http'))) {
+        set({
+          playbackState: 'error',
+          error: 'Could not resolve a stream for this track. Try a shorter mix or try again.',
+        });
+        return;
+      }
+
+      // Prefer direct stream URL whenever the backend resolves it (same as Android). Short iOS used to
+      // force the monolithic proxy first, which fails when the proxy is down/slow but stream-url works.
+      const playScUri = iosUseDirectStreamFirst ? directSc! : (directSc ?? soundcloudProxyUrl);
+
+      let scRoute: 'proxy' | 'direct';
+      if (iosUseDirectStreamFirst) {
+        scRoute = 'direct';
+      } else if (directSc && playScUri === directSc) {
+        scRoute = 'direct';
+      } else {
+        scRoute = 'proxy';
+      }
 
       const makeSCStatusCallback = (snd: Audio.Sound) => (status: AVPlaybackStatus) => {
         const { currentTrack } = get();
@@ -1425,74 +1436,86 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
             else if (crossfadeTriggeredForTrackId !== track.id) { set({ playbackState: 'ended' }); get().next(); }
           }
         } else if ('error' in status && status.error) {
-          console.error('[PlaybackController] SoundCloud error:', status.error);
-          set({ playbackState: 'error', error: 'Playback failed' });
+          const errStr = typeof status.error === 'string' ? status.error : String(status.error);
+          const kind = classifySoundcloudStreamError(errStr);
+          if (kind === '401') {
+            useShadowPlaybackToastStore.getState().showMicroToast('SoundCloud: unauthorized (401)', { durationMs: 3600 });
+          } else if (kind === '404') {
+            useShadowPlaybackToastStore.getState().showMicroToast('SoundCloud: stream not found (404)', { durationMs: 3600 });
+          }
+          console.error('[PlaybackController] SoundCloud AVPlayback error:', status.error);
+          set({ playbackState: 'error', error: `Playback failed: ${errStr.slice(0, 120)}` });
         }
       };
 
       try {
+        // ONE PLAYER: one successful loadAsync per tap; short iOS may retry proxy → direct only.
+        await stopVybeAudio();
+
         const sound = new Audio.Sound();
-        vybeSound = sound;
         sound.setOnPlaybackStatusUpdate(makeSCStatusCallback(sound));
-        await sound.loadAsync({ uri: playScUri }, { shouldPlay: false, volume: get().volume });
+        try {
+          await sound.loadAsync({ uri: playScUri }, { shouldPlay: false, volume: get().volume });
+        } catch (loadErr) {
+          const msg = loadErr instanceof Error ? loadErr.message : String(loadErr);
+          const kind = classifySoundcloudStreamError(msg);
+          if (kind === '401') {
+            useShadowPlaybackToastStore.getState().showMicroToast('SoundCloud: unauthorized (401)', { durationMs: 3600 });
+          } else if (kind === '404') {
+            useShadowPlaybackToastStore.getState().showMicroToast('SoundCloud: stream not found (404)', { durationMs: 3600 });
+          }
+          await sound.unloadAsync().catch(() => {});
+
+          let recoveredUri: string | null = null;
+          if (
+            !iosUseDirectStreamFirst &&
+            typeof directSc === 'string' &&
+            directSc.startsWith('http') &&
+            playScUri === directSc
+          ) {
+            // Direct HLS failed (AVPlayer picky) — try monolithic proxy.
+            recoveredUri = soundcloudProxyUrl;
+            scRoute = 'proxy';
+          } else if (!iosUseDirectStreamFirst && playScUri === soundcloudProxyUrl) {
+            // Proxy failed and budget missed direct — wait for full stream-url resolve.
+            const late = await resolveSoundcloudStreamUrlForPlayback(scUrl);
+            if (late?.startsWith('http')) {
+              recoveredUri = late;
+              scRoute = 'direct';
+            }
+          }
+
+          if (recoveredUri) {
+            try {
+              await sound.loadAsync({ uri: recoveredUri }, { shouldPlay: false, volume: get().volume });
+            } catch {
+              await sound.unloadAsync().catch(() => {});
+              throw loadErr;
+            }
+          } else {
+            throw loadErr;
+          }
+        }
+        vybeSound = sound;
         if (!isStillCurrent()) {
           sound.stopAsync().catch(() => {});
           sound.unloadAsync().catch(() => {});
           if (vybeSound === sound) vybeSound = null;
           return;
         }
-        await sound.playAsync();
+        try {
+          await sound.playAsync();
+        } catch (playErr) {
+          console.error('[PlaybackController] SoundCloud playAsync failed:', playErr);
+          await sound.stopAsync().catch(() => {});
+          await sound.unloadAsync().catch(() => {});
+          if (vybeSound === sound) vybeSound = null;
+          throw playErr;
+        }
         set({ playbackState: 'playing' });
-        console.log(`[SC_IGNITION] ${Date.now() - playTapAt}ms | ${track.title}`);
-
-        // Background: download HQ version, then seamlessly switch to it
-        (async () => {
-          try {
-            // downloadSoundCloudTrack and enqueueDownload now statically imported
-            enqueueDownload(track.id, async () => {
-              const result = await downloadSoundCloudTrack(
-                track as Track & { soundcloudUrl?: string },
-                backendBase,
-                undefined,
-                true, // silent — no loading UI, just Dynamic Island progress
-              );
-              if (!result.success) return;
-
-              // Only upgrade if this track is still active
-              const state = usePlaybackController.getState();
-              if (state.currentTrack?.id !== track.id) return;
-
-              const downloaded = useDownloadsStore.getState().getDownloadedTrack(track.id);
-              if (!downloaded?.localFilePath) return;
-
-              const savedProgress = state.progress;
-              // Stop LQ stream
-              clearCrossfadeState();
-              if (vybeSound) {
-                try { await vybeSound.stopAsync(); await vybeSound.unloadAsync(); } catch {}
-                vybeSound = null;
-                audioSessionInitialized = false;
-              }
-              await initializeAudioSession();
-
-              // Load HQ local file at same position
-              const hqSound = new Audio.Sound();
-              hqSound.setOnPlaybackStatusUpdate(makeSCStatusCallback(hqSound));
-              try {
-                await hqSound.loadAsync({ uri: downloaded.localFilePath }, { shouldPlay: false, volume: get().volume });
-                await hqSound.setPositionAsync(Math.round(savedProgress * 1000));
-                await hqSound.playAsync();
-                vybeSound = hqSound;
-                set({ playbackState: 'playing' });
-              } catch (e) {
-                console.error('[PlaybackController] SoundCloud HQ upgrade failed:', e);
-                try { await hqSound.unloadAsync(); } catch {}
-              }
-            });
-          } catch (e) {
-            console.error('[PlaybackController] HQ upgrade setup failed:', e);
-          }
-        })();
+        console.log(
+          `[Playback_Initialized] soundcloud route=${scRoute} platform=${Platform.OS} ms=${Date.now() - playTapAt} track=${track.id}`,
+        );
 
       } catch (error) {
         const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -1642,8 +1665,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-    // Ensure audio session is active before playing
-    await initializeAudioSession();
+    await ensurePlaybackSetup();
 
     // Prefer native sound (vybe or youtube-via-proxy) over WebView adapters
     if (vybeSound) {
@@ -2154,21 +2176,13 @@ export const getCurrentTrack = () => usePlaybackController.getState().currentTra
 AppState.addEventListener('change', async (nextState: AppStateStatus) => {
   if (nextState === 'background') {
     // Re-apply audio mode so iOS keeps the session active while suspended.
-    // This is the critical call that prevents iOS from killing the audio session.
     try {
-      await Audio.setAudioModeAsync({
-        playsInSilentModeIOS: true,
-        staysActiveInBackground: true,
-        shouldDuckAndroid: true,
-        allowsRecordingIOS: false,
-        interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-        interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-      });
+      invalidatePlaybackSetup();
+      await ensurePlaybackSetup();
     } catch {}
   } else if (nextState === 'active') {
-    // App came back to foreground — reset flag so session re-inits cleanly.
-    audioSessionInitialized = false;
-    await initializeAudioSession();
+    invalidatePlaybackSetup();
+    await ensurePlaybackSetup();
 
     // Restart the Live Activity interval (it stops when JS is suspended).
     const { currentTrack, playbackState } = usePlaybackController.getState();

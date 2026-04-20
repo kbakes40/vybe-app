@@ -34,7 +34,6 @@ import {
 } from '@/stores/downloadsStore';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useRecentsStore } from '@/stores/recentsStore';
-import { MINI_PLAYER_HEIGHT } from './_layout';
 import { useVybePopup } from '@/components/VybePopup';
 
 const SUPPORTED_FORMATS = ['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'opus'];
@@ -103,12 +102,10 @@ export default function ImportAudioScreen() {
   const { showVybePopup } = useVybePopup();
   const addDownload = useDownloadsStore(s => s.addDownload);
   const downloads = useDownloadsStore(s => s.downloads);
-  const currentTrack = usePlaybackController(s => s.currentTrack);
   const playTrack = usePlaybackController(s => s.playTrack);
   const addToRecents = useRecentsStore(s => s.addToRecents);
 
-  const showMiniPlayer = !!currentTrack;
-  const bottomPadding = insets.bottom + (showMiniPlayer ? MINI_PLAYER_HEIGHT : 0) + 32;
+  const bottomPadding = insets.bottom + 32;
 
   const [results, setResults] = useState<FileResult[]>([]);
   const [importStatus, setImportStatus] = useState<ImportStatus>('idle');

@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { View, Text, StyleSheet, LayoutChangeEvent, Platform, Pressable as RNPressable } from 'react-native';
 import { Pressable } from 'react-native-gesture-handler';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useShallow } from 'zustand/react/shallow';
 import Animated, {
   useAnimatedStyle,
@@ -35,7 +34,7 @@ import { sheetProgressSV } from '@/stores/nowPlayingSheetProgress';
 import { PlaybackDebugIndicator } from '@/components/PlaybackDebugOverlay';
 import { LoadingRing } from '@/components/LoadingRing';
 import * as Haptics from 'expo-haptics';
-import { MINI_PLAYER_HEIGHT, TAB_BAR_HEIGHT } from '@/constants/Layout';
+import { MINI_PLAYER_HEIGHT } from '@/constants/Layout';
 import { useThemeStore } from '@/stores/themeStore';
 import { usePillLockStore } from '@/stores/pillLockStore';
 import { hexToRgb } from '@/lib/themeColorUtils';
@@ -91,15 +90,14 @@ function MiniPlayerSlimProgress() {
 
 type MiniPlayerProps = {
   /**
-   * Offset from the bottom of the sheet to the mini strip. On tab routes this should be
-   * `TAB_BAR_HEIGHT + insets.bottom` from `@/constants/Layout` / safe area; on stack routes, `insets.bottom` only.
+   * Offset from the bottom of the window to the mini strip. On tab routes use
+   * `miniPlayerBottomOffsetRaw(insets.bottom) - overlap` from `@/constants/Layout`.
    */
   bottomLift: number;
 };
 
 function MiniPlayerInner({ bottomLift }: MiniPlayerProps) {
   const hasUser = usePillLockStore((s) => s.hasUser);
-  const insets = useSafeAreaInsets();
   const sheetExpanded = useNowPlayingSheetStore((s) => s.isExpanded);
   const keyboardVisible = useKeyboardChromeStore((s) => s.keyboardVisible);
   const kbHiddenStyle = keyboardVisible
@@ -556,9 +554,8 @@ function MiniPlayerInner({ bottomLift }: MiniPlayerProps) {
     </Animated.View>
   );
 
-  /** Pin above tab chrome: tab bar height + home indicator when parent passes tab-aware lift; else stack insets. */
-  const dockBottom =
-    bottomLift >= TAB_BAR_HEIGHT ? TAB_BAR_HEIGHT + insets.bottom : bottomLift;
+  /** Pin above tab chrome — `AppLayout` passes tab dock + gap + safe area. */
+  const dockBottom = bottomLift;
 
   /**
    * Google Music cross-fade: mini reads the sheet's progress shared value every frame.
@@ -609,9 +606,7 @@ const styles = StyleSheet.create({
     right: 0,
     height: MINI_PLAYER_HEIGHT,
     zIndex: 9999,
-    // 1px OLED Black bottom border keeps the baby-blue progress bar from
-    // bleeding into the tab bar — pairs with the tab bar's 1px black top
-    // border to create a sharp "Machined" seam.
+    // 1px OLED Black bottom border — sharp seam above the tab bar
     borderBottomWidth: 1,
     borderBottomColor: '#000000',
     ...Platform.select({

@@ -227,7 +227,7 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
     };
   }, [maxTranslate]);
 
-  /** Full-screen modal — no outer padding. Inner `NowPlayingScreenContent` handles safe-area insets. */
+  /** Full-screen modal — bottom inset reserves collapsed mini strip when the sheet is edge-to-edge. */
   const expandSlotPadStyle = useAnimatedStyle(() => {
     const m = maxTranslate;
     if (m <= 0) return { paddingBottom: miniPlayerBottom };

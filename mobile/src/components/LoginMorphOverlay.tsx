@@ -8,7 +8,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { LOGIN_MORPH_TAB_INDEX, useLoginMorphStore } from '@/stores/loginMorphStore';
-import { TAB_BAR_HEIGHT } from '@/constants/Layout';
+import { tabBarChromeHeight } from '@/constants/Layout';
 
 const VYBE_ICON = require('../../assets/images/icon.png');
 const END_SIZE = 28;
@@ -25,7 +25,7 @@ function tabIconCenterJs(
   const seg = screenW / tabCount;
   const cx = seg * (tabIndex + 0.5);
   const padBottom = Math.max(8, insetBottom > 0 ? insetBottom - 2 : 8);
-  const barH = TAB_BAR_HEIGHT + insetBottom;
+  const barH = tabBarChromeHeight(insetBottom);
   const innerH = barH - 10 - padBottom;
   const cy = screenH - padBottom - innerH / 2;
   return { cx, cy };

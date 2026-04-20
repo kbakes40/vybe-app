@@ -42,8 +42,8 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render(): ReactNode {
     if (this.state.hasError) {
-      // Custom fallback if provided
-      if (this.props.fallback) {
+      // Custom fallback if provided (including null to render nothing)
+      if (this.props.fallback !== undefined) {
         return this.props.fallback;
       }
 
@@ -100,7 +100,7 @@ export class InlineErrorBoundary extends Component<Props, State> {
 
   render(): ReactNode {
     if (this.state.hasError) {
-      if (this.props.fallback) {
+      if (this.props.fallback !== undefined) {
         return this.props.fallback;
       }
 

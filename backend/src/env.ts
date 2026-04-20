@@ -20,6 +20,9 @@ const envSchema = z.object({
 
   // YouTube Data API (for Discover feature)
   YOUTUBE_API_KEY: z.string().optional(), // Optional - feature degrades gracefully if not set
+
+  /** Optional — enables SoundCloud public API (charts/search) for Discover; yt-dlp fallback if unset */
+  SOUNDCLOUD_CLIENT_ID: z.string().optional(),
 });
 
 /**

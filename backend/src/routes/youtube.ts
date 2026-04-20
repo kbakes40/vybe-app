@@ -34,6 +34,14 @@ const youtubeRouter = new Hono();
 
 const VIDEO_ID_RE = /^[a-zA-Z0-9_-]{6,32}$/;
 
+/**
+ * yt-dlp `-f` selector for vault audio. **M4A/AAC before Opus/WebM** — iOS `AVPlayer`
+ * (expo-av) cannot play Opus-in-WebM streams; the previous order preferred Opus and
+ * broke every on-device tap while the proxy still returned HTTP 200.
+ */
+const YTDLP_AUDIO_FORMAT_IOS_SAFE =
+  "bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio[ext=webm]/bestaudio[acodec=opus]/bestaudio/best/bestaudio*/best*";
+
 /** When present, live playback uses SoundCloud only (no yt-dlp / vault for this request). */
 function soundcloudPageUrlFromQuery(c: { req: { query: (name: string) => string | undefined } }): string | null {
   const raw =
@@ -139,11 +147,17 @@ function noCookieYtdlpArgs(): string[] {
 // a stale URL doesn't block playback.
 const urlCache = new Map<string, { url: string; expires: number }>();
 const URL_TTL_MS = 30 * 60 * 1000;
+/** Bump when `YTDLP_AUDIO_FORMAT_IOS_SAFE` changes — avoids serving stale WebM URLs from RAM. */
+const URL_CACHE_VERSION = "a2";
+
+function urlCacheKey(videoId: string): string {
+  return `${URL_CACHE_VERSION}:${videoId}`;
+}
 
 function getCachedUrl(videoId: string): string | null {
-  const entry = urlCache.get(videoId);
+  const entry = urlCache.get(urlCacheKey(videoId));
   if (entry && Date.now() < entry.expires) return entry.url;
-  urlCache.delete(videoId);
+  urlCache.delete(urlCacheKey(videoId));
   return null;
 }
 
@@ -177,11 +191,11 @@ function setCachedSearchResponse(key: string, data: unknown): void {
 }
 
 function setCachedUrl(videoId: string, url: string): void {
-  urlCache.set(videoId, { url, expires: Date.now() + URL_TTL_MS });
+  urlCache.set(urlCacheKey(videoId), { url, expires: Date.now() + URL_TTL_MS });
 }
 
 function invalidateCachedUrl(videoId: string): void {
-  urlCache.delete(videoId);
+  urlCache.delete(urlCacheKey(videoId));
 }
 
 /** Match download route — YouTube blocks datacenter IPs on some clients only.
@@ -269,8 +283,7 @@ function tryResolveWithClient(
       [
         `https://www.youtube.com/watch?v=${videoId}`,
         "-f",
-        // Prefer Opus (≈160kbps tier) then AAC/m4a fallbacks for vault clarity.
-        "bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio/best/bestaudio*/best*",
+        YTDLP_AUDIO_FORMAT_IOS_SAFE,
         "--get-url",
         "--no-playlist",
         "--no-warnings",
@@ -487,7 +500,7 @@ youtubeRouter.get("/audio/:videoId", async (c) => {
 
   for (let attempt = 0; attempt < MAX_AUDIO_PROXY_ATTEMPTS; attempt++) {
     if (attempt > 0) {
-      urlCache.delete(videoId);
+      urlCache.delete(urlCacheKey(videoId));
       ensureYoutubeCookiesFile();
       console.warn(`[YouTube] audio proxy retry ${attempt}/${MAX_AUDIO_PROXY_ATTEMPTS - 1} for ${videoId}`);
     }
@@ -619,7 +632,7 @@ youtubeRouter.get("/download/:videoId", async (c) => {
       const output = await ytDlp.execPromise([
         `https://www.youtube.com/watch?v=${videoId}`,
         "-f",
-        "bestaudio[acodec=opus]/bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio[acodec=aac]/bestaudio/best/bestaudio*/best*",
+        YTDLP_AUDIO_FORMAT_IOS_SAFE,
         "--no-playlist",
         "-o", tmpTemplate,
         "--no-warnings",

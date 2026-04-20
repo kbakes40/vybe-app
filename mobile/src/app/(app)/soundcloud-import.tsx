@@ -31,7 +31,6 @@ import { api } from '@/lib/api/api';
 import { usePlaybackController } from '@/stores/playbackController';
 import { useDiscoveryStore } from '@/stores/discoveryStore';
 import { Track, RelatedTrack, Tag } from '@/types/music';
-import { MINI_PLAYER_HEIGHT } from './_layout';
 import { useVybePopup } from '@/components/VybePopup';
 
 // Available tags for categorization
@@ -71,15 +70,10 @@ export default function SoundCloudImportScreen() {
   const router = useRouter();
   const { showVybePopup } = useVybePopup();
   const playTrack = usePlaybackController(s => s.playTrack);
-  const currentTrack = usePlaybackController(s => s.currentTrack);
   const addSeedTrack = useDiscoveryStore(s => s.addSeedTrack);
   const markTrackAsImported = useDiscoveryStore(s => s.markTrackAsImported);
 
-  // Check if mini player is visible
-  const showMiniPlayer = !!currentTrack;
-
-  // Calculate bottom padding: safe area + mini player height (if visible) + extra padding
-  const bottomPadding = insets.bottom + (showMiniPlayer ? MINI_PLAYER_HEIGHT : 0) + 40;
+  const bottomPadding = insets.bottom + 40;
 
   const [url, setUrl] = useState('');
   const [isLoading, setIsLoading] = useState(false);

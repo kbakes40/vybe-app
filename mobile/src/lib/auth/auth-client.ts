@@ -9,8 +9,27 @@ import * as SecureStore from "expo-secure-store";
 // bundled statically.
 import "expo-web-browser";
 
+import { getSessionBearerToken } from "./sessionBearer";
+
 export const authClient = createAuthClient({
   baseURL: process.env.EXPO_PUBLIC_BACKEND_URL! as string,
+  /**
+   * Expo persists Better Auth cookies under `vybe_cookie`, but guest login (and some
+   * native sign-in paths) only store the session token via `sessionBearer` (SecureStore).
+   * The server `bearer()` plugin validates `Authorization: Bearer …`; without this hook,
+   * `getSession` / `useSession` stay signed out after those flows.
+   */
+  fetchOptions: {
+    async onRequest(context) {
+      const bearer = await getSessionBearerToken();
+      if (!bearer) return context;
+      const headers = new Headers(context.headers as Headers);
+      if (!headers.has("Authorization")) {
+        headers.set("Authorization", `Bearer ${bearer}`);
+      }
+      return { ...context, headers };
+    },
+  },
   plugins: [
     expoClient({
       // Must match `expo.scheme` in mobile/app.json — using anything else

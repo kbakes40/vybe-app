@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,9 +9,8 @@ import {
   AppState,
   StyleSheet,
   Dimensions,
-  Alert,
+  LayoutChangeEvent,
 } from 'react-native';
-import { BlurView } from 'expo-blur';
 import { VybeTextInput } from '@/components/VybeTextInput';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -24,28 +23,25 @@ import Animated, {
   SlideOutLeft,
   Easing,
   useAnimatedStyle,
+  useAnimatedProps,
   useSharedValue,
   withRepeat,
   withSequence,
   withTiming,
+  cancelAnimation,
 } from 'react-native-reanimated';
+import Svg, { Path } from 'react-native-svg';
 import { authClient } from '@/lib/auth/auth-client';
 import { persistSessionBearerFromAuthResult } from '@/lib/auth/sessionBearer';
 import { getPostAuthDestination } from '@/lib/auth/postAuthDestination';
-import { api } from '@/lib/api/api';
 import { VybeIcon } from '@/components/VybeIcon';
 import { useVybePopup } from '@/components/VybePopup';
 import { usePostLoginWelcomeStore } from '@/stores/postLoginWelcomeStore';
 import * as AppleAuthentication from 'expo-apple-authentication';
-import {
-  AppleAuthenticationButton,
-  AppleAuthenticationButtonStyle,
-  AppleAuthenticationButtonType,
-} from 'expo-apple-authentication';
 import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
-import Svg, { Path } from 'react-native-svg';
 import { useLoginMorphStore } from '@/stores/loginMorphStore';
+import { DOCK_CYAN, OLED_BLACK as THEME_OLED_BLACK } from '@/constants/machinedTheme';
 
 function GoogleGlyph({ size = 20 }: { size?: number }) {
   return (
@@ -77,7 +73,176 @@ const GOOGLE_IOS_CLIENT_ID =
 
 type AuthView = 'main' | 'email';
 
-/** Continuous amber “heat” pulse — scale + luminous shadow (no literal flame art). */
+type LoadingProvider = 'apple' | 'google' | 'email' | 'sendCode' | null;
+type SnakeMode = 'idle' | 'busy' | 'success';
+
+const LOGO_GLOW_CYAN = '#00E5FF';
+const OLED_BLACK = THEME_OLED_BLACK;
+/** Semi-transparent login tiles (Apple / Google / Email). */
+const LOGIN_TILE_BG = 'rgba(255,255,255,0.05)';
+const LOGIN_TILE_BORDER = 'rgba(255,255,255,0.1)';
+/** Matches `loginTile` / `borderRadius: 12` so the snake hugs the same box curve. */
+const LOGIN_TILE_CORNER_RADIUS_PT = 12;
+
+const AnimatedPath = Animated.createAnimatedComponent(Path);
+
+/** One clockwise rounded-rect outline (same geometry as each login tile border). */
+function roundedRectOutlineD(x: number, y: number, w: number, h: number, r: number): string {
+  const rr = Math.min(Math.max(0, r), w / 2, h / 2);
+  if (w <= 2 || h <= 2) return '';
+  return [
+    `M${x + rr},${y}`,
+    `H${x + w - rr}`,
+    `A${rr},${rr},0,0,1,${x + w},${y + rr}`,
+    `V${y + h - rr}`,
+    `A${rr},${rr},0,0,1,${x + w - rr},${y + h}`,
+    `H${x + rr}`,
+    `A${rr},${rr},0,0,1,${x},${y + h - rr}`,
+    `V${y + rr}`,
+    `A${rr},${rr},0,0,1,${x + rr},${y}`,
+    'Z',
+  ].join('');
+}
+
+function roundedRectOutlineLength(w: number, h: number, r: number): number {
+  const rr = Math.min(Math.max(0, r), w / 2, h / 2);
+  return 2 * (w - 2 * rr) + 2 * (h - 2 * rr) + 2 * Math.PI * rr;
+}
+
+/**
+ * Three separate rounded rectangles (Apple → Google → Email) in one SVG path.
+ * The dash animates along each box edge in order — like the old single-tile rings, chained.
+ */
+function buildThreeRoundedBoxSnakePath(
+  clusterW: number,
+  rowLayouts: { y: number; height: number }[],
+  cornerRadius: number,
+  strokeInset: number,
+): { d: string; length: number } | null {
+  if (clusterW <= 24 || rowLayouts.length < 3) return null;
+  const innerW = Math.max(8, clusterW - 2 * strokeInset);
+  const ix = strokeInset;
+
+  let d = '';
+  let length = 0;
+  for (let i = 0; i < 3; i++) {
+    const { y, height } = rowLayouts[i];
+    if (height < 8) return null;
+    d += roundedRectOutlineD(ix, y, innerW, height, cornerRadius);
+    length += roundedRectOutlineLength(innerW, height, cornerRadius);
+  }
+  return { d, length: Math.max(80, length) };
+}
+
+function ProviderSnakeTrack({
+  width,
+  height,
+  pathD,
+  pathLength,
+  mode,
+}: {
+  width: number;
+  height: number;
+  pathD: string;
+  pathLength: number;
+  mode: SnakeMode;
+}) {
+  const dashOffset = useSharedValue(0);
+  const strokeW = useSharedValue(2);
+
+  useEffect(() => {
+    cancelAnimation(dashOffset);
+    cancelAnimation(strokeW);
+    if (width <= 0 || pathLength <= 0) return;
+
+    if (mode === 'success') {
+      strokeW.value = withSequence(
+        withTiming(4, { duration: 120, easing: Easing.out(Easing.quad) }),
+        withTiming(2, { duration: 400 }),
+      );
+      dashOffset.value = 0;
+      const successMs = Math.min(2300, Math.max(780, pathLength * 0.95));
+      dashOffset.value = withTiming(pathLength, { duration: successMs, easing: Easing.out(Easing.cubic) });
+      return;
+    }
+
+    /** Lap duration — higher = slower snake. */
+    const dur = mode === 'busy'
+      ? Math.min(11500, Math.max(2700, pathLength * 1.22))
+      : Math.min(20000, Math.max(4600, pathLength * 1.78));
+    dashOffset.value = 0;
+    dashOffset.value = withRepeat(
+      withTiming(pathLength, { duration: dur, easing: Easing.linear }),
+      -1,
+      false,
+    );
+    strokeW.value = withTiming(mode === 'busy' ? 3 : 2, { duration: 220 });
+  }, [mode, pathLength, width, dashOffset, strokeW]);
+
+  const ap = useAnimatedProps(() => ({
+    strokeDashoffset: -dashOffset.value,
+    strokeWidth: strokeW.value,
+  }));
+
+  const headFrac = 0.14;
+  const dashGap = `${pathLength * headFrac} ${pathLength * (1 - headFrac)}`;
+
+  if (width <= 0 || height <= 0 || !pathD) return null;
+
+  return (
+    <Svg
+      width={width}
+      height={height}
+      style={[StyleSheet.absoluteFillObject, { zIndex: 3 }]}
+      pointerEvents="none"
+    >
+      <AnimatedPath
+        d={pathD}
+        fill="none"
+        stroke={mode === 'success' ? '#7DF9FF' : LOGO_GLOW_CYAN}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeDasharray={dashGap}
+        animatedProps={ap}
+      />
+    </Svg>
+  );
+}
+
+function ProviderSignInButton({
+  label,
+  disabled,
+  onPress,
+  onRowLayout,
+  children,
+}: {
+  label: string;
+  disabled: boolean;
+  onPress: () => void;
+  onRowLayout?: (e: LayoutChangeEvent) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={signStyles.providerWrap} onLayout={onRowLayout}>
+      <Pressable
+        onPress={onPress}
+        disabled={disabled}
+        style={({ pressed }) => [
+          signStyles.loginTile,
+          disabled && signStyles.authBtnDisabled,
+          pressed && !disabled && signStyles.loginTilePressed,
+        ]}
+      >
+        <View style={signStyles.authBtnInner}>
+          <View style={signStyles.iconSlot}>{children}</View>
+          <Text style={signStyles.btnTextPrimary}>{label}</Text>
+        </View>
+      </Pressable>
+    </View>
+  );
+}
+
+/** Continuous cyan pulse behind mark — +20% vs prior glow strength/spread. */
 function LogoPulse({ children }: { children: React.ReactNode }) {
   const pulse = useSharedValue(0);
   useEffect(() => {
@@ -92,21 +257,22 @@ function LogoPulse({ children }: { children: React.ReactNode }) {
   }, [pulse]);
   const anim = useAnimatedStyle(() => {
     const s = 1 + 0.04 * pulse.value;
-    const glow = 0.28 + 0.42 * pulse.value;
+    const glow = (0.28 + 0.42 * pulse.value) * 1.2;
+    const spread = (12 + 16 * pulse.value) * 1.2;
     return {
       transform: [{ scale: s }],
-      shadowOpacity: glow,
-      shadowRadius: 12 + 16 * pulse.value,
+      shadowOpacity: Math.min(1, glow),
+      shadowRadius: spread,
     };
   });
   return (
     <Animated.View
       style={[
         {
-          shadowColor: '#F59E0B',
+          shadowColor: LOGO_GLOW_CYAN,
           shadowOffset: { width: 0, height: 0 },
         },
-        Platform.OS === 'android' ? { elevation: 6 } : null,
+        Platform.OS === 'android' ? { elevation: 8 } : null,
         anim,
       ]}
     >
@@ -123,8 +289,69 @@ export default function SignInScreen() {
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isAppleAvailable, setIsAppleAvailable] = useState(false);
+  /** Which provider is active — drives HUD ring + disabled siblings without blocking email sub-view `isLoading`. */
+  const [activeProvider, setActiveProvider] = useState<LoadingProvider>(null);
+  const [loginSuccessPhase, setLoginSuccessPhase] = useState(false);
+  /** Row layouts relative to the snake cluster (Apple, Google, Email). */
+  const [snakeRows, setSnakeRows] = useState([{ y: 0, height: 0 }, { y: 0, height: 0 }, { y: 0, height: 0 }]);
+  const [snakeClusterW, setSnakeClusterW] = useState(0);
+  const [snakeClusterH, setSnakeClusterH] = useState(0);
   const browserOpenRef = useRef(false);
   const logoRef = useRef<View>(null);
+  const successScale = useSharedValue(1);
+  const burstOpacity = useSharedValue(0);
+
+  const authSurfaceBusy = isLoading || activeProvider !== null;
+  const snakeModeResolved: SnakeMode = loginSuccessPhase ? 'success' : authSurfaceBusy ? 'busy' : 'idle';
+
+  const onSnakeClusterLayout = useCallback((e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    setSnakeClusterW(width);
+    setSnakeClusterH(height);
+  }, []);
+
+  const onSnakeRowLayout = useCallback((index: 0 | 1 | 2) => (e: LayoutChangeEvent) => {
+    const { y, height } = e.nativeEvent.layout;
+    setSnakeRows((prev) => {
+      const next = [...prev];
+      next[index] = { y, height };
+      return next;
+    });
+  }, []);
+
+  const snakePath = (() => {
+    if (snakeClusterW < 40) return null;
+    if (!snakeRows.every((r) => r.height > 10)) return null;
+    return buildThreeRoundedBoxSnakePath(
+      snakeClusterW,
+      snakeRows,
+      LOGIN_TILE_CORNER_RADIUS_PT,
+      1,
+    );
+  })();
+
+  const logoSuccessStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: successScale.value }],
+  }));
+
+  const burstAnimStyle = useAnimatedStyle(() => ({
+    opacity: burstOpacity.value,
+  }));
+
+  const runCelebrationThen = async (go: () => Promise<void>) => {
+    setLoginSuccessPhase(true);
+    successScale.value = withSequence(
+      withTiming(1.07, { duration: 240, easing: Easing.out(Easing.quad) }),
+      withTiming(1, { duration: 400, easing: Easing.out(Easing.cubic) }),
+    );
+    burstOpacity.value = withSequence(
+      withTiming(0.28, { duration: 160, easing: Easing.out(Easing.quad) }),
+      withTiming(0, { duration: 480 }),
+    );
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    await new Promise<void>((r) => setTimeout(r, 680));
+    await go();
+  };
 
   const [_googleRequest, googleResponse, promptGoogleAsync] = Google.useIdTokenAuthRequest({
     iosClientId: GOOGLE_IOS_CLIENT_ID,
@@ -150,7 +377,7 @@ export default function SignInScreen() {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active' && browserOpenRef.current) {
         browserOpenRef.current = false;
-        setIsLoading(false);
+        setActiveProvider(null);
       }
     });
     return () => sub.remove();
@@ -164,11 +391,11 @@ export default function SignInScreen() {
       if (idToken) {
         void handleGoogleToken(idToken);
       } else {
-        setIsLoading(false);
+        setActiveProvider(null);
         browserOpenRef.current = false;
       }
     } else if (googleResponse?.type === 'error' || googleResponse?.type === 'dismiss') {
-      setIsLoading(false);
+      setActiveProvider(null);
       browserOpenRef.current = false;
     }
   }, [googleResponse]);
@@ -195,6 +422,7 @@ export default function SignInScreen() {
     router.replace(href);
   };
 
+  /** Success path: `getPostAuthDestination()` resolves to MainTabs (`/(app)/(tabs)/…`, usually discover). */
   const navigateAfterAuth = async () => {
     usePostLoginWelcomeStore.getState().queueEnjoyVibes();
     if (router.canDismiss()) {
@@ -212,8 +440,7 @@ export default function SignInScreen() {
       });
       if (result.error) throw new Error(result.error.message);
       await persistSessionBearerFromAuthResult(result);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      await navigateAfterAuth();
+      await runCelebrationThen(navigateAfterAuth);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Failed to sign in with Google. Please try again.';
       showVybePopup({
@@ -222,7 +449,7 @@ export default function SignInScreen() {
         type: 'error',
       });
     } finally {
-      setIsLoading(false);
+      setActiveProvider(null);
       browserOpenRef.current = false;
     }
   };
@@ -255,7 +482,7 @@ export default function SignInScreen() {
       return;
     }
 
-    setIsLoading(true);
+    setActiveProvider('apple');
     try {
       const credential = await AppleAuthentication.signInAsync({
         requestedScopes: [
@@ -265,10 +492,12 @@ export default function SignInScreen() {
       });
 
       if (!credential.identityToken) {
-        Alert.alert(
-          'Apple Sign-In',
-          'code: NO_IDENTITY_TOKEN\nThe credential did not include an identity token.',
-        );
+        showVybePopup({
+          title: 'Apple Sign-In',
+          message: 'No identity token — the credential did not include an identity token.',
+          type: 'warning',
+          visualTone: 'vybe',
+        });
         return;
       }
 
@@ -278,12 +507,16 @@ export default function SignInScreen() {
       });
       if (result.error) {
         const serverMsg = result.error.message ?? JSON.stringify(result.error);
-        Alert.alert('Apple Sign-In', `Better Auth error:\n${serverMsg}`);
+        showVybePopup({
+          title: 'Apple Sign-In',
+          message: `Better Auth error:\n\n${serverMsg}`,
+          type: 'error',
+          visualTone: 'vybe',
+        });
         throw new Error(serverMsg);
       }
       await persistSessionBearerFromAuthResult(result);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      await navigateAfterAuth();
+      await runCelebrationThen(navigateAfterAuth);
     } catch (error: unknown) {
       const e = error as {
         code?: string;
@@ -295,14 +528,17 @@ export default function SignInScreen() {
         return;
       }
       const msg = e?.message ?? (error instanceof Error ? error.message : String(error));
-      Alert.alert('Apple Sign-In (debug)', `code: ${code}\n\n${msg}`);
       showVybePopup({
         title: 'Sign In Failed',
-        message: msg || 'Failed to sign in with Apple. Please try again.',
+        message:
+          __DEV__ && code !== 'UNKNOWN'
+            ? `code: ${code}\n\n${msg || 'Failed to sign in with Apple. Please try again.'}`
+            : msg || 'Failed to sign in with Apple. Please try again.',
         type: 'error',
+        visualTone: 'vybe',
       });
     } finally {
-      setIsLoading(false);
+      setActiveProvider(null);
     }
   };
 
@@ -311,9 +547,9 @@ export default function SignInScreen() {
   };
 
   const handleGoogleSignIn = async () => {
-    if (isLoading) return;
+    if (authSurfaceBusy) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setIsLoading(true);
+    setActiveProvider('google');
     browserOpenRef.current = true;
     try {
       await promptGoogleAsync();
@@ -324,7 +560,7 @@ export default function SignInScreen() {
         message,
         type: 'error',
       });
-      setIsLoading(false);
+      setActiveProvider(null);
       browserOpenRef.current = false;
     }
   };
@@ -374,23 +610,6 @@ export default function SignInScreen() {
     }
   };
 
-  const handleGuestLogin = async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setIsLoading(true);
-    try {
-      const result = await api.post<{ user: { id: string }; isGuest: boolean }>('/api/user/guest', {});
-      if (result?.isGuest) router.replace('/onboarding');
-    } catch {
-      showVybePopup({
-        title: 'Error',
-        message: 'Failed to continue as guest. Please try again.',
-        type: 'error',
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const handleBack = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setView('main');
@@ -401,9 +620,17 @@ export default function SignInScreen() {
 
   return (
     <View style={signStyles.screen}>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFillObject,
+          { zIndex: 5, backgroundColor: LOGO_GLOW_CYAN },
+          burstAnimStyle,
+        ]}
+      />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={signStyles.flex}
+        style={[signStyles.flex, { backgroundColor: OLED_BLACK }]}
       >
         <View style={[signStyles.safeTop, { paddingTop: insets.top }]}>
           {view === 'email' ? (
@@ -451,78 +678,64 @@ export default function SignInScreen() {
           ) : (
             <Animated.View entering={FadeIn.duration(300)} exiting={FadeOut.duration(300)} style={signStyles.flex}>
               <View style={signStyles.hero}>
-                <LogoPulse>
-                  <View ref={logoRef} collapsable={false} style={signStyles.logoMeasure}>
-                    <VybeIcon size={108} variant="primary" />
-                  </View>
-                </LogoPulse>
+                <Animated.View style={logoSuccessStyle}>
+                  <LogoPulse>
+                    <View ref={logoRef} collapsable={false} style={signStyles.logoMeasure}>
+                      <VybeIcon size={108} variant="primary" />
+                    </View>
+                  </LogoPulse>
+                </Animated.View>
                 <Text style={signStyles.wordmark}>VYBE</Text>
                 <Text style={signStyles.tagline}>break the loop</Text>
               </View>
 
-              <View style={[signStyles.actions, { paddingBottom: insets.bottom + 28 }]}>
-                {Platform.OS === 'ios' && isAppleAvailable ? (
-                  <View style={[signStyles.appleNativeWrap, isLoading && signStyles.appleNativeBusy]}>
-                    <AppleAuthenticationButton
-                      buttonType={AppleAuthenticationButtonType.CONTINUE}
-                      buttonStyle={AppleAuthenticationButtonStyle.BLACK}
-                      cornerRadius={8}
-                      style={signStyles.appleNativeBtn}
-                      onPress={handleAppleSignIn}
+              <View style={[signStyles.actions, { paddingBottom: Math.max(insets.bottom, 12) + 16 }]}>
+                <View style={signStyles.snakeCluster} onLayout={onSnakeClusterLayout}>
+                  {snakePath && snakeClusterH > 20 ? (
+                    <ProviderSnakeTrack
+                      width={snakeClusterW}
+                      height={snakeClusterH}
+                      pathD={snakePath.d}
+                      pathLength={snakePath.length}
+                      mode={snakeModeResolved}
                     />
-                  </View>
-                ) : (
-                  <Pressable
-                    onPress={handleAppleSignIn}
-                    disabled={isLoading}
-                    style={({ pressed }) => [pressed && signStyles.btnPressed]}
-                  >
-                    <BlurView intensity={22} tint="dark" style={signStyles.btnBlurDark}>
-                      <View style={[signStyles.btnBlurInnerRow, { transform: [{ translateX: -4 }] }]}>
-                        <Text style={[signStyles.appleGlyph, signStyles.appleGlyphEmber]}>{'\uF8FF'}</Text>
-                        <Text style={[signStyles.btnTextEmber, { marginLeft: 10 }]}>Continue with Apple</Text>
-                      </View>
-                    </BlurView>
-                  </Pressable>
-                )}
-
-                <Pressable
-                  onPress={handleGoogleSignIn}
-                  disabled={isLoading}
-                  style={({ pressed }) => [pressed && signStyles.btnPressed]}
+                  ) : null}
+                <ProviderSignInButton
+                  label="Continue with Apple"
+                  disabled={authSurfaceBusy && activeProvider !== 'apple'}
+                  onPress={handleAppleSignIn}
+                  onRowLayout={onSnakeRowLayout(0)}
                 >
-                  <BlurView intensity={22} tint="dark" style={signStyles.btnBlurDark}>
-                    <View style={signStyles.btnBlurInnerRow}>
-                      {isLoading ? (
-                        <ActivityIndicator color="#FEF3C7" size="small" />
-                      ) : (
-                        <>
-                          <GoogleGlyph size={17} />
-                          <Text style={[signStyles.btnTextEmber, { marginLeft: 10 }]}>Continue with Google</Text>
-                        </>
-                      )}
-                    </View>
-                  </BlurView>
-                </Pressable>
+                  <Text style={signStyles.appleGlyph}>{'\uF8FF'}</Text>
+                </ProviderSignInButton>
 
-                <Pressable
+                <ProviderSignInButton
+                  label="Continue with Google"
+                  disabled={authSurfaceBusy && activeProvider !== 'google'}
+                  onPress={() => void handleGoogleSignIn()}
+                  onRowLayout={onSnakeRowLayout(1)}
+                >
+                  {activeProvider === 'google' ? (
+                    <ActivityIndicator color={DOCK_CYAN} size="small" />
+                  ) : (
+                    <GoogleGlyph size={17} />
+                  )}
+                </ProviderSignInButton>
+
+                <ProviderSignInButton
+                  label="Continue with Email"
+                  disabled={authSurfaceBusy}
                   onPress={handleEmailContinue}
-                  style={({ pressed }) => [pressed && signStyles.btnPressed]}
+                  onRowLayout={onSnakeRowLayout(2)}
                 >
-                  <BlurView intensity={22} tint="dark" style={signStyles.btnBlurDark}>
-                    <View style={signStyles.btnBlurInnerRow}>
-                      <Mail size={20} color="#FDE68A" strokeWidth={1.75} />
-                      <Text style={[signStyles.btnTextEmber, { marginLeft: 10 }]}>Continue with Email</Text>
-                    </View>
-                  </BlurView>
-                </Pressable>
+                  <Mail size={20} color="#F4F4F5" strokeWidth={1.75} />
+                </ProviderSignInButton>
+                </View>
 
-                <Pressable onPress={handleGuestLogin} disabled={isLoading} style={signStyles.guest}>
-                  <Text style={signStyles.guestText}>Continue as guest</Text>
-                </Pressable>
+                <View style={signStyles.footerSpacer} />
 
                 <Text style={signStyles.davinciFooter} pointerEvents="none">
-                  SYSTEM POWERD_BY_DAVINCI DYNAMICS.
+                  SYSTEM POWERED BY DAVINCI DYNAMICS.
                 </Text>
               </View>
             </Animated.View>
@@ -536,12 +749,12 @@ export default function SignInScreen() {
 const signStyles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: OLED_BLACK,
   },
   flex: { flex: 1 },
   safeTop: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: OLED_BLACK,
   },
   logoMeasure: {
     alignItems: 'center',
@@ -572,7 +785,7 @@ const signStyles = StyleSheet.create({
     marginBottom: 8,
   },
   emailHint: {
-    color: 'rgba(244,244,245,0.45)',
+    color: 'rgba(244,244,245,0.85)',
     fontSize: 15,
     marginBottom: 28,
     lineHeight: 21,
@@ -624,82 +837,99 @@ const signStyles = StyleSheet.create({
     fontSize: 40,
     fontWeight: '800',
     letterSpacing: 6,
+    ...Platform.select({
+      ios: {
+        textShadowColor: 'rgba(0,229,255,0.4)',
+        textShadowOffset: { width: 0, height: 0 },
+        textShadowRadius: 20,
+      },
+      default: {},
+    }),
   },
   tagline: {
     marginTop: 10,
-    color: 'rgba(253,230,138,0.55)',
-    fontSize: 15,
-    fontWeight: '500',
-    letterSpacing: 2.2,
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 13,
+    fontWeight: '300',
+    letterSpacing: 2.4,
     textTransform: 'uppercase',
   },
   actions: {
     paddingHorizontal: 28,
+    width: '100%',
   },
-  appleNativeWrap: {
-    marginBottom: 12,
+  snakeCluster: {
+    position: 'relative',
+    width: '100%',
+    zIndex: 1,
+  },
+  footerSpacer: {
+    flexGrow: 1,
+    minHeight: 12,
+    width: '100%',
+  },
+  appleGlyph: {
+    fontSize: 22,
+    color: '#F4F4F5',
+    fontWeight: '400',
+  },
+  providerWrap: {
     width: '100%',
     maxWidth: 400,
     alignSelf: 'center',
-    borderRadius: 9,
-    overflow: 'hidden',
-  },
-  appleNativeBusy: {
-    opacity: 0.45,
-    pointerEvents: 'none',
-  },
-  appleNativeBtn: {
-    width: '100%',
-    height: 48,
-  },
-  btnBlurDark: {
-    borderRadius: 8,
-    overflow: 'hidden',
     marginBottom: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(251,191,36,0.35)',
+    position: 'relative',
+    zIndex: 4,
   },
-  btnBlurInnerRow: {
+  authBtnDisabled: {
+    opacity: 0.45,
+  },
+  iconSlot: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  loginTile: {
+    width: '100%',
+    maxWidth: 400,
+    alignSelf: 'center',
+    marginBottom: 10,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: LOGIN_TILE_BG,
+    borderWidth: 1,
+    borderColor: LOGIN_TILE_BORDER,
+  },
+  loginTilePressed: {
+    opacity: 0.92,
+  },
+  authBtnBusy: {
+    opacity: 0.45,
+  },
+  authBtnInner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 16,
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
+    minHeight: 52,
   },
-  btnPressed: {
-    opacity: 0.9,
-    transform: [{ scale: 0.99 }],
-  },
-  btnTextEmber: {
-    color: '#FFFBEB',
+  btnTextPrimary: {
+    color: '#F4F4F5',
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '500',
     letterSpacing: 0.2,
   },
-  appleGlyph: {
-    fontSize: 22,
-    marginRight: 10,
-    color: '#0A0A0A',
-  },
-  appleGlyphEmber: {
-    color: '#FFFBEB',
-  },
-  guest: {
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  guestText: {
-    color: 'rgba(244,244,245,0.38)',
-    fontSize: 14,
-    fontWeight: '500',
-    letterSpacing: 0.3,
-  },
   davinciFooter: {
-    marginTop: 8,
+    marginTop: 4,
+    paddingBottom: 4,
     textAlign: 'center',
-    color: 'rgba(255,255,255,0.16)',
+    color: DOCK_CYAN,
     fontSize: 9,
-    fontWeight: '500',
-    letterSpacing: 1.2,
+    fontWeight: '300',
+    letterSpacing: 1.1,
+    opacity: 0.75,
   },
 });

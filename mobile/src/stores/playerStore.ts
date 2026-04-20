@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { Audio, AVPlaybackStatus } from 'expo-av';
+import { InteractionManager } from 'react-native';
 import { Track, RepeatMode, TrackSource } from '@/types/music';
 import * as Haptics from 'expo-haptics';
 
@@ -80,11 +81,15 @@ interface PlayerState {
   stopCurrentPlayback: () => Promise<void>;
 }
 
-// Configure audio mode
-Audio.setAudioModeAsync({
-  playsInSilentModeIOS: true,
-  staysActiveInBackground: true,
-  shouldDuckAndroid: true,
+// BREAK_BOOT_LOOP — defer expo-av audio mode setup until after the first
+// interaction frame so the UI mounts before the native audio bridge blocks
+// the JS thread on cold start.
+InteractionManager.runAfterInteractions(() => {
+  void Audio.setAudioModeAsync({
+    playsInSilentModeIOS: true,
+    staysActiveInBackground: true,
+    shouldDuckAndroid: true,
+  });
 });
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({

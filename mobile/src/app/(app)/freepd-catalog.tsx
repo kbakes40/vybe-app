@@ -43,7 +43,6 @@ import { usePlaybackController } from '@/stores/playbackController';
 import { FreePDTrack, FreePDCategory } from '@/types/freepd';
 import { Track } from '@/types/music';
 import { cn } from '@/lib/cn';
-import { MINI_PLAYER_HEIGHT } from './_layout';
 import { FreePDSourceBadge } from '@/components/FreePDSourceBadge';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
@@ -256,12 +255,7 @@ export default function FreePDCatalogScreen() {
   const getTracksByGenre = useFreePDStore(s => s.getTracksByGenre);
   const getTracksByMood = useFreePDStore(s => s.getTracksByMood);
 
-  // Playback controller
-  const currentTrack = usePlaybackController(s => s.currentTrack);
-  const showMiniPlayer = !!currentTrack;
-
-  // Calculate bottom padding: safe area + mini player height (if visible) + extra padding
-  const bottomPadding = insets.bottom + (showMiniPlayer ? MINI_PLAYER_HEIGHT : 0) + 20;
+  const bottomPadding = insets.bottom + 20;
 
   // Load catalog on mount
   useEffect(() => {

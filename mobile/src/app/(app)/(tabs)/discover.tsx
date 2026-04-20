@@ -37,19 +37,29 @@ import { ShadowArtworkImage } from '@/components/ShadowArtworkImage';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
 import { useLouisOledChrome } from '@/hooks/useLouisOledChrome';
 import { DiscoveryRailSection } from '@/components/Discovery/Section';
+import { vibeChipGlyph } from '@/components/Discovery/DiscoverTechnicalGlyphs';
 import { logUiTap } from '@/lib/uiTapLog';
-import { raceWithDiscoverTimeout, isDiscoverBackendFailure } from '@/lib/discoverRace';
+import {
+  raceWithDiscoverTimeout,
+  raceWithScDiscoverTimeout,
+  isDiscoverBackendFailure,
+} from '@/lib/discoverRace';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
 const H_PAD = 20;
 const GUTTER = 10;
 const TITLE_BLOCK = 44;
+/** Extra vertical space for centered SC title + artist + like line under artwork */
+const SC_META_EXTRA = 46;
 const PEEK_MS = 5000;
+
+const CYAN_ENGINE = '#00E5FF';
 
 const VIBE_CHIPS: { id: string; label: string; keywords: string[] }[] = [
   { id: 'all', label: 'All', keywords: [] },
   { id: 'chill', label: 'Chill', keywords: ['chill', 'ambient', 'lofi', 'lo-fi', 'downtempo', 'calm', 'slow'] },
+  { id: 'fast', label: 'Fast', keywords: ['fast', 'uptempo', 'dnb', 'drum and bass', 'speed', 'tempo', 'rave'] },
   { id: 'phonk', label: 'Phonk', keywords: ['phonk', 'drift', 'memphis', 'cowbell'] },
   { id: 'gym', label: 'Gym', keywords: ['gym', 'workout', 'lift', 'trap', 'bass', 'power', 'energy'] },
   { id: 'late', label: 'Late Night', keywords: ['night', 'late', 'midnight', 'nocturnal', 'after dark'] },
@@ -100,6 +110,26 @@ type CrateTile = {
   peekTrack: Track | null;
   peekQueue: Track[];
   onPress: () => void;
+  /** SoundCloud — centered artwork + metadata under image */
+  artist?: string;
+  likeCount?: number;
+  scLayout?: boolean;
+};
+
+/** Matches backend — /api/soundcloud/discover-feed */
+export type ScDiscoverTrackRow = {
+  trackId: string;
+  title: string;
+  artist: string;
+  artwork: string;
+  duration: number;
+  soundcloudUrl: string;
+  likeCount: number;
+};
+
+export type ScDiscoverFeedPayload = {
+  collections: Array<{ slot: 'trending' | 'explore' | 'spotlight'; track: ScDiscoverTrackRow }>;
+  crateTracks: ScDiscoverTrackRow[];
 };
 
 function shuffleInPlace<T>(arr: T[]): T[] {
@@ -165,32 +195,92 @@ const styles = StyleSheet.create({
       android: {},
     }),
   },
-  chipScroll: { flexGrow: 0, marginBottom: 10 },
+  crateTitleCenter: {
+    marginTop: 10,
+    textAlign: 'center',
+    alignSelf: 'center',
+    width: '100%',
+    fontSize: 12,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.9)',
+    letterSpacing: 0.15,
+  },
+  crateArtistCenter: {
+    marginTop: 4,
+    textAlign: 'center',
+    alignSelf: 'center',
+    width: '100%',
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.9)',
+  },
+  crateLikesLine: {
+    marginTop: 4,
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.85)',
+  },
+  chipScroll: { flexGrow: 0, marginBottom: 12 },
+  /** Inactive: borderless, 0.4 opacity. Active: 1px cyan only. */
   chip: {
-    paddingHorizontal: 16,
-    paddingVertical: 9,
-    borderRadius: 999,
-    marginRight: 8,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    width: 76,
+    marginRight: 10,
+    paddingTop: 10,
+    paddingBottom: 8,
+    paddingHorizontal: 6,
+    borderRadius: 12,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    opacity: 0.4,
   },
   chipSelected: {
-    backgroundColor: 'rgba(0,229,255,0.14)',
-    borderColor: 'rgba(0,229,255,0.55)',
+    opacity: 1,
+    borderWidth: 1,
+    borderColor: CYAN_ENGINE,
+    backgroundColor: 'transparent',
+  },
+  chipIconSlot: {
+    width: '100%',
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 6,
+  },
+  chipLabel: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+    letterSpacing: 0.2,
     ...Platform.select({
-      ios: {
-        shadowColor: VIBRANT_BLUE,
-        shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.4,
-        shadowRadius: 10,
-      },
-      android: { elevation: 5 },
-      default: {},
+      ios: { fontFamily: 'SF Pro Text' },
+      android: { fontFamily: 'sans-serif' },
     }),
   },
-  chipLabel: { color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '800' },
-  chipLabelSelected: { color: VIBRANT_BLUE, fontWeight: '900' },
+  chipLabelSelected: {
+    color: 'rgba(255,255,255,0.95)',
+    fontWeight: '700',
+  },
+  genreSectionTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1.1,
+    paddingHorizontal: H_PAD,
+    marginBottom: 10,
+    textTransform: 'uppercase',
+    color: 'rgba(255,255,255,0.55)',
+  },
+  listTopFade: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 40,
+    zIndex: 6,
+  },
   beatsRow: {
     marginHorizontal: H_PAD,
     marginBottom: 14,
@@ -210,6 +300,18 @@ const styles = StyleSheet.create({
   beatsTitle: { color: '#fff', fontSize: 16, fontWeight: '900' },
   beatsSub: { color: 'rgba(255,255,255,0.45)', fontSize: 12, marginTop: 2, fontWeight: '600' },
 });
+
+const GEO_LABEL = Platform.select({
+  ios: { fontFamily: 'SF Pro Text' },
+  android: { fontFamily: 'sans-serif' },
+});
+
+function formatScLikes(n: number): string {
+  if (!n || n <= 0) return '—';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M Likes`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K Likes`;
+  return `${Math.round(n)} Likes`;
+}
 
 function CrateMasonryCell({
   item,
@@ -241,13 +343,17 @@ function CrateMasonryCell({
     item.onPress();
   };
 
+  const scCentered = item.badge === 'soundcloud' && item.scLayout;
+
+  const artSize = Math.min(colW * 0.72, item.mediaHeight * 0.78);
+
   return (
     <Pressable
       onPress={onPress}
       onLongPress={item.peekTrack ? onLongPress : undefined}
       onPressOut={item.peekTrack ? onPressOut : undefined}
       delayLongPress={320}
-      style={{ width: colW, marginBottom: GUTTER }}
+      style={{ width: colW, marginBottom: GUTTER, alignItems: scCentered ? 'center' : undefined }}
     >
       <View
         style={{
@@ -255,12 +361,22 @@ function CrateMasonryCell({
           height: item.mediaHeight,
           borderRadius: 14,
           overflow: 'hidden',
-          backgroundColor: '#050a12',
+          backgroundColor: '#000000',
           borderWidth: 1,
           borderColor: 'rgba(0,229,255,0.2)',
         }}
       >
-        <Image source={{ uri: item.artwork }} style={{ width: colW, height: item.mediaHeight }} contentFit="cover" />
+        {scCentered ? (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000000' }}>
+            <Image
+              source={{ uri: item.artwork }}
+              style={{ width: artSize, height: artSize, borderRadius: 12 }}
+              contentFit="cover"
+            />
+          </View>
+        ) : (
+          <Image source={{ uri: item.artwork }} style={{ width: colW, height: item.mediaHeight }} contentFit="cover" />
+        )}
         <LinearGradient
           colors={[...CRATE_TILE_TINT_GRADIENT]}
           locations={[0, 0.45, 1]}
@@ -279,40 +395,65 @@ function CrateMasonryCell({
           </View>
         ) : null}
       </View>
-      <Text style={styles.crateTitle} numberOfLines={2}>
-        {playlistTitleEmojiEnd(item.title)}
-      </Text>
+      {scCentered ? (
+        <>
+          <Text style={[styles.crateTitleCenter, GEO_LABEL]} numberOfLines={2}>
+            {playlistTitleEmojiEnd(item.title)}
+          </Text>
+          {item.artist ? (
+            <Text style={[styles.crateArtistCenter, GEO_LABEL]} numberOfLines={1}>
+              {item.artist}
+            </Text>
+          ) : null}
+          <Text style={[styles.crateLikesLine, GEO_LABEL]} numberOfLines={1}>
+            {(item.likeCount ?? 0) > 0 ? formatScLikes(item.likeCount ?? 0) : '—'}
+          </Text>
+        </>
+      ) : (
+        <Text style={styles.crateTitle} numberOfLines={2}>
+          {playlistTitleEmojiEnd(item.title)}
+        </Text>
+      )}
     </Pressable>
   );
 }
 
-function DiscoverVaultCollectionsRow({
-  playlists,
-  router,
+/** Live SoundCloud Explore / Trending / Spotlight — one hero track per slot */
+function DiscoverScCollectionsRow({
+  feed,
+  playTrack,
 }: {
-  playlists: SoundcloudCuratedPlaylist[];
-  router: Router;
+  feed: ScDiscoverFeedPayload | null;
+  playTrack: (track: Track, queue?: Track[], options?: { expandNowPlaying?: boolean }) => Promise<void>;
 }) {
-  const ready = playlists.filter((p) => p.tracks.length > 0);
-  if (ready.length === 0) return null;
-  const pick = (re: RegExp) =>
-    ready.find((p) => re.test(`${p.name} ${p.category ?? ''} ${(p as { section?: string }).section ?? ''}`));
-  const midnight =
-    pick(/industrial|factory|warehouse|dark|techno|minimal|focus|study|deep work|concentration/i) ?? ready[0];
-  const hi =
-    pick(/workout|gym|energy|power|lift|hypertrophy|phonk|drill|hardstyle|metallic/i) ??
-    ready[Math.min(1, ready.length - 1)];
-  const ambient =
-    pick(/lo-?fi|lofi|chill|relax|downtempo|ambient|calm|soft/i) ?? ready[Math.min(2, ready.length - 1)];
+  if (!feed?.collections?.length) return null;
+
+  const queue: Track[] = feed.crateTracks.map((x) => ({
+    id: `sc-${x.trackId}`,
+    title: x.title,
+    artist: x.artist,
+    artistId: '',
+    album: '',
+    albumId: '',
+    artwork: x.artwork,
+    duration: x.duration,
+    isLiked: false,
+    source: 'soundcloud' as const,
+    soundcloudUrl: x.soundcloudUrl,
+    soundcloudId: x.trackId,
+    audioUrl: '',
+  }));
 
   const gap = 10;
   const cardW = (SCREEN_W - H_PAD * 2 - gap * 2) / 3;
+  const iconH = Math.min(112, Math.round(cardW * 1.05));
+  const artBox = Math.min(cardW * 0.72, iconH * 0.72);
 
-  const rows: { key: string; title: string; sub: string; pl: SoundcloudCuratedPlaylist }[] = [
-    { key: 'midnight', title: 'Midnight Studio', sub: 'Industrial / focus', pl: midnight },
-    { key: 'hi', title: 'High-Performance', sub: 'High-energy / gym', pl: hi },
-    { key: 'ambient', title: 'Ambient Heat', sub: 'Lo-fi / relax', pl: ambient },
-  ];
+  const slotTitle: Record<string, string> = {
+    trending: 'Trending',
+    explore: 'Explore',
+    spotlight: 'Spotlight',
+  };
 
   return (
     <View style={{ marginBottom: 14 }}>
@@ -335,67 +476,104 @@ function DiscoverVaultCollectionsRow({
         contentContainerStyle={{ paddingHorizontal: H_PAD }}
         style={{ flexGrow: 0 }}
       >
-        {rows.map(({ key, title, sub, pl }) => {
-          const art = curatedPlaylistCoverArt(pl);
-          const artH = Math.round(cardW * 1.08);
+        {feed.collections.map(({ slot, track }) => {
+          const self = queue.find((q) => q.id === `sc-${track.trackId}`) ?? queue[0];
           return (
             <Pressable
-              key={key}
+              key={`${slot}-${track.trackId}`}
               onPress={() => {
-                logUiTap('Discover collections', 'open_collection');
+                logUiTap('Discover collections', 'play_sc_track');
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                router.push(
-                  `/(app)/playlist-detail?scSet=${encodeURIComponent(pl.soundcloudSetUrl)}` as never,
-                );
+                void playTrack(self, queue);
               }}
               style={{
                 width: cardW,
                 marginRight: gap,
-                borderRadius: 16,
+                borderRadius: 14,
                 overflow: 'hidden',
-                backgroundColor: '#050a12',
+                backgroundColor: '#000000',
                 borderWidth: 1,
-                borderColor: 'rgba(0,229,255,0.55)',
+                borderColor: 'rgba(255,255,255,0.2)',
+                paddingBottom: 12,
               }}
             >
-              <View style={{ width: cardW, height: artH }}>
-                <ShadowArtworkImage
-                  source={{ uri: art }}
-                  style={{ width: cardW, height: artH }}
-                  contentFit="cover"
-                />
-                <LinearGradient
-                  colors={['transparent', 'rgba(0,0,0,0.92)']}
-                  locations={[0.25, 1]}
-                  style={StyleSheet.absoluteFillObject}
-                  pointerEvents="none"
-                />
-                <View style={{ position: 'absolute', top: 8, right: 8 }} pointerEvents="none">
+              <View
+                style={{
+                  width: cardW,
+                  height: iconH,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: '#000000',
+                }}
+              >
+                <View style={{ position: 'absolute', top: 8, right: 8, zIndex: 2 }} pointerEvents="none">
                   <SourceCornerBadge source="soundcloud" />
                 </View>
-                <View
-                  pointerEvents="none"
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    paddingHorizontal: 10,
-                    paddingBottom: 10,
-                    paddingTop: 28,
-                  }}
-                >
-                  <Text style={{ color: '#fff', fontSize: 13, fontWeight: '900', letterSpacing: -0.2 }} numberOfLines={2}>
-                    {title}
-                  </Text>
-                  <Text
-                    style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, fontWeight: '600', marginTop: 4 }}
-                    numberOfLines={2}
-                  >
-                    {sub}
-                  </Text>
-                </View>
+                <Image
+                  source={{ uri: track.artwork }}
+                  style={{ width: artBox, height: artBox, borderRadius: 12 }}
+                  contentFit="cover"
+                />
               </View>
+              <Text
+                style={{
+                  marginTop: 8,
+                  paddingHorizontal: 8,
+                  color: CYAN_ENGINE,
+                  fontSize: 10,
+                  fontWeight: '800',
+                  textAlign: 'center',
+                  letterSpacing: 0.6,
+                  textTransform: 'uppercase',
+                  ...GEO_LABEL,
+                }}
+                numberOfLines={1}
+              >
+                {slotTitle[slot] ?? slot}
+              </Text>
+              <Text
+                style={{
+                  marginTop: 6,
+                  paddingHorizontal: 8,
+                  color: 'rgba(255,255,255,0.9)',
+                  fontSize: 12,
+                  fontWeight: '700',
+                  textAlign: 'center',
+                  letterSpacing: 0.15,
+                  ...GEO_LABEL,
+                }}
+                numberOfLines={2}
+              >
+                {track.title}
+              </Text>
+              <Text
+                style={{
+                  marginTop: 4,
+                  paddingHorizontal: 8,
+                  color: 'rgba(255,255,255,0.9)',
+                  fontSize: 12,
+                  fontWeight: '600',
+                  textAlign: 'center',
+                  ...GEO_LABEL,
+                }}
+                numberOfLines={1}
+              >
+                {track.artist}
+              </Text>
+              <Text
+                style={{
+                  marginTop: 4,
+                  paddingHorizontal: 8,
+                  color: 'rgba(255,255,255,0.85)',
+                  fontSize: 11,
+                  fontWeight: '700',
+                  textAlign: 'center',
+                  ...GEO_LABEL,
+                }}
+                numberOfLines={1}
+              >
+                {formatScLikes(track.likeCount)}
+              </Text>
             </Pressable>
           );
         })}
@@ -408,7 +586,7 @@ function DiscoverVaultExclusivesRail({
   scTracks,
   playTrack,
 }: {
-  scTracks: SCSearchTrack[];
+  scTracks: Array<SCSearchTrack & { likeCount?: number }>;
   playTrack: (track: Track, queue?: Track[], options?: { expandNowPlaying?: boolean }) => Promise<void>;
 }) {
   const slice = scTracks.slice(0, 16);
@@ -474,21 +652,33 @@ function DiscoverVaultExclusivesRail({
                   height: dim,
                   borderRadius: 14,
                   overflow: 'hidden',
-                  backgroundColor: '#0A0A0A',
+                  backgroundColor: '#000000',
                   borderWidth: 1,
                   borderColor: 'rgba(0,229,255,0.5)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                 }}
               >
-                <ShadowArtworkImage source={{ uri: t.artwork }} style={{ width: dim, height: dim }} contentFit="cover" />
+                <ShadowArtworkImage
+                  source={{ uri: t.artwork }}
+                  style={{ width: Math.round(dim * 0.72), height: Math.round(dim * 0.72), borderRadius: 12 }}
+                  contentFit="cover"
+                />
                 <View style={{ position: 'absolute', top: 8, right: 8 }} pointerEvents="none">
                   <SourceCornerBadge source="soundcloud" />
                 </View>
               </View>
-              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800', marginTop: 8, width: dim }} numberOfLines={1}>
+              <Text
+                style={[{ color: 'rgba(255,255,255,0.9)', fontSize: 12, fontWeight: '700', marginTop: 8, width: dim, textAlign: 'center' }, GEO_LABEL]}
+                numberOfLines={2}
+              >
                 {t.title}
               </Text>
-              <Text style={{ color: '#888', fontSize: 11, width: dim }} numberOfLines={1}>
+              <Text style={[{ color: 'rgba(255,255,255,0.9)', fontSize: 12, fontWeight: '600', width: dim, textAlign: 'center' }, GEO_LABEL]} numberOfLines={1}>
                 {t.artist}
+              </Text>
+              <Text style={[{ color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '700', width: dim, textAlign: 'center', marginTop: 4 }, GEO_LABEL]} numberOfLines={1}>
+                {t.likeCount != null && t.likeCount > 0 ? formatScLikes(t.likeCount) : '—'}
               </Text>
             </Pressable>
           );
@@ -558,6 +748,8 @@ function buildCrateTiles(args: {
   playTrack: (track: Track, queue?: Track[], options?: { expandNowPlaying?: boolean }) => Promise<void>;
   ytVideosFeed: PlaylistTrack[];
   scTracksFeed: SCSearchTrack[];
+  /** Live SC discover — when non-empty, replaces SC search tiles for the crate grid */
+  scDiscoverCrateTracks: ScDiscoverTrackRow[];
   scCuratedPlaylists: SoundcloudCuratedPlaylist[];
   scMixes: MixDefinition[];
   mixArtworkById: Record<string, string>;
@@ -570,6 +762,7 @@ function buildCrateTiles(args: {
     playTrack,
     ytVideosFeed,
     scTracksFeed,
+    scDiscoverCrateTracks,
     scCuratedPlaylists,
     scMixes,
     mixArtworkById,
@@ -595,7 +788,20 @@ function buildCrateTiles(args: {
     audioUrl: '',
   }));
 
-  const scQueue: Track[] = scTracksFeed.map((x) => ({
+  const scFeedRows: Array<SCSearchTrack & { likeCount?: number }> =
+    scDiscoverCrateTracks.length > 0
+      ? scDiscoverCrateTracks.map((x) => ({
+          trackId: x.trackId,
+          title: x.title,
+          artist: x.artist,
+          artwork: x.artwork,
+          duration: x.duration,
+          soundcloudUrl: x.soundcloudUrl,
+          likeCount: x.likeCount,
+        }))
+      : scTracksFeed.map((x) => ({ ...x, likeCount: undefined }));
+
+  const scQueue: Track[] = scFeedRows.map((x) => ({
     id: `sc-${x.trackId}`,
     title: x.title,
     artist: x.artist,
@@ -607,6 +813,7 @@ function buildCrateTiles(args: {
     isLiked: false,
     source: 'soundcloud' as const,
     soundcloudUrl: x.soundcloudUrl,
+    soundcloudId: x.trackId,
     audioUrl: '',
   }));
 
@@ -635,23 +842,31 @@ function buildCrateTiles(args: {
     });
   }
 
-  for (const t of scTracksFeed) {
+  for (const t of scFeedRows) {
     const track = scQueue.find((q) => q.id === `sc-${t.trackId}`)!;
+    const hasDiscover = scDiscoverCrateTracks.length > 0;
     tiles.push({
       id: `crate-${track.id}`,
       kind: 'square',
       title: t.title,
       artwork: t.artwork,
       mediaHeight: squareH,
-      layoutHeight: squareH + TITLE_BLOCK,
+      layoutHeight: squareH + TITLE_BLOCK + SC_META_EXTRA,
       vibes: inferVibes(t.title, t.artist),
       badge: 'soundcloud',
+      artist: t.artist,
+      likeCount: t.likeCount,
+      scLayout: true,
       peekTrack: track,
       peekQueue: scQueue,
       onPress: () => {
-        logUiTap('Discover crates', 'navigate_sc_feed');
+        logUiTap('Discover crates', hasDiscover ? 'play_sc_discover' : 'play_sc_feed');
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        router.push('/(app)/track-feed?kind=sc' as never);
+        if (hasDiscover) {
+          void playTrack(track, scQueue);
+        } else {
+          router.push('/(app)/track-feed?kind=sc' as never);
+        }
       },
     });
   }
@@ -858,6 +1073,9 @@ export default function DiscoverScreen() {
     return hit?.value ?? [];
   });
 
+  const [scDiscoverFeed, setScDiscoverFeed] = useState<ScDiscoverFeedPayload | null>(null);
+  const [discoverFeedNonce, setDiscoverFeedNonce] = useState(0);
+
   const masonryRef = useRef<MasonryFlashListRef<CrateTile>>(null);
   const [vibeChip, setVibeChip] = useState('all');
   const colW = (SCREEN_W - H_PAD * 2 - GUTTER) / 2;
@@ -875,6 +1093,41 @@ export default function DiscoverScreen() {
     });
   }, [sections, vybeBeats]);
 
+  const scDiscoverCrateTracks = scDiscoverFeed?.crateTracks ?? [];
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await raceWithScDiscoverTimeout(
+          api.get<ScDiscoverFeedPayload>(
+            `/api/soundcloud/discover-feed?vibe=${encodeURIComponent(vibeChip)}&limit=36`,
+          ),
+        );
+        if (!cancelled) setScDiscoverFeed(data);
+      } catch (e) {
+        if (isDiscoverBackendFailure(e)) {
+          console.warn('[Discover] discover-feed timeout / server error — showing crate without SC hero');
+        } else {
+          console.warn('[Discover] discover-feed failed', e);
+        }
+        if (!cancelled) setScDiscoverFeed(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [vibeChip, discoverFeedNonce]);
+
+  /** Never block the tab on a stuck `fetchFeed` spinner (zombie loading state). */
+  useEffect(() => {
+    if (!isLoadingFeed || sections.length > 0) return;
+    const t = setTimeout(() => {
+      useDiscoverFeedStore.setState({ isLoadingFeed: false });
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [isLoadingFeed, sections.length]);
+
   const allCrateTiles = useMemo(
     () =>
       buildCrateTiles({
@@ -883,6 +1136,7 @@ export default function DiscoverScreen() {
         playTrack,
         ytVideosFeed,
         scTracksFeed,
+        scDiscoverCrateTracks,
         scCuratedPlaylists,
         scMixes,
         mixArtworkById,
@@ -895,6 +1149,7 @@ export default function DiscoverScreen() {
       playTrack,
       ytVideosFeed,
       scTracksFeed,
+      scDiscoverCrateTracks,
       scCuratedPlaylists,
       scMixes,
       mixArtworkById,
@@ -1150,6 +1405,7 @@ export default function DiscoverScreen() {
   const onRefresh = useCallback(async () => {
     setIsRefreshing(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setDiscoverFeedNonce((n) => n + 1);
     await refreshFeed();
     setIsRefreshing(false);
   }, [refreshFeed]);
@@ -1159,38 +1415,28 @@ export default function DiscoverScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  const discoverGradTop = insets.top + tabListTopPadding + 56;
-
   return (
     <Animated.View style={[{ flex: 1, backgroundColor: '#000000' }, louis && kickTranslateStyle]}>
-      {/* Background — Louis: pure OLED black (no blue-grey wash). */}
-      <LinearGradient
-        colors={
-          louis
-            ? (['#000000', '#000000', '#000000'] as const)
-            : (['#0a1628', '#050c14', '#0A0A0A'] as const)
-        }
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          height: discoverGradTop,
-        }}
-      />
-
       <View style={{ paddingTop: tabListTopPadding, paddingHorizontal: H_PAD, paddingBottom: 10 }}>
         <Pressable onLongPress={handleEditPreferences} delayLongPress={550}>
           <MachinedGradientText neonGlow style={{ fontSize: 24, fontWeight: '800', letterSpacing: 0.35 }}>
             Discover
           </MachinedGradientText>
         </Pressable>
-        <Text style={{ color: 'rgba(255,255,255,0.5)', marginTop: 6, fontSize: 14, fontWeight: '600' }}>
+        <Text
+          style={{
+            color: 'rgba(255,255,255,0.9)',
+            marginTop: 6,
+            fontSize: 14,
+            fontWeight: '600',
+            ...GEO_LABEL,
+          }}
+        >
           Crate digging — fast scan, slow listens
         </Text>
       </View>
 
-      <DiscoveryRailSection sectionTitle="Vibe chips" actionType="horizontal_rail">
+      <Text style={styles.genreSectionTitle}>Genre</Text>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -1198,20 +1444,20 @@ export default function DiscoverScreen() {
         style={styles.chipScroll}
       >
         {VIBE_CHIPS.map((chip) => (
-            <Pressable
-              key={chip.id}
-              onPress={() => {
-                logUiTap(`Vibe: ${chip.label}`, 'vibe_chip');
-                void Haptics.selectionAsync();
-                setVibeChip(chip.id);
-              }}
+          <Pressable
+            key={chip.id}
+            onPress={() => {
+              logUiTap(`Vibe: ${chip.label}`, 'vibe_chip');
+              void Haptics.selectionAsync();
+              setVibeChip(chip.id);
+            }}
             style={[styles.chip, vibeChip === chip.id && styles.chipSelected]}
           >
+            <View style={styles.chipIconSlot}>{vibeChipGlyph(chip.id, vibeChip === chip.id)}</View>
             <Text style={[styles.chipLabel, vibeChip === chip.id && styles.chipLabelSelected]}>{chip.label}</Text>
           </Pressable>
         ))}
       </ScrollView>
-      </DiscoveryRailSection>
 
       {isLoadingFeed && sections.length === 0 ? (
         <Animated.View entering={FadeIn} style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 48 }}>
@@ -1223,13 +1469,19 @@ export default function DiscoverScreen() {
       {/* FlashList doesn't accept `style` (only `contentContainerStyle`).
           Wrap in a flex:1 View so the list fills remaining vertical space
           inside the Discover screen container. */}
-      <View style={{ flex: 1 }}>
+      <View style={{ flex: 1, position: 'relative' }}>
+        <LinearGradient
+          colors={['#000000', 'rgba(0,0,0,0)']}
+          locations={[0, 1]}
+          style={styles.listTopFade}
+          pointerEvents="none"
+        />
       <MasonryFlashList
         ref={masonryRef as React.RefObject<MasonryFlashListRef<CrateTile>>}
         data={masonryData}
         numColumns={2}
         keyExtractor={(it) => it.id}
-        estimatedItemSize={80}
+        estimatedItemSize={148}
         optimizeItemArrangement
         contentContainerStyle={{
           paddingHorizontal: H_PAD,
@@ -1246,10 +1498,13 @@ export default function DiscoverScreen() {
         ListHeaderComponent={
           <>
             <DiscoveryRailSection sectionTitle="Discover collections" actionType="horizontal_rail">
-              <DiscoverVaultCollectionsRow playlists={scCuratedPlaylists} router={router} />
+              <DiscoverScCollectionsRow feed={scDiscoverFeed} playTrack={playTrack} />
             </DiscoveryRailSection>
             <DiscoveryRailSection sectionTitle="SoundCloud vault" actionType="horizontal_rail">
-              <DiscoverVaultExclusivesRail scTracks={scTracksFeed} playTrack={playTrack} />
+              <DiscoverVaultExclusivesRail
+                scTracks={scDiscoverCrateTracks.length > 0 ? scDiscoverCrateTracks : scTracksFeed}
+                playTrack={playTrack}
+              />
             </DiscoveryRailSection>
             {preferences?.onboardingComplete ? (
               <Pressable
