@@ -21,6 +21,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import Slider from '@react-native-community/slider';
 import { VybeTextInput } from '@/components/VybeTextInput';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -72,14 +73,26 @@ import { useUserSettingsStore } from '@/stores/userSettingsStore';
 import { MINI_PLAYER_HEIGHT } from './_layout';
 import { useVybePopup } from '@/components/VybePopup';
 import { ShadowNeonSwitch } from '@/components/ShadowNeonSwitch';
-import { OLED_BLACK, NAVY_TRACK, NAV_BAR_PURPLE } from '@/constants/machinedTheme';
+import {
+  OLED_BLACK,
+  NAVY_TRACK,
+  VIBRANT_BLUE,
+  NEON_IOS_SHADOW,
+  PILL_LOSSLESS_BADGE_TEXT,
+} from '@/constants/machinedTheme';
 import { useThemeStore, THEME_COLOR_PRESETS } from '@/stores/themeStore';
 import { accentHexToHue, hexToRgba, hsvHueToHex } from '@/lib/themeColorUtils';
 import { ListDisclosureMark } from '@/components/account/ListDisclosureMark';
+import { PillBadge } from '@/components/PillBadge';
 
 const STROKE = 1.5;
 
-const ROW_ICON = { color: NAV_BAR_PURPLE, glow: NAV_BAR_PURPLE } as const;
+/** Section rhythm — OLED black “breathe” between machined panels */
+const SECTION_VERTICAL_GAP = 32;
+/** Trailing edge for disclosure marks (matches panel inset) */
+const ROW_EDGE = 16;
+/** Leading icon column — strict vertical rhythm with title cap height */
+const ROW_ICON_COL_W = 40;
 
 type IconCategory =
   | 'account'
@@ -94,23 +107,6 @@ type IconCategory =
   | 'developer'
   | 'destructive';
 
-const CATEGORY_TINT: Record<
-  IconCategory,
-  { color: string; glow: string }
-> = {
-  account: ROW_ICON,
-  audio: ROW_ICON,
-  data: ROW_ICON,
-  notifications: ROW_ICON,
-  privacy: ROW_ICON,
-  content: ROW_ICON,
-  storage: ROW_ICON,
-  discovery: ROW_ICON,
-  about: ROW_ICON,
-  developer: ROW_ICON,
-  destructive: { color: '#EF4444', glow: '#EF4444' },
-};
-
 function CategoryIcon({
   category,
   children,
@@ -118,7 +114,8 @@ function CategoryIcon({
   category: IconCategory;
   children: React.ReactElement<{ color?: string; size?: number; strokeWidth?: number }>;
 }) {
-  const { color } = CATEGORY_TINT[category];
+  const accent = useThemeStore((s) => s.accentColor);
+  const color = category === 'destructive' ? '#EF4444' : accent;
   return (
     <View style={[styles.iconShell]}>
       {React.cloneElement(children, {
@@ -158,6 +155,17 @@ function SettingsSection({
     <View style={styles.sectionWrap}>
       <Text style={styles.sectionTitle}>{title.toUpperCase()}</Text>
       <View style={styles.machinedPanel}>{children}</View>
+    </View>
+  );
+}
+
+function DeviceStatusBadge({ label, accent }: { label: string; accent: string }) {
+  // SETTINGS_FULL_OVERHAUL — delegated to `PillBadge` so LOGIC ACTIVE /
+  // NATIVE PILL ACTIVE share the exact geometry as the Dynamic Island's
+  // FLAC / HI-FI chip (10pt small-caps, 18px height, 1px accent border).
+  return (
+    <View style={styles.deviceBadgeWrap}>
+      <PillBadge label={label} accent={accent} />
     </View>
   );
 }
@@ -205,6 +213,7 @@ function SettingsItem({
       style={({ pressed }) => [
         styles.row,
         styles.rowBorder,
+        showSwitch ? styles.rowAlignCenter : null,
         pressed && onPress ? { backgroundColor: 'rgba(255,255,255,0.04)' } : null,
       ]}
     >
@@ -334,8 +343,11 @@ function ColorEngineSection({ searchQuery }: { searchQuery: string }) {
               }}
               style={[
                 styles.presetChip,
-                { borderColor: selected ? p.hex : 'rgba(255,255,255,0.18)' },
-                selected && { backgroundColor: hexToRgba(p.hex, 0.14) },
+                {
+                  borderColor: selected ? VIBRANT_BLUE : 'rgba(255,255,255,0.1)',
+                  backgroundColor: selected ? hexToRgba(p.hex, 0.12) : 'rgba(255,255,255,0.04)',
+                },
+                selected && Platform.select({ ios: NEON_IOS_SHADOW, android: { elevation: 8 }, default: {} }),
               ]}
             >
               <View style={[styles.presetSwatch, { backgroundColor: p.hex }]} />
@@ -362,9 +374,9 @@ function ColorEngineSection({ searchQuery }: { searchQuery: string }) {
               setHue(v);
               pickManualAccent(hsvHueToHex(v));
             }}
-            minimumTrackTintColor={accent}
+            minimumTrackTintColor={VIBRANT_BLUE}
             maximumTrackTintColor={NAVY_TRACK}
-            thumbTintColor={accent}
+            thumbTintColor={VIBRANT_BLUE}
           />
         </View>
       </View>
@@ -601,12 +613,19 @@ export default function SettingsScreen() {
         </View>
       </View>
 
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={{ paddingTop: 16, paddingBottom: bottomPadding }}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
+      <View style={styles.scrollClip}>
+        <LinearGradient
+          pointerEvents="none"
+          colors={['rgba(0,0,0,1)', 'rgba(0,0,0,0.92)', 'rgba(0,0,0,0)']}
+          locations={[0, 0.35, 1]}
+          style={styles.scrollTopFade}
+        />
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={{ paddingTop: 12, paddingBottom: bottomPadding }}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
         <SettingsSection title="Account">
           <SettingsItem
             searchQuery={q}
@@ -664,17 +683,7 @@ export default function SettingsScreen() {
                 Steve Jobs&apos; Left Toe (iPhone 15 Pro Max)
               </Text>
             </View>
-            <View
-              style={[
-                styles.activeBadge,
-                {
-                  borderColor: deviceAccent,
-                  backgroundColor: hexToRgba(deviceAccent, 0.14),
-                },
-              ]}
-            >
-              <Text style={[styles.activeBadgeText, { color: deviceAccent }]}>LOGIC ACTIVE</Text>
-            </View>
+            <DeviceStatusBadge label="LOGIC ACTIVE" accent={deviceAccent} />
           </View>
           <View style={[styles.row, styles.rowBorder, styles.deviceRow]}>
             <View style={styles.rowIcon}>
@@ -685,17 +694,7 @@ export default function SettingsScreen() {
                 {'Louis 🔐🔐🏴☠️ (iPhone 14 Pro Max)'}
               </Text>
             </View>
-            <View
-              style={[
-                styles.activeBadge,
-                {
-                  borderColor: deviceAccent,
-                  backgroundColor: hexToRgba(deviceAccent, 0.14),
-                },
-              ]}
-            >
-              <Text style={[styles.activeBadgeText, { color: deviceAccent }]}>NATIVE PILL ACTIVE</Text>
-            </View>
+            <DeviceStatusBadge label="NATIVE PILL ACTIVE" accent={deviceAccent} />
           </View>
         </SettingsSection>
 
@@ -1180,7 +1179,8 @@ export default function SettingsScreen() {
         </Pressable>
 
         <VybeSystemFooter />
-      </ScrollView>
+        </ScrollView>
+      </View>
     </View>
     </KeyboardAvoidingView>
   );
@@ -1309,18 +1309,32 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginLeft: 10,
   },
+  scrollClip: {
+    flex: 1,
+    position: 'relative',
+  },
+  scrollTopFade: {
+    // SETTINGS_FULL_OVERHAUL — 40px black-to-transparent fade so list rows
+    // dissolve behind the pill / header on scroll.
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 40,
+    zIndex: 4,
+  },
   scroll: {
     flex: 1,
   },
   sectionWrap: {
-    marginBottom: 22,
-    paddingHorizontal: 16,
+    marginBottom: SECTION_VERTICAL_GAP,
+    paddingHorizontal: ROW_EDGE,
   },
   sectionTitle: {
-    color: 'rgba(230,252,255,0.95)',
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 2,
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1.6,
     marginBottom: 10,
     textTransform: 'uppercase',
   },
@@ -1329,25 +1343,29 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(0,255,255,0.22)',
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   deviceRow: {
     alignItems: 'center',
   },
   row: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     paddingVertical: 14,
-    paddingHorizontal: 14,
+    paddingHorizontal: ROW_EDGE,
+  },
+  rowAlignCenter: {
+    alignItems: 'center',
   },
   rowBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: '#FFFFFF10',
+    borderBottomColor: 'rgba(255,255,255,0.1)',
   },
   rowIcon: {
-    width: 36,
+    width: ROW_ICON_COL_W,
     alignItems: 'center',
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 2,
   },
   iconShell: {
     width: 28,
@@ -1357,7 +1375,7 @@ const styles = StyleSheet.create({
   },
   rowBody: {
     flex: 1,
-    marginLeft: 10,
+    marginLeft: 8,
     minWidth: 0,
   },
   titleRow: {
@@ -1388,23 +1406,21 @@ const styles = StyleSheet.create({
     maxWidth: 100,
   },
   rowDisclosure: {
-    width: 22,
-    alignItems: 'center',
+    width: 28,
+    alignItems: 'flex-end',
+    justifyContent: 'flex-start',
+    paddingTop: 3,
+    marginLeft: 2,
+  },
+  deviceBadgeWrap: {
+    maxWidth: 112,
     justifyContent: 'center',
-  },
-  activeBadge: {
-    borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 7,
-    borderRadius: 6,
     alignSelf: 'center',
-    maxWidth: 132,
+    paddingLeft: 4,
   },
-  activeBadgeText: {
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 0.45,
-    textAlign: 'center',
+  deviceBadgeText: {
+    ...PILL_LOSSLESS_BADGE_TEXT,
+    textAlign: 'right',
   },
   sliderRow: {
     alignItems: 'flex-start',
@@ -1412,9 +1428,9 @@ const styles = StyleSheet.create({
   },
   sliderBody: {
     flex: 1,
-    marginLeft: 10,
+    marginLeft: 8,
     minWidth: 0,
-    paddingRight: 4,
+    paddingRight: ROW_EDGE,
   },
   slider: {
     width: '100%',
@@ -1430,7 +1446,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
-    paddingHorizontal: 14,
+    paddingHorizontal: ROW_EDGE,
     paddingBottom: 12,
   },
   presetChip: {
@@ -1441,7 +1457,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 12,
     borderWidth: 1,
-    backgroundColor: 'rgba(255,255,255,0.04)',
   },
   presetSwatch: {
     width: 18,
