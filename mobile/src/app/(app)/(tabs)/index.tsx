@@ -100,6 +100,11 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 const SECTION_GAP = 32;
 const ART_RADIUS = 16;
 const SCREEN_W = Dimensions.get('window').width;
+/**
+ * Scroll padding under the status bar so “Your Vybe” clears the in-app Dynamic Island pill.
+ * Expanded pill is 112pt tall (`DynamicIsland` GEO.expanded); extra space absorbs cyan glow + a gap.
+ */
+const HOME_HEADER_CLEAR_BELOW_PILL_PT = 112 + 2 + 4;
 const AnimatedText = Animated.createAnimatedComponent(Text);
 
 // ─── Mood tabs ────────────────────────────────────────────────────────────────
@@ -1749,7 +1754,7 @@ export default function HomeScreen() {
         <Animated.View style={listMotionStyle}>
         <View
           style={{
-            paddingTop: insets.top + 78,
+            paddingTop: insets.top + HOME_HEADER_CLEAR_BELOW_PILL_PT,
             backgroundColor: '#000000',
             paddingHorizontal: 20,
             alignItems: 'flex-start',
