@@ -427,11 +427,10 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
   const currentTrack = usePlaybackController((s) => s.currentTrack);
   const flashSuccess = useDynamicIslandSignal((s) => s.flashSuccess);
 
-  // Single snap point — sheet opens nearly full-height so everything fits
-  // above the keyboard without internal scrolling.
-  // Shorter sheet so the underlying Vybe Activity screen stays visible above
-  // the composer and the rounded top corners have room to show.
-  const snapPoints = useMemo(() => ['80%'], []);
+  // Single snap point — sheet opens nearly full-height so the input + vault
+  // chips stay visible above the keyboard (Gorhom `keyboardBehavior="interactive"`
+  // shrinks the content area when keyboard appears; 80% was too tight on Louis).
+  const snapPoints = useMemo(() => ['92%'], []);
   const animationConfigs = useBottomSheetSpringConfigs(SHEET_SPRING);
 
   const filteredVault = useMemo(() => {
