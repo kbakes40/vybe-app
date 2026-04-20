@@ -1,45 +1,50 @@
 import { create } from 'zustand';
-import { Audio, AVPlaybackStatus } from 'expo-av';
+import {
+  createAudioPlayer,
+  setAudioModeAsync,
+  PLAYBACK_STATUS_UPDATE,
+  type AudioPlayer,
+  type AudioStatus,
+} from 'expo-audio';
+import type { EventSubscription } from 'expo-modules-core';
 import { InteractionManager } from 'react-native';
 import { Track, RepeatMode, TrackSource } from '@/types/music';
 import * as Haptics from 'expo-haptics';
 
-// Global sound object for VYBE tracks
-let soundObject: Audio.Sound | null = null;
+let audioPlayer: AudioPlayer | null = null;
+let audioSubscription: EventSubscription | null = null;
 
-// Track the current external source for cleanup
 let currentExternalCleanup: (() => void) | null = null;
 
-// Function to register external player cleanup (called by WebView components)
 export const registerExternalCleanup = (cleanup: () => void) => {
   currentExternalCleanup = cleanup;
 };
 
-// Function to clear external cleanup
 export const clearExternalCleanup = () => {
   currentExternalCleanup = null;
 };
 
-// Function to stop all audio sources
 export const stopAllAudio = async () => {
-  // Stop VYBE native audio
-  if (soundObject) {
+  if (audioSubscription) {
     try {
-      await soundObject.stopAsync();
-      await soundObject.unloadAsync();
+      audioSubscription.remove();
+    } catch {}
+    audioSubscription = null;
+  }
+  if (audioPlayer) {
+    try {
+      audioPlayer.pause();
+      audioPlayer.remove();
     } catch (e) {
-      // Ignore errors during cleanup
+      console.log('[AUDIO_ENGINE_ERROR] stopAllAudio release failed', e);
     }
-    soundObject = null;
+    audioPlayer = null;
   }
 
-  // Call external cleanup if registered
   if (currentExternalCleanup) {
     try {
       currentExternalCleanup();
-    } catch (e) {
-      // Ignore errors during cleanup
-    }
+    } catch {}
     currentExternalCleanup = null;
   }
 };
@@ -81,15 +86,15 @@ interface PlayerState {
   stopCurrentPlayback: () => Promise<void>;
 }
 
-// BREAK_BOOT_LOOP — defer expo-av audio mode setup until after the first
-// interaction frame so the UI mounts before the native audio bridge blocks
-// the JS thread on cold start.
+// BREAK_BOOT_LOOP — defer audio mode setup until after the first interaction
+// frame so the UI mounts before the native audio bridge blocks the JS thread.
 InteractionManager.runAfterInteractions(() => {
-  void Audio.setAudioModeAsync({
-    playsInSilentModeIOS: true,
-    staysActiveInBackground: true,
-    shouldDuckAndroid: true,
-  });
+  setAudioModeAsync({
+    playsInSilentMode: true,
+    shouldPlayInBackground: true,
+    interruptionMode: 'duckOthers',
+    interruptionModeAndroid: 'duckOthers',
+  }).catch((e) => console.log('[AUDIO_ENGINE_ERROR] setAudioModeAsync failed', e));
 });
 
 export const usePlayerStore = create<PlayerState>((set, get) => ({
@@ -141,47 +146,50 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
       return;
     }
 
-    // For VYBE tracks, use expo-av
+    // For VYBE tracks, use expo-audio
+    if (!track.audioUrl) {
+      set({ isLoading: false });
+      return;
+    }
+
     try {
-      if (track.audioUrl) {
-        const { sound } = await Audio.Sound.createAsync(
-          { uri: track.audioUrl },
-          { shouldPlay: true },
-          (status: AVPlaybackStatus) => {
-            // Only update if this track is still the active one
-            const { activeSourceId } = get();
-            if (activeSourceId !== track.id) return;
+      const player = createAudioPlayer({ uri: track.audioUrl });
+      audioPlayer = player;
 
-            if (status.isLoaded) {
-              const progressSec = status.positionMillis / 1000;
-              const durationSec = (status.durationMillis ?? track.duration * 1000) / 1000;
+      audioSubscription = player.addListener(
+        PLAYBACK_STATUS_UPDATE,
+        (status: AudioStatus) => {
+          const { activeSourceId } = get();
+          if (activeSourceId !== track.id) return;
+          if (!status.isLoaded) return;
 
-              set({
-                progress: progressSec,
-                duration: durationSec,
-                isPlaying: status.isPlaying,
-              });
+          const fallbackDuration = (track.duration ?? 0);
+          set({
+            progress: status.currentTime,
+            duration: status.duration > 0 ? status.duration : fallbackDuration,
+            isPlaying: status.playing,
+          });
 
-              // Auto-play next track when finished
-              if (status.didJustFinish) {
-                const { repeatMode } = get();
-                if (repeatMode === 'one') {
-                  sound.replayAsync();
-                } else {
-                  get().next();
-                }
-              }
+          if (status.didJustFinish) {
+            const { repeatMode } = get();
+            if (repeatMode === 'one') {
+              player
+                .seekTo(0)
+                .then(() => player.play())
+                .catch((e) =>
+                  console.log('[AUDIO_ENGINE_ERROR] replay failed', e),
+                );
+            } else {
+              get().next();
             }
           }
-        );
+        },
+      );
 
-        soundObject = sound;
-        set({ isPlaying: true, isLoading: false });
-      } else {
-        set({ isLoading: false });
-      }
+      player.play();
+      set({ isPlaying: true, isLoading: false });
     } catch (error) {
-      console.log('Error playing audio:', error);
+      console.log('[AUDIO_ENGINE_ERROR] createAudioPlayer/play failed', error);
       set({ isLoading: false });
     }
   },
@@ -190,8 +198,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const { externalSource } = get();
 
-    if (!externalSource && soundObject) {
-      await soundObject.pauseAsync();
+    if (!externalSource && audioPlayer) {
+      try {
+        audioPlayer.pause();
+      } catch (e) {
+        console.log('[AUDIO_ENGINE_ERROR] pause failed', e);
+      }
     }
     set({ isPlaying: false });
   },
@@ -200,8 +212,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const { externalSource } = get();
 
-    if (!externalSource && soundObject) {
-      await soundObject.playAsync();
+    if (!externalSource && audioPlayer) {
+      try {
+        audioPlayer.play();
+      } catch (e) {
+        console.log('[AUDIO_ENGINE_ERROR] play failed', e);
+      }
     }
     set({ isPlaying: true });
   },
@@ -253,8 +269,12 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
   seekTo: async (position: number) => {
     const { externalSource } = get();
 
-    if (!externalSource && soundObject) {
-      await soundObject.setPositionAsync(position * 1000);
+    if (!externalSource && audioPlayer) {
+      try {
+        await audioPlayer.seekTo(position);
+      } catch (e) {
+        console.log('[AUDIO_ENGINE_ERROR] seekTo failed', e);
+      }
     }
     set({ progress: position });
   },

@@ -444,25 +444,38 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
     );
   }, [vaultQuery]);
 
+  // Latest-value ref so `currentTrack` changes during a playback tick don't
+  // retrigger the open-reset effect (that caused the composer to shake + wipe
+  // typed text whenever the player store updated mid-compose).
+  const currentTrackRef = useRef(currentTrack);
+  currentTrackRef.current = currentTrack;
+  const prevVisibleRef = useRef(false);
+
   useEffect(() => {
+    const wasVisible = prevVisibleRef.current;
+    prevVisibleRef.current = visible;
+
     if (!visible) {
-      sheetRef.current?.dismiss(animationConfigs);
+      if (wasVisible) sheetRef.current?.dismiss();
       return;
     }
+    // Only run the one-shot reset when visibility flips false -> true.
+    if (wasVisible) return;
+
     setText('');
     setVaultQuery('');
     setVaultPick(null);
     setMediaUri(null);
     setErrorMsg(null);
     setSubmitting(false);
-    setAttachNowPlaying(!!currentTrack);
+    setAttachNowPlaying(!!currentTrackRef.current);
     focusedFirstSnapRef.current = false;
     // Defer `present()` so the BottomSheetModal ref is attached (otherwise the sheet can silently not open).
     const tid = setTimeout(() => {
       sheetRef.current?.present();
     }, 48);
     return () => clearTimeout(tid);
-  }, [visible, currentTrack, animationConfigs]);
+  }, [visible]);
 
   const handleSheetChange = useCallback((index: number) => {
     if (index !== 0 || focusedFirstSnapRef.current) return;
@@ -573,7 +586,7 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
       onPosted?.(post);
       inputRef.current?.blur();
       vaultSearchRef.current?.blur();
-      sheetRef.current?.dismiss(animationConfigs);
+      sheetRef.current?.dismiss();
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to post';
       const isUnauth = /401|UNAUTHORIZED/i.test(msg);
@@ -588,7 +601,6 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
     mediaUri,
     flashSuccess,
     onPosted,
-    animationConfigs,
   ]);
 
   const charsLeft = MAX_LEN - text.length;
@@ -655,7 +667,7 @@ export function PostComposer({ visible, onClose, onPosted }: PostComposerProps) 
           {/* Tight header — close X on left, title pill, POST chip on right */}
           <View style={styles.headerRow}>
             <Pressable
-              onPress={() => sheetRef.current?.dismiss(animationConfigs)}
+              onPress={() => sheetRef.current?.dismiss()}
               hitSlop={10}
               style={styles.closeBtn}
               accessibilityLabel="Close composer"

@@ -16,7 +16,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
 import { useRouter, useFocusEffect, type Router } from 'expo-router';
-import { Play } from 'lucide-react-native';
+import { Play, Radio } from 'lucide-react-native';
+import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { useDiscoverFeedStore, DiscoverItem, DiscoverSection } from '@/stores/discoverFeedStore';
@@ -31,9 +32,15 @@ import { useCancelPrefetchOnBlur } from '@/hooks/usePrefetch';
 import { curatedPlaylistCoverArt, playlistTitleEmojiEnd } from '@/components/PlaylistCard';
 import { SourceCornerBadge } from '@/components/SourceCornerBadge';
 import type { SourceCornerBadgeSource } from '@/components/SourceCornerBadge';
-import { CRATE_TILE_TINT_GRADIENT, VIBRANT_BLUE } from '@/constants/machinedTheme';
+import { CRATE_TILE_TINT_GRADIENT, DOCK_CYAN, VIBRANT_BLUE } from '@/constants/machinedTheme';
+import {
+  getTopStations,
+  readTopStationsCache,
+  type RadioStation,
+} from '@/lib/radioBrowserService';
 import { MachinedGradientText } from '@/components/MachinedGradientText';
 import { ShadowArtworkImage } from '@/components/ShadowArtworkImage';
+import { DiscoverSourceRail } from '@/components/discover/DiscoverSourceRail';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
 import { useLouisOledChrome } from '@/hooks/useLouisOledChrome';
 import { DiscoveryRailSection } from '@/components/Discovery/Section';
@@ -66,6 +73,10 @@ const VIBE_CHIPS: { id: string; label: string; keywords: string[] }[] = [
   { id: 'focus', label: 'Focus', keywords: ['focus', 'study', 'concentration', 'instrumental', 'deep work'] },
 ];
 
+function ensureArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
 function inferVibes(...parts: (string | undefined | null)[]): string[] {
   const blob = parts.filter(Boolean).join(' ').toLowerCase();
   const out: string[] = [];
@@ -74,6 +85,28 @@ function inferVibes(...parts: (string | undefined | null)[]): string[] {
     if (v.keywords.some((k) => blob.includes(k))) out.push(v.id);
   }
   return out.length ? out : ['chill'];
+}
+
+function stationToTrack(station: RadioStation): Track {
+  return {
+    id: `radio-browser:${station.id}`,
+    title: station.name,
+    artist: station.country ? `LIVE · ${station.country}` : 'LIVE',
+    artistId: '',
+    album: 'LIVE RADIO',
+    albumId: `radio-browser:${station.id}`,
+    isLiked: false,
+    artwork: station.faviconUrl ?? '',
+    duration: 0,
+    source: 'global_radio',
+    audioUrl: station.streamUrl,
+    globalRadioStationId: `rb:${station.id}`,
+    globalRadioMetadataSource: 'static',
+    globalRadioDiTag: station.name.toUpperCase(),
+    globalRadioDiLeading: 'default',
+    globalRadioFirePulse: 'normal',
+    globalRadioIslandAlbum: `RADIO: ${station.name.toUpperCase()}`,
+  };
 }
 
 function discoverItemToTrack(item: DiscoverItem): Track {
@@ -96,7 +129,7 @@ function discoverItemToTrack(item: DiscoverItem): Track {
   };
 }
 
-type CrateTileKind = 'video' | 'square';
+type CrateTileKind = 'video' | 'square' | 'station';
 
 type CrateTile = {
   id: string;
@@ -114,6 +147,8 @@ type CrateTile = {
   artist?: string;
   likeCount?: number;
   scLayout?: boolean;
+  /** Radio-Browser live station — when present, cell renders the StationCard variant. */
+  station?: RadioStation;
 };
 
 /** Matches backend — /api/soundcloud/discover-feed */
@@ -162,6 +197,35 @@ function endDiscoverPreview(session: PreviewSession | null) {
   if (session.id === previewGen) {
     previewGen += 1;
     void usePlaybackController.getState().pause();
+  }
+}
+
+class DiscoverListErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error('[DISCOVER_FEED_ERROR_BOUNDARY]', error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 40 }}>
+          <ActivityIndicator size="small" color={CYAN_ENGINE} />
+          <Text style={{ color: 'rgba(255,255,255,0.7)', marginTop: 10, fontWeight: '700' }}>
+            Discover is recovering...
+          </Text>
+        </View>
+      );
+    }
+    return this.props.children;
   }
 }
 
@@ -313,6 +377,198 @@ function formatScLikes(n: number): string {
   return `${Math.round(n)} Likes`;
 }
 
+/**
+ * StationCard — Machined glassmorphism tile for a live Radio-Browser station.
+ * Square art slot shows the station favicon (high-res square) when available;
+ * otherwise falls back to a DOCK_CYAN placeholder with the station's first
+ * letter. A LIVE RADIO badge sits in the top-left corner of the card.
+ */
+function StationMasonryCell({
+  item,
+  colW,
+  onPress,
+}: {
+  item: CrateTile;
+  colW: number;
+  onPress: () => void;
+}) {
+  const station = item.station;
+  const firstLetter = (item.artist || '•').toUpperCase();
+  const artSize = Math.round(colW * 0.78);
+  const faviconUri = station?.faviconUrl ?? null;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{ width: colW, marginBottom: GUTTER }}
+    >
+      <View
+        style={{
+          width: colW,
+          height: item.mediaHeight,
+          borderRadius: 14,
+          overflow: 'hidden',
+          backgroundColor: '#000000',
+          borderWidth: 1,
+          borderColor: 'rgba(0,229,255,0.35)',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        {/* Machined base — soft cyan mist + vignette */}
+        <LinearGradient
+          colors={['rgba(0,229,255,0.14)', 'rgba(0,0,0,0.85)']}
+          start={{ x: 0.15, y: 0 }}
+          end={{ x: 0.85, y: 1 }}
+          style={StyleSheet.absoluteFillObject}
+          pointerEvents="none"
+        />
+
+        {/* Glass pane over the base */}
+        {Platform.OS === 'ios' ? (
+          <BlurView
+            intensity={18}
+            tint="dark"
+            style={StyleSheet.absoluteFillObject}
+            pointerEvents="none"
+          />
+        ) : null}
+
+        {/* Art slot */}
+        <View
+          style={{
+            width: artSize,
+            height: artSize,
+            borderRadius: 14,
+            overflow: 'hidden',
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: 'rgba(255,255,255,0.18)',
+            backgroundColor: '#000000',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          {faviconUri ? (
+            <Image
+              source={{ uri: faviconUri }}
+              style={{ width: artSize, height: artSize }}
+              contentFit="cover"
+            />
+          ) : (
+            <View
+              style={{
+                width: artSize,
+                height: artSize,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: 'rgba(0,229,255,0.06)',
+              }}
+            >
+              <Text
+                style={[
+                  {
+                    color: DOCK_CYAN,
+                    fontSize: Math.round(artSize * 0.55),
+                    fontWeight: '900',
+                    letterSpacing: -1,
+                    textShadowColor: 'rgba(0,229,255,0.55)',
+                    textShadowOffset: { width: 0, height: 0 },
+                    textShadowRadius: 12,
+                  },
+                  GEO_LABEL,
+                ]}
+              >
+                {firstLetter}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* Top-edge fade — lifts the LIVE RADIO badge off any artwork */}
+        <LinearGradient
+          colors={['rgba(0,0,0,0.55)', 'transparent']}
+          locations={[0, 1]}
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 44,
+          }}
+          pointerEvents="none"
+        />
+
+        {/* LIVE RADIO badge — top-left corner */}
+        <View
+          style={{
+            position: 'absolute',
+            top: 8,
+            left: 8,
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingHorizontal: 7,
+            paddingVertical: 4,
+            borderRadius: 6,
+            overflow: 'hidden',
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: 'rgba(0,229,255,0.55)',
+            backgroundColor: 'rgba(0,0,0,0.55)',
+          }}
+          pointerEvents="none"
+        >
+          <View
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: 3,
+              backgroundColor: DOCK_CYAN,
+              marginRight: 6,
+            }}
+          />
+          <Text
+            style={[
+              {
+                color: DOCK_CYAN,
+                fontSize: 9,
+                fontWeight: '900',
+                letterSpacing: 1.0,
+                textTransform: 'uppercase',
+              },
+              GEO_LABEL,
+            ]}
+          >
+            LIVE RADIO
+          </Text>
+        </View>
+
+        {/* Small Radio glyph — top-right to mirror existing corner badges */}
+        <View
+          style={{
+            position: 'absolute',
+            top: 8,
+            right: 8,
+            width: 22,
+            height: 22,
+            borderRadius: 11,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(0,0,0,0.55)',
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: 'rgba(255,255,255,0.18)',
+          }}
+          pointerEvents="none"
+        >
+          <Radio size={12} color={DOCK_CYAN} strokeWidth={2.2} />
+        </View>
+      </View>
+
+      <Text style={styles.crateTitle} numberOfLines={2}>
+        {item.title}
+      </Text>
+    </Pressable>
+  );
+}
+
 function CrateMasonryCell({
   item,
   colW,
@@ -344,8 +600,13 @@ function CrateMasonryCell({
   };
 
   const scCentered = item.badge === 'soundcloud' && item.scLayout;
+  const isStation = item.kind === 'station';
 
   const artSize = Math.min(colW * 0.72, item.mediaHeight * 0.78);
+
+  if (isStation) {
+    return <StationMasonryCell item={item} colW={colW} onPress={onPress} />;
+  }
 
   return (
     <Pressable
@@ -428,7 +689,9 @@ function DiscoverScCollectionsRow({
 }) {
   if (!feed?.collections?.length) return null;
 
-  const queue: Track[] = feed.crateTracks.map((x) => ({
+  const crateTracks = feed?.crateTracks ?? [];
+  const collections = feed?.collections ?? [];
+  const queue: Track[] = crateTracks.map((x) => ({
     id: `sc-${x.trackId}`,
     title: x.title,
     artist: x.artist,
@@ -476,7 +739,7 @@ function DiscoverScCollectionsRow({
         contentContainerStyle={{ paddingHorizontal: H_PAD }}
         style={{ flexGrow: 0 }}
       >
-        {feed.collections.map(({ slot, track }) => {
+        {collections.map(({ slot, track }) => {
           const self = queue.find((q) => q.id === `sc-${track.trackId}`) ?? queue[0];
           return (
             <Pressable
@@ -589,7 +852,8 @@ function DiscoverVaultExclusivesRail({
   scTracks: Array<SCSearchTrack & { likeCount?: number }>;
   playTrack: (track: Track, queue?: Track[], options?: { expandNowPlaying?: boolean }) => Promise<void>;
 }) {
-  const slice = scTracks.slice(0, 16);
+  const safeScTracks = ensureArray<SCSearchTrack & { likeCount?: number }>(scTracks);
+  const slice = safeScTracks.slice(0, 16);
   if (slice.length === 0) return null;
 
   const queue: Track[] = slice.map((t) => ({
@@ -755,6 +1019,7 @@ function buildCrateTiles(args: {
   mixArtworkById: Record<string, string>;
   discoverFeedItems: DiscoverItem[];
   downloads: DownloadedTrack[];
+  radioStations: RadioStation[];
 }): CrateTile[] {
   const {
     colW,
@@ -768,12 +1033,22 @@ function buildCrateTiles(args: {
     mixArtworkById,
     discoverFeedItems,
     downloads,
+    radioStations,
   } = args;
+
+  const safeYtVideosFeed = ensureArray<PlaylistTrack>(ytVideosFeed);
+  const safeScTracksFeed = ensureArray<SCSearchTrack>(scTracksFeed);
+  const safeScDiscoverCrateTracks = ensureArray<ScDiscoverTrackRow>(scDiscoverCrateTracks);
+  const safeScCuratedPlaylists = ensureArray<SoundcloudCuratedPlaylist>(scCuratedPlaylists);
+  const safeScMixes = ensureArray<MixDefinition>(scMixes);
+  const safeDiscoverFeedItems = ensureArray<DiscoverItem>(discoverFeedItems);
+  const safeDownloads = ensureArray<DownloadedTrack>(downloads);
+  const safeRadioStations = ensureArray<RadioStation>(radioStations);
 
   const videoH = Math.round((colW * 9) / 16);
   const squareH = colW;
 
-  const ytVideoQueue: Track[] = ytVideosFeed.map((x) => ({
+  const ytVideoQueue: Track[] = safeYtVideosFeed.map((x) => ({
     id: `yt-${x.videoId}`,
     title: x.title,
     artist: x.channelName,
@@ -789,8 +1064,8 @@ function buildCrateTiles(args: {
   }));
 
   const scFeedRows: Array<SCSearchTrack & { likeCount?: number }> =
-    scDiscoverCrateTracks.length > 0
-      ? scDiscoverCrateTracks.map((x) => ({
+    safeScDiscoverCrateTracks.length > 0
+      ? safeScDiscoverCrateTracks.map((x) => ({
           trackId: x.trackId,
           title: x.title,
           artist: x.artist,
@@ -799,7 +1074,7 @@ function buildCrateTiles(args: {
           soundcloudUrl: x.soundcloudUrl,
           likeCount: x.likeCount,
         }))
-      : scTracksFeed.map((x) => ({ ...x, likeCount: undefined }));
+      : safeScTracksFeed.map((x) => ({ ...x, likeCount: undefined }));
 
   const scQueue: Track[] = scFeedRows.map((x) => ({
     id: `sc-${x.trackId}`,
@@ -817,11 +1092,11 @@ function buildCrateTiles(args: {
     audioUrl: '',
   }));
 
-  const discoverTracks: Track[] = discoverFeedItems.map(discoverItemToTrack);
+  const discoverTracks: Track[] = safeDiscoverFeedItems.map(discoverItemToTrack);
 
   const tiles: CrateTile[] = [];
 
-  for (const t of ytVideosFeed) {
+  for (const t of safeYtVideosFeed) {
     const track = ytVideoQueue.find((q) => q.id === `yt-${t.videoId}`)!;
     tiles.push({
       id: `crate-${track.id}`,
@@ -844,7 +1119,7 @@ function buildCrateTiles(args: {
 
   for (const t of scFeedRows) {
     const track = scQueue.find((q) => q.id === `sc-${t.trackId}`)!;
-    const hasDiscover = scDiscoverCrateTracks.length > 0;
+    const hasDiscover = safeScDiscoverCrateTracks.length > 0;
     tiles.push({
       id: `crate-${track.id}`,
       kind: 'square',
@@ -871,10 +1146,11 @@ function buildCrateTiles(args: {
     });
   }
 
-  for (const pl of scCuratedPlaylists) {
-    if (pl.tracks.length === 0) continue;
+  for (const pl of safeScCuratedPlaylists) {
+    const playlistTracks = ensureArray<SoundcloudCuratedTrackRow>(pl?.tracks);
+    if (playlistTracks.length === 0) continue;
     if ((pl as { section?: string }).section === 'popular') continue;
-    const queue: Track[] = pl.tracks.map((t) => ({
+    const queue: Track[] = playlistTracks.map((t) => ({
       id: `sc-${t.videoId}`,
       title: t.title,
       artist: t.channelName,
@@ -911,7 +1187,7 @@ function buildCrateTiles(args: {
     });
   }
 
-  for (const mix of scMixes) {
+  for (const mix of safeScMixes) {
     const art = mixArtworkById[mix.id] || mix.coverImage;
     const tagBlob = mix.tags?.length ? mix.tags.join(' ') : '';
     tiles.push({
@@ -933,7 +1209,7 @@ function buildCrateTiles(args: {
     });
   }
 
-  for (const item of discoverFeedItems) {
+  for (const item of safeDiscoverFeedItems) {
     const track = discoverItemToTrack(item);
     tiles.push({
       id: `crate-d-${item.id}`,
@@ -954,7 +1230,7 @@ function buildCrateTiles(args: {
     });
   }
 
-  for (const d of downloads) {
+  for (const d of safeDownloads) {
     tiles.push({
       id: `crate-dl-${d.id}`,
       kind: 'square',
@@ -974,7 +1250,46 @@ function buildCrateTiles(args: {
     });
   }
 
-  return shuffleInPlace(tiles);
+  shuffleInPlace(tiles);
+
+  // Build live-radio station tiles (Radio-Browser) and interleave 1 for every
+  // 3 tracks so the feed reads as a unified "Vibe" stream.
+  const stationTiles: CrateTile[] = safeRadioStations.map((station) => {
+    const stationTrack = stationToTrack(station);
+    const firstLetter = (station.name.trim().charAt(0) || '•').toUpperCase();
+    return {
+      id: `crate-rb-${station.id}`,
+      kind: 'station',
+      title: station.name,
+      artwork: station.faviconUrl ?? '',
+      mediaHeight: squareH,
+      layoutHeight: squareH + TITLE_BLOCK,
+      vibes: inferVibes(station.name, (station.tags ?? []).join(' '), station.country),
+      badge: 'stream',
+      peekTrack: null,
+      peekQueue: [],
+      artist: firstLetter,
+      station,
+      onPress: () => {
+        logUiTap('Discover crates', 'play_radio_station');
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        void playTrack(stationTrack, [stationTrack]);
+      },
+    };
+  });
+
+  if (stationTiles.length === 0) return tiles;
+
+  const interleaved: CrateTile[] = [];
+  let si = 0;
+  for (let ti = 0; ti < tiles.length; ti++) {
+    interleaved.push(tiles[ti]);
+    if ((ti + 1) % 3 === 0 && si < stationTiles.length) {
+      interleaved.push(stationTiles[si++]);
+    }
+  }
+  while (si < stationTiles.length) interleaved.push(stationTiles[si++]);
+  return interleaved;
 }
 
 /**
@@ -1043,11 +1358,11 @@ export default function DiscoverScreen() {
   // Curated backend playlists — lazy-seed from MMKV so they paint instantly on cold launch
   const [scCuratedPlaylists, setScCuratedPlaylists] = useState<SoundcloudCuratedPlaylist[]>(() => {
     const hit = discoverMMKV.get<SoundcloudCuratedPlaylist[]>(DISCOVER_KEYS.scCuratedPlaylists, TTL.CURATED);
-    return hit?.value ?? [];
+    return ensureArray<SoundcloudCuratedPlaylist>(hit?.value);
   });
   const [scMixes, setScMixes] = useState<MixDefinition[]>(() => {
     const hit = discoverMMKV.get<MixDefinition[]>(DISCOVER_KEYS.scMixes, TTL.CURATED);
-    return hit?.value ?? [];
+    return ensureArray<MixDefinition>(hit?.value);
   });
   // Per-mix artwork sourced from the user's downloaded library — each mix
   // gets a different track's album art so cards feel personal instead of
@@ -1062,29 +1377,53 @@ export default function DiscoverScreen() {
   // Trending track feeds per source — backend cached 1h
   const [ytVideosFeed, setYtVideosFeed] = useState<PlaylistTrack[]>(() => {
     const hit = discoverMMKV.get<PlaylistTrack[]>(DISCOVER_KEYS.ytVideosFeed, TTL.GENRE);
-    return hit?.value ?? [];
+    return ensureArray<PlaylistTrack>(hit?.value);
   });
   const [ytmTracksFeed, setYtmTracksFeed] = useState<PlaylistTrack[]>(() => {
     const hit = discoverMMKV.get<PlaylistTrack[]>(DISCOVER_KEYS.ytmTracksFeed, TTL.GENRE);
-    return hit?.value ?? [];
+    return ensureArray<PlaylistTrack>(hit?.value);
   });
   const [scTracksFeed, setScTracksFeed] = useState<SCSearchTrack[]>(() => {
     const hit = discoverMMKV.get<SCSearchTrack[]>(DISCOVER_KEYS.scTracksFeed, TTL.GENRE);
-    return hit?.value ?? [];
+    return ensureArray<SCSearchTrack>(hit?.value);
   });
 
   const [scDiscoverFeed, setScDiscoverFeed] = useState<ScDiscoverFeedPayload | null>(null);
   const [discoverFeedNonce, setDiscoverFeedNonce] = useState(0);
+
+  // Radio-Browser live stations — seed from 15-minute MMKV cache so the feed
+  // paints stations on first frame; fresh fetch happens in background.
+  const [radioStations, setRadioStations] = useState<RadioStation[]>(() =>
+    ensureArray<RadioStation>(readTopStationsCache()),
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const stations = await getTopStations(40);
+        if (!cancelled) setRadioStations(ensureArray<RadioStation>(stations));
+      } catch (err) {
+        console.warn('[Discover] radio-browser fetch failed', err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [discoverFeedNonce]);
 
   const masonryRef = useRef<MasonryFlashListRef<CrateTile>>(null);
   const [vibeChip, setVibeChip] = useState('all');
   const colW = (SCREEN_W - H_PAD * 2 - GUTTER) / 2;
 
   const filteredDiscoverItems = useMemo(() => {
+    const safeSections = ensureArray<DiscoverSection>(sections);
+    const sectionItems = safeSections.flatMap((s) => s?.items ?? []);
+    const safeVybeBeats = ensureArray<DiscoverItem>(vybeBeats);
     const raw =
-      sections.flatMap((s) => s.items).length > 0
-        ? sections.flatMap((s) => s.items)
-        : vybeBeats;
+      sectionItems.length > 0
+        ? sectionItems
+        : safeVybeBeats;
     return raw.filter((item) => {
       const idOk = /^yt-[\w-]+$|^sc-\d+$/.test(item.id);
       const creatorOk = !/tap to search/i.test(item.creatorName ?? '');
@@ -1142,6 +1481,7 @@ export default function DiscoverScreen() {
         mixArtworkById,
         discoverFeedItems: filteredDiscoverItems,
         downloads,
+        radioStations,
       }),
     [
       colW,
@@ -1155,6 +1495,7 @@ export default function DiscoverScreen() {
       mixArtworkById,
       filteredDiscoverItems,
       downloads,
+      radioStations,
     ],
   );
 
@@ -1162,6 +1503,9 @@ export default function DiscoverScreen() {
     if (vibeChip === 'all') return allCrateTiles;
     return allCrateTiles.filter((t) => t.vibes.includes(vibeChip));
   }, [allCrateTiles, vibeChip]);
+  const safeMasonryData = masonryData ?? [];
+  const shouldShowDiscoverLoader =
+    isLoadingFeed || safeMasonryData.length === 0;
 
   useEffect(() => {
     masonryRef.current?.scrollToOffset({ offset: 0, animated: false });
@@ -1476,63 +1820,71 @@ export default function DiscoverScreen() {
           style={styles.listTopFade}
           pointerEvents="none"
         />
-      <MasonryFlashList
-        ref={masonryRef as React.RefObject<MasonryFlashListRef<CrateTile>>}
-        data={masonryData}
-        numColumns={2}
-        keyExtractor={(it) => it.id}
-        estimatedItemSize={148}
-        optimizeItemArrangement
-        contentContainerStyle={{
-          paddingHorizontal: H_PAD,
-          paddingBottom: tabScreenContentContainerPaddingBottom(insets.bottom),
-        }}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefreshing}
-            onRefresh={onRefresh}
-            tintColor={VIBRANT_BLUE}
-            colors={[VIBRANT_BLUE]}
-          />
-        }
-        ListHeaderComponent={
-          <>
-            <DiscoveryRailSection sectionTitle="Discover collections" actionType="horizontal_rail">
-              <DiscoverScCollectionsRow feed={scDiscoverFeed} playTrack={playTrack} />
-            </DiscoveryRailSection>
-            <DiscoveryRailSection sectionTitle="SoundCloud vault" actionType="horizontal_rail">
-              <DiscoverVaultExclusivesRail
-                scTracks={scDiscoverCrateTracks.length > 0 ? scDiscoverCrateTracks : scTracksFeed}
-                playTrack={playTrack}
+        <DiscoverListErrorBoundary>
+          {shouldShowDiscoverLoader ? (
+            <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 48 }}>
+              <ActivityIndicator size="large" color={CYAN_ENGINE} />
+            </View>
+          ) : null}
+          <MasonryFlashList
+            ref={masonryRef as React.RefObject<MasonryFlashListRef<CrateTile>>}
+            data={safeMasonryData}
+            numColumns={2}
+            keyExtractor={(it) => it.id}
+            estimatedItemSize={148}
+            optimizeItemArrangement
+            contentContainerStyle={{
+              paddingHorizontal: H_PAD,
+              paddingBottom: tabScreenContentContainerPaddingBottom(insets.bottom),
+            }}
+            refreshControl={
+              <RefreshControl
+                refreshing={isRefreshing}
+                onRefresh={onRefresh}
+                tintColor={VIBRANT_BLUE}
+                colors={[VIBRANT_BLUE]}
               />
-            </DiscoveryRailSection>
-            {preferences?.onboardingComplete ? (
-              <Pressable
-                onPress={() => {
-                  logUiTap('Vybe Beats', 'navigate_vybe_beats');
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                  router.push('/(app)/vybe-beats');
-                }}
-                style={styles.beatsRow}
-              >
-                <LinearGradient colors={['#06202c', '#051018']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.beatsInner}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.beatsTitle}>Vybe Beats</Text>
-                    <Text style={styles.beatsSub}>Your taste — full crate</Text>
-                  </View>
-                  <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
-                    <Play size={20} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 2 }} />
-                  </View>
-                </LinearGradient>
-              </Pressable>
-            ) : null}
-          </>
-        }
-        overrideItemLayout={(layout, item) => {
-          layout.size = item.layoutHeight;
-        }}
-        renderItem={({ item }) => <CrateMasonryCell item={item} colW={colW} />}
-      />
+            }
+            ListHeaderComponent={
+              <>
+                <DiscoverSourceRail />
+                <DiscoveryRailSection sectionTitle="Discover collections" actionType="horizontal_rail">
+                  <DiscoverScCollectionsRow feed={scDiscoverFeed} playTrack={playTrack} />
+                </DiscoveryRailSection>
+                <DiscoveryRailSection sectionTitle="SoundCloud vault" actionType="horizontal_rail">
+                  <DiscoverVaultExclusivesRail
+                    scTracks={scDiscoverCrateTracks.length > 0 ? scDiscoverCrateTracks : scTracksFeed}
+                    playTrack={playTrack}
+                  />
+                </DiscoveryRailSection>
+                {preferences?.onboardingComplete ? (
+                  <Pressable
+                    onPress={() => {
+                      logUiTap('Vybe Beats', 'navigate_vybe_beats');
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      router.push('/(app)/vybe-beats');
+                    }}
+                    style={styles.beatsRow}
+                  >
+                    <LinearGradient colors={['#06202c', '#051018']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.beatsInner}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.beatsTitle}>Vybe Beats</Text>
+                        <Text style={styles.beatsSub}>Your taste — full crate</Text>
+                      </View>
+                      <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
+                        <Play size={20} color="#0A0A0A" fill="#0A0A0A" style={{ marginLeft: 2 }} />
+                      </View>
+                    </LinearGradient>
+                  </Pressable>
+                ) : null}
+              </>
+            }
+            overrideItemLayout={(layout, item) => {
+              layout.size = item.layoutHeight;
+            }}
+            renderItem={({ item }) => <CrateMasonryCell item={item} colW={colW} />}
+          />
+        </DiscoverListErrorBoundary>
       </View>
     </Animated.View>
   );

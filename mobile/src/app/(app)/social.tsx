@@ -41,6 +41,7 @@ import { VybeStoryRing } from '@/components/social/VybeStoryRing';
 import { ActivePost } from '@/components/social/ActivePost';
 import { PostComposer } from '@/components/social/PostComposer';
 import { FeedPostRow } from '@/components/social/FeedPostRow';
+import { BuildInfoLine } from '@/components/BuildInfoLine';
 import type {
   ActivePostItem,
   PlaylistShareItem,
@@ -547,6 +548,7 @@ export default function SocialScreen() {
           feedPosts.map((post) => <FeedPostRow key={post.id} post={post} onFireTap={handleFeedFireTap} />)
         )}
         <SocialFeedFooter playlistItems={playlistItems} interactionItems={interactionItems} />
+        <BuildInfoLine />
       </ScrollView>
 
       {/* Floating Action Button — opens PostComposer */}

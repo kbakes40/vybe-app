@@ -402,7 +402,7 @@ export default function TabLayout() {
         <Tabs.Screen
           name="vault"
           options={{
-            title: 'Vault',
+            title: 'Library',
             tabBarButton: (props) => (
               <VaultTabButton
                 {...props}
