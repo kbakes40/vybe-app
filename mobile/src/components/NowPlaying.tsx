@@ -3,6 +3,7 @@
  * Implementation: `src/app/(app)/nowPlaying.tsx`.
  */
 export { default as NowPlayingScreen, NowPlayingScreenContent } from '@/app/(app)/nowPlaying';
+export { RotatingVinyl } from '@/components/NowPlaying/RotatingVinyl';
 export {
   VybeVideoNeonIcon,
   VybeMusicNeonIcon,

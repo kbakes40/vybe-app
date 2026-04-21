@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useRef, useEffect } from 'react';
+import React, { useCallback, useState, useRef, useEffect, useLayoutEffect } from 'react';
 import {
   View,
   Text,
@@ -77,6 +77,9 @@ import {
   VybeWavesNeonIcon,
 } from '@/assets/icons/VybeNeonSourceIcons';
 import { AnimatedArtworkBackground } from '@/components/NowPlaying/Background';
+import { RotatingVinyl } from '@/components/NowPlaying/RotatingVinyl';
+import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
+import { useVinylHeroTransitionStore, type VinylHeroRect } from '@/stores/vinylHeroTransitionStore';
 import { RadioParadiseSoulActions } from '@/components/radio/RadioParadiseSoulActions';
 import { useThemeStore } from '@/stores/themeStore';
 import { hexToRgba } from '@/lib/themeColorUtils';
@@ -99,6 +102,14 @@ function isYouTubeThumbnail(url: string): boolean {
 }
 
 const MACHINED_BLUE = '#00E5FF';
+/** PILL_CYAN headline glow — matches Home / tab spec (radius 4). */
+const CYAN_TEXT_GLOW = {
+  color: MACHINED_BLUE,
+  textShadowColor: 'rgba(0, 229, 255, 0.5)',
+  textShadowOffset: { width: 0, height: 0 },
+  textShadowRadius: 4,
+} as const;
+
 const nowPlayingTypography = StyleSheet.create({
   title: {
     color: '#FFFFFF',
@@ -350,7 +361,7 @@ function YouTubeInlinePlayer({ videoId, artworkUri, isPlaying }: YouTubeInlinePl
         onMessage={handleMessage}
         originWhitelist={['*']}
       />
-      {showFallback && (
+      {!!showFallback && (
         <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
           <Image
             source={{ uri: artworkUri }}
@@ -550,8 +561,18 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
   const insets = useSafeAreaInsets();
 
   const [showQueue, setShowQueue] = useState(false);
+  const [vinylHeroRect, setVinylHeroRect] = useState<VinylHeroRect | null>(null);
 
   const currentTrack = usePlaybackController(s => s.currentTrack);
+
+  useLayoutEffect(() => {
+    if (!currentTrack) {
+      setVinylHeroRect(null);
+      return;
+    }
+    const rect = useVinylHeroTransitionStore.getState().consumeIfMatchingTrack(currentTrack.id);
+    setVinylHeroRect(rect);
+  }, [currentTrack]);
 
   // Related tracks for the queue sheet
   interface RelatedYT { videoId: string; title: string; channelName: string; thumbnailUrl: string; duration?: number; }
@@ -929,16 +950,32 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
 
   const sheetBody = (
     <>
-        <AnimatedArtworkBackground artworkUri={currentTrack.artwork} />
-        <View style={{ flex: 1 }} pointerEvents="box-none">
+        {sheetLayout ? (
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000000' }]} pointerEvents="none" />
+        ) : (
+          <AnimatedArtworkBackground artworkUri={currentTrack.artwork} />
+        )}
+        <View style={{ flex: 1, backgroundColor: sheetLayout ? '#000000' : 'transparent' }} pointerEvents="box-none">
           <View
             style={{
               flex: 1,
-              paddingTop: sheetLayout ? 20 : insets.top,
-              paddingBottom: sheetLayout ? insets.bottom + 12 : insets.bottom + 20,
+              paddingTop: sheetLayout ? 20 : Math.max(0, insets.top - 8),
+              paddingBottom: sheetLayout
+                ? insets.bottom + 12
+                : tabScreenContentContainerPaddingBottom(insets.bottom) + 20,
             }}
           >
-            {/* Header — neon pill (matches machined control language) */}
+            {/* Sheet: dismiss only. Full route: source pill + collapse. */}
+            {sheetLayout ? (
+              <View
+                className="flex-row items-center px-6 py-3"
+                style={{ marginBottom: 8 }}
+              >
+                <Pressable onPress={handleClose} className="p-2 -ml-2">
+                  <ChevronDown size={28} color="#fff" />
+                </Pressable>
+              </View>
+            ) : (
             <View
               className="flex-row items-center justify-between px-6 py-3"
               style={{ marginBottom: 8 }}
@@ -979,7 +1016,7 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                   ) : isSoundCloud ? (
                     <>
                       <SoundCloudIcon size={14} />
-                      <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13, marginLeft: 6 }}>Vybe Waves</Text>
+                      <Text style={{ fontWeight: '700', fontSize: 13, marginLeft: 6, ...CYAN_TEXT_GLOW }}>Vybe Waves</Text>
                     </>
                   ) : (
                     <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 13 }}>{currentTrack.album}</Text>
@@ -988,6 +1025,7 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
               </View>
               <View className="w-10" />
             </View>
+            )}
 
             {/* Artwork / Video */}
             <View className="items-center justify-center flex-1 px-10" style={{ minHeight: 0, overflow: 'visible' }}>
@@ -1017,29 +1055,70 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                     borderColor: ARTWORK_EDGE,
                   }]}
                 >
-                  <View style={{ width: ARTWORK_SIZE, height: ytmArtworkHeight, borderRadius: ARTWORK_INNER_RADIUS, overflow: 'hidden' }}>
-                    <Image
-                      source={{ uri: currentTrack.artwork }}
-                      style={{ width: ARTWORK_SIZE, height: ytmArtworkHeight }}
-                      contentFit="cover"
-                    />
-                    <View
-                      style={{
-                        position: 'absolute',
-                        bottom: 12,
-                        right: 12,
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        backgroundColor: 'rgba(0,0,0,0.38)',
-                        borderRadius: 20,
-                        paddingHorizontal: 10,
-                        paddingVertical: 5,
-                        opacity: 0.55,
-                      }}
-                    >
-                      <YouTubeMusicIcon size={14} />
-                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 5 }}>Vybe Music</Text>
-                    </View>
+                  <View
+                    style={{
+                      width: ARTWORK_SIZE,
+                      height: ytmArtworkHeight,
+                      borderRadius: ARTWORK_INNER_RADIUS,
+                      overflow: ytmArtworkIsThumb ? 'hidden' : 'visible',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    {ytmArtworkIsThumb ? (
+                      <>
+                        <Image
+                          source={{ uri: currentTrack.artwork }}
+                          style={{ width: ARTWORK_SIZE, height: ytmArtworkHeight }}
+                          contentFit="cover"
+                        />
+                        <View
+                          style={{
+                            position: 'absolute',
+                            bottom: 12,
+                            right: 12,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            backgroundColor: 'rgba(0,0,0,0.38)',
+                            borderRadius: 20,
+                            paddingHorizontal: 10,
+                            paddingVertical: 5,
+                            opacity: 0.55,
+                          }}
+                        >
+                          <YouTubeMusicIcon size={14} />
+                          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 5 }}>Vybe Music</Text>
+                        </View>
+                      </>
+                    ) : (
+                      <>
+                        <RotatingVinyl
+                          artworkUri={currentTrack.artwork}
+                          diameter={ARTWORK_SIZE}
+                          isPlaying={isPlaying}
+                          trackId={currentTrack.id}
+                          heroFromRect={vinylHeroRect}
+                        />
+                        <View
+                          pointerEvents="none"
+                          style={{
+                            position: 'absolute',
+                            bottom: 12,
+                            right: 12,
+                            flexDirection: 'row',
+                            alignItems: 'center',
+                            backgroundColor: 'rgba(0,0,0,0.38)',
+                            borderRadius: 20,
+                            paddingHorizontal: 10,
+                            paddingVertical: 5,
+                            opacity: 0.55,
+                          }}
+                        >
+                          <YouTubeMusicIcon size={14} />
+                          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 5 }}>Vybe Music</Text>
+                        </View>
+                      </>
+                    )}
                   </View>
                 </Animated.View>
               ) : ytInlineVault ? (
@@ -1071,13 +1150,25 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                     borderColor: ARTWORK_EDGE,
                   }]}
                 >
-                  <View style={{ width: ARTWORK_SIZE, height: ARTWORK_SIZE, borderRadius: ARTWORK_INNER_RADIUS, overflow: 'hidden' }}>
-                    <Image
-                      source={{ uri: currentTrack.artwork }}
-                      style={{ width: ARTWORK_SIZE, height: ARTWORK_SIZE }}
-                      contentFit="cover"
+                  <View
+                    style={{
+                      width: ARTWORK_SIZE,
+                      height: ARTWORK_SIZE,
+                      borderRadius: ARTWORK_INNER_RADIUS,
+                      overflow: 'visible',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <RotatingVinyl
+                      artworkUri={currentTrack.artwork}
+                      diameter={ARTWORK_SIZE}
+                      isPlaying={isPlaying}
+                      trackId={currentTrack.id}
+                      heroFromRect={vinylHeroRect}
                     />
                     <View
+                      pointerEvents="none"
                       style={{
                         position: 'absolute',
                         bottom: 12,
@@ -1092,7 +1183,7 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                       }}
                     >
                       <SoundCloudIcon size={14} />
-                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 5 }}>Vybe Waves</Text>
+                      <Text style={{ fontSize: 11, fontWeight: '600', marginLeft: 5, ...CYAN_TEXT_GLOW }}>Vybe Waves</Text>
                     </View>
                   </View>
                 </Animated.View>
@@ -1110,11 +1201,15 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                     overflow: 'visible',
                   }]}
                 >
-                  <Image
-                    source={{ uri: currentTrack.artwork }}
-                    style={{ width: ARTWORK_SIZE, height: ARTWORK_SIZE, borderRadius: ARTWORK_INNER_RADIUS }}
-                    contentFit="cover"
-                  />
+                  <View style={{ width: ARTWORK_SIZE, height: ARTWORK_SIZE, alignItems: 'center', justifyContent: 'center' }}>
+                    <RotatingVinyl
+                      artworkUri={currentTrack.artwork}
+                      diameter={ARTWORK_SIZE}
+                      isPlaying={isPlaying}
+                      trackId={currentTrack.id}
+                      heroFromRect={vinylHeroRect}
+                    />
+                  </View>
                 </Animated.View>
               )}
               {showYoutubeStreamSkeleton ? (
@@ -1413,31 +1508,41 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                   </Pressable>
                 </View>
 
-                {/* Bottom Actions — strict 24pt grid so Queue / AirPlay / Share
-                    sit on a shared horizontal baseline inside their 48pt cells. */}
-                <View className="flex-row items-center justify-between mt-6">
-                  <Pressable
-                    style={nowPlayingChromeStyles.bottomIconCell}
-                    onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowQueue(true); }}
-                  >
-                    <ListMusic size={24} color="#fff" />
-                  </Pressable>
-                  <Pressable
-                    style={nowPlayingChromeStyles.bottomIconCell}
-                    onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); showRoutePicker(); }}
-                  >
-                    <Airplay size={24} color="#fff" />
-                  </Pressable>
-                  <Pressable style={nowPlayingChromeStyles.bottomIconCell} onPress={handleShareTrack}>
-                    <Share2 size={24} color="#fff" />
-                  </Pressable>
-                </View>
+                {/* Sheet: AirPlay only. Full route: Queue / AirPlay / Share. */}
+                {sheetLayout ? (
+                  <View className="flex-row items-center justify-center mt-6">
+                    <Pressable
+                      style={nowPlayingChromeStyles.bottomIconCell}
+                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); showRoutePicker(); }}
+                    >
+                      <Airplay size={24} color="#fff" />
+                    </Pressable>
+                  </View>
+                ) : (
+                  <View className="flex-row items-center justify-between mt-6">
+                    <Pressable
+                      style={nowPlayingChromeStyles.bottomIconCell}
+                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowQueue(true); }}
+                    >
+                      <ListMusic size={24} color="#fff" />
+                    </Pressable>
+                    <Pressable
+                      style={nowPlayingChromeStyles.bottomIconCell}
+                      onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); showRoutePicker(); }}
+                    >
+                      <Airplay size={24} color="#fff" />
+                    </Pressable>
+                    <Pressable style={nowPlayingChromeStyles.bottomIconCell} onPress={handleShareTrack}>
+                      <Share2 size={24} color="#fff" />
+                    </Pressable>
+                  </View>
+                )}
               </View>
             </Animated.View>
           </View>
         </View>
         {/* Download fly animation thumbnail */}
-        {flyVisible && currentTrack && (
+        {!!flyVisible && !!currentTrack && (
           <Animated.View
             style={[
               { position: 'absolute', top: 0, left: 0, width: 48, height: 48, borderRadius: 8, overflow: 'hidden', zIndex: 999 },
@@ -1478,7 +1583,7 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
         </View>
 
         {/* Now Playing row */}
-        {currentTrack && (
+        {!!currentTrack && (
           <View
             style={{
               paddingHorizontal: 20,
@@ -1491,10 +1596,10 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
           >
             <Text style={{ color: '#D4AF37', fontSize: 11, fontWeight: '700', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 10 }}>Now Playing</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Image source={{ uri: currentTrack.artwork }} style={{ width: 44, height: 44, borderRadius: 6, borderWidth: 2, borderColor: '#D4AF37' }} contentFit="cover" />
+              <Image source={{ uri: currentTrack!.artwork }} style={{ width: 44, height: 44, borderRadius: 6, borderWidth: 2, borderColor: '#D4AF37' }} contentFit="cover" />
               <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }} numberOfLines={1}>{currentTrack.title}</Text>
-                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{currentTrack.artist}</Text>
+                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }} numberOfLines={1} ellipsizeMode="tail">{currentTrack!.title}</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 2 }} numberOfLines={1} ellipsizeMode="tail">{currentTrack!.artist}</Text>
               </View>
               <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#8B5CF6' }} />
             </View>
@@ -1503,7 +1608,7 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
 
         {/* Up next list + related */}
         <ScrollView
-          contentContainerStyle={{ paddingBottom: insets.bottom + 44 }}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 64 }}
           showsVerticalScrollIndicator={false}
         >
           {upNext.length === 0 ? (
@@ -1529,8 +1634,8 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                 >
                   <Image source={{ uri: track.artwork }} style={{ width: 50, height: 50, borderRadius: 4 }} contentFit="cover" />
                   <View style={{ flex: 1, marginLeft: 12 }}>
-                    <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }} numberOfLines={1}>{track.title}</Text>
-                    <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{track.artist}</Text>
+                    <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }} numberOfLines={1} ellipsizeMode="tail">{track.title}</Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 2 }} numberOfLines={1} ellipsizeMode="tail">{track.artist}</Text>
                   </View>
                   <DownloadButton track={track} size={20} />
                 </Pressable>
@@ -1656,8 +1761,8 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                   >
                     <Image source={{ uri: item.thumbnailUrl }} style={{ width: 46, height: 46, borderRadius: 6 }} contentFit="cover" />
                     <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{item.title}</Text>
-                      <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 2 }} numberOfLines={1}>{item.channelName}</Text>
+                      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1} ellipsizeMode="tail">{item.title}</Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 2 }} numberOfLines={1} ellipsizeMode="tail">{item.channelName}</Text>
                       {isBatchTarget ? (
                         <View style={{ marginTop: 6, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,0,0,0.15)', overflow: 'hidden' }}>
                           <View style={{ height: 3, width: `${Math.max(2, pct)}%`, backgroundColor: '#FF0000' }} />
@@ -1713,7 +1818,7 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                 <View style={{ width: 18, height: 14, borderRadius: 3, backgroundColor: '#FF5500', alignItems: 'center', justifyContent: 'center', marginRight: 7 }}>
                   <Text style={{ color: '#fff', fontSize: 7, fontWeight: '900', letterSpacing: -0.5 }}>)))</Text>
                 </View>
-                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase' }}>Vybe Waves</Text>
+                <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase', ...CYAN_TEXT_GLOW }}>Vybe Waves</Text>
                 <View style={{ flex: 1 }} />
                 <Pressable
                   onPress={async () => {
@@ -1804,8 +1909,8 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                   >
                     <Image source={{ uri: item.artwork }} style={{ width: 46, height: 46, borderRadius: 6 }} contentFit="cover" />
                     <View style={{ flex: 1, marginLeft: 12 }}>
-                      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>{item.title}</Text>
-                      <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 2 }} numberOfLines={1}>{item.artist}</Text>
+                      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1} ellipsizeMode="tail">{item.title}</Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 2 }} numberOfLines={1} ellipsizeMode="tail">{item.artist}</Text>
                       {isBatchTarget ? (
                         <View style={{ marginTop: 6, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,85,0,0.15)', overflow: 'hidden' }}>
                           <View style={{ height: 3, width: `${Math.max(2, pct)}%`, backgroundColor: '#FF5500' }} />

@@ -4,6 +4,7 @@ import { BottomTabBar, type BottomTabBarProps } from '@react-navigation/bottom-t
 import { BlurView } from 'expo-blur';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { DOCK_CYAN, OLED_BLACK } from '@/constants/machinedTheme';
+import { TAB_BAR_HEIGHT } from '@/constants/Layout';
 
 /** Five-tab doc — indicator tracks active slot. */
 const INDICATOR_W = 16;
@@ -53,12 +54,14 @@ export function ShadowMachinedTabBar(props: BottomTabBarProps) {
     transform: [{ translateX: indicatorX.value }],
   }));
 
+  const dockMinHeight = TAB_BAR_HEIGHT + insets.bottom;
   const bottomOffset = Math.max(7, insets.bottom + 3);
 
   return (
-    <View style={styles.wrap} onLayout={onLayout}>
+    <View style={[styles.wrap, { minHeight: dockMinHeight }]} onLayout={onLayout}>
       <View style={[StyleSheet.absoluteFill, styles.oledBase]} pointerEvents="none" />
-      <BlurView intensity={DOCK_BLUR_INTENSITY} tint="dark" style={StyleSheet.absoluteFill} />
+      {/* Pass taps through — otherwise blur can eat touches in tab strip dead zones. */}
+      <BlurView intensity={DOCK_BLUR_INTENSITY} tint="dark" style={StyleSheet.absoluteFill} pointerEvents="none" />
       {Platform.OS === 'android' ? (
         <View style={[StyleSheet.absoluteFill, styles.androidBlurFallback]} pointerEvents="none" />
       ) : null}
@@ -80,7 +83,6 @@ const styles = StyleSheet.create({
     position: 'relative',
     zIndex: 100000,
     elevation: 100000,
-    minHeight: 49,
     overflow: 'hidden',
     width: '100%',
     alignSelf: 'stretch',

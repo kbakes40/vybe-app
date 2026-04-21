@@ -160,7 +160,7 @@ struct VybeDownloadWidget: Widget {
                         urlString: resolvedArtworkURL(context),
                         isComplete: context.state.isComplete
                     )
-                    .padding(.leading, 2)
+                    .padding(.leading, 24)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     Text("\(Int(context.state.progress * 100))%")
@@ -212,6 +212,7 @@ struct VybeDownloadWidget: Widget {
                     urlString: resolvedArtworkURL(context),
                     isComplete: context.state.isComplete
                 )
+                .padding(.leading, 18)
                 .padding(.top, 2)
             } compactTrailing: {
                 VStack {

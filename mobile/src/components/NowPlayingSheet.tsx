@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
+import { BlurView } from 'expo-blur';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   Easing,
@@ -37,13 +38,13 @@ const EASE_OPEN = Easing.bezier(0.16, 1, 0.22, 1);
 /** Close: standard material ease-in */
 const EASE_CLOSE = Easing.bezier(0.4, 0, 0.2, 1);
 
-const OPEN_DURATION_CAP = 780;
-const OPEN_DURATION_BASE = 400;
-const OPEN_DURATION_PER_PX = 0.44;
+const OPEN_DURATION_CAP = 1100;
+const OPEN_DURATION_BASE = 560;
+const OPEN_DURATION_PER_PX = 0.62;
 
-const CLOSE_DURATION_CAP = 640;
-const CLOSE_DURATION_BASE = 280;
-const CLOSE_DURATION_PER_PX = 0.5;
+const CLOSE_DURATION_CAP = 920;
+const CLOSE_DURATION_BASE = 400;
+const CLOSE_DURATION_PER_PX = 0.7;
 
 function timingForOpen(fromCollapsedY: number) {
   const dist = Math.abs(fromCollapsedY);
@@ -62,7 +63,7 @@ type Props = { miniPlayerBottom: number };
 
 /**
  * Full-screen player sheet: one tall surface anchored to the bottom.
- * translateY 0 = full screen; collapsed = off-screen (mini lives in root `AppLayout`).
+ * translateY = EXPANDED_TOP_OFFSET when open; collapsed = maxTranslate (mini in `AppLayout`).
  */
 export function NowPlayingSheet({ miniPlayerBottom }: Props) {
   const { height: windowHeight } = useWindowDimensions();
@@ -195,6 +196,15 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
    * mid-animation layout smoosh). `translateY` animates from `maxTranslate` (off-screen, hidden
    * below the mini) → 0 (fully shown).
    */
+  /** Brief dark blur while the sheet opens; fades to opaque black so neon reads cleanly. */
+  const sheetBlurOpacityStyle = useAnimatedStyle(() => {
+    if (maxTranslate <= 0) return { opacity: 0 };
+    const p = sheetProgressSV.value;
+    return {
+      opacity: interpolate(p, [0, 0.12, 0.55, 0.92, 1], [0, 0.85, 0.5, 0.18, 0], Extrapolation.CLAMP),
+    };
+  }, [maxTranslate]);
+
   const mainRevealStyle = useAnimatedStyle(() => {
     if (maxTranslate <= 0) {
       return {
@@ -202,6 +212,7 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
         width: '100%' as const,
         overflow: 'hidden' as const,
         transform: [{ translateY: 0 }],
+        backgroundColor: '#000000',
       };
     }
     const m = maxTranslate;
@@ -224,6 +235,7 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
       borderTopRightRadius: topRadius,
       overflow: 'hidden' as const,
       width: '100%' as const,
+      backgroundColor: '#000000',
     };
   }, [maxTranslate]);
 
@@ -258,14 +270,14 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
     })
     .onUpdate((e) => {
       const next = dragStart.value + e.translationY;
-      ty.value = Math.min(Math.max(next, 0), maxTranslate);
+      ty.value = Math.min(Math.max(next, EXPANDED_TOP_OFFSET), maxTranslate);
     })
     .onEnd((e) => {
       'worklet';
       const m = maxTranslate;
       const mid = m * 0.26;
       const open = ty.value < mid || e.velocityY < -580;
-      const target = open ? 0 : m;
+      const target = open ? EXPANDED_TOP_OFFSET : m;
       const remaining = Math.abs(target - ty.value);
       let d = open
         ? Math.min(OPEN_DURATION_CAP, OPEN_DURATION_BASE + ty.value * OPEN_DURATION_PER_PX)
@@ -273,11 +285,11 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
       const v = Math.abs(e.velocityY);
       if (v > 380) {
         d = open
-          ? Math.max(280, d - Math.min(120, (v - 380) * 0.12))
-          : Math.max(200, d - Math.min(100, (v - 380) * 0.1));
+          ? Math.max(360, d - Math.min(100, (v - 380) * 0.1))
+          : Math.max(280, d - Math.min(85, (v - 380) * 0.09));
       }
       if (open && e.velocityY < -480) {
-        d = Math.max(260, d - 72);
+        d = Math.max(340, d - 56);
       }
       ty.value = withTiming(target, { duration: d, easing: open ? EASE_OPEN : EASE_CLOSE });
       runOnJS(lightHaptic)();
@@ -297,7 +309,15 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
             >
               <View style={styles.mainRevealOuter} pointerEvents="box-none">
                 <Animated.View style={mainRevealStyle} pointerEvents="auto">
-                  {currentTrack ? <NowPlayingScreenContent sheetLayout /> : null}
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[StyleSheet.absoluteFill, sheetBlurOpacityStyle]}
+                  >
+                    <BlurView intensity={100} tint="dark" style={StyleSheet.absoluteFill} />
+                  </Animated.View>
+                  <View style={{ flex: 1, backgroundColor: '#000000' }}>
+                    {currentTrack ? <NowPlayingScreenContent sheetLayout /> : null}
+                  </View>
                 </Animated.View>
               </View>
             </Animated.View>
@@ -309,6 +329,11 @@ export function NowPlayingSheet({ miniPlayerBottom }: Props) {
 }
 
 const styles = StyleSheet.create({
+  /**
+   * Must stay transparent: this node is full-window (`absolute` in parent) even when
+   * the sheet is collapsed. Opaque black here would cover Home / tabs — only the
+   * sliding `mainRevealStyle` panel should paint `#000`.
+   */
   shell: {
     zIndex: 10,
     overflow: 'visible',

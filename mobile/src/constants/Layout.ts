@@ -11,7 +11,8 @@ export const TAB_SCREEN_TOP_INSET_BELOW_PILL_PT = EXPANDED_PILL_MAX_HEIGHT_PT + 
  * `tabBarStyle` adds `useSafeAreaInsets().bottom` so the Doc clears the home indicator
  * (~34pt on iPhone 14/15 Pro Max class devices — do not hardcode 34).
  */
-export const TAB_BAR_HEIGHT = 64;
+/** Inner tab strip (icons + below-icon labels); paired with safe-area bottom in `tabBarStyle.height`. */
+export const TAB_BAR_HEIGHT = 72;
 
 /**
  * Extra padding below tab labels so taps sit comfortably above the iOS home indicator
@@ -44,7 +45,7 @@ export function miniPlayerBottomOffsetRaw(insetsBottom: number): number {
 /** Vertical gap between tab icon row and 10pt label (NAV_DOC_VISUAL_FINAL_LOCK). */
 export const DOC_LABEL_GAP_PT = 4;
 /** Min height for the icon row so SAX / Vybe / SVG slots align before the label. */
-export const DOC_ICON_ROW_MIN_HEIGHT_PT = 38;
+export const DOC_ICON_ROW_MIN_HEIGHT_PT = 44;
 
 /** Collapsed mini-player strip (must match `MiniPlayer` + `NowPlayingSheet` math). */
 export const MINI_PLAYER_HEIGHT = 64;
@@ -62,6 +63,13 @@ export const TOTAL_BOTTOM_OFFSET = BOTTOM_DOCK_HEIGHT;
 /** Breathing room below the dock for the last list row (pt). */
 export const BOTTOM_DOCK_CONTENT_INSET_EXTRA = 30;
 
+/**
+ * `(tabs)/_layout` tabBarStyle `bottom` — Doc is floated above the home indicator.
+ * Include in scroll `paddingBottom` so the last row is not hidden under the bar.
+ */
+/** Keep in sync with `(tabs)/_layout.tsx` `tabBarStyle.bottom`. */
+export const TAB_BAR_FLOAT_ABOVE_HOME_PT = 16;
+
 /** @deprecated Prefer {@link tabScreenContentContainerPaddingBottom} or {@link BOTTOM_DOCK_CONTENT_INSET_EXTRA}. */
 export const TAB_MAIN_SCROLL_PADDING_EXTRA = BOTTOM_DOCK_CONTENT_INSET_EXTRA;
 
@@ -75,7 +83,8 @@ export function tabScreenContentContainerPaddingBottom(insetsBottom: number): nu
     BOTTOM_DOCK_CONTENT_INSET_EXTRA +
     insetsBottom +
     TAB_BAR_HOME_CLEARANCE_PT +
-    MINI_PLAYER_ABOVE_TAB_GAP_PT
+    MINI_PLAYER_ABOVE_TAB_GAP_PT +
+    TAB_BAR_FLOAT_ABOVE_HOME_PT
   );
 }
 

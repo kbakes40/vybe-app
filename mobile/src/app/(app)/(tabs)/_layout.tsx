@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, Pressable, Modal, Text, Image, Platform } from 'react-native';
+import { View, StyleSheet, Pressable, Modal, Text, Image } from 'react-native';
 import { Tabs, useRouter } from 'expo-router';
 import { Download, Headphones, Disc } from 'lucide-react-native';
 import {
@@ -21,6 +21,7 @@ import type { BottomTabBarButtonProps } from '@react-navigation/bottom-tabs';
 import {
   DOC_LABEL_GAP_PT,
   DOC_ICON_ROW_MIN_HEIGHT_PT,
+  TAB_BAR_HEIGHT,
 } from '@/constants/Layout';
 import { ShadowMachinedTabBar } from '@/components/navigation/ShadowMachinedTabBar';
 import { LouisOledTabOverlays } from '@/components/LouisOledTabOverlays';
@@ -54,7 +55,7 @@ function AppleMusicIcon() {
 }
 
 function HapticTabButton(props: BottomTabBarButtonProps & { bloomRoute?: string }) {
-  const { children, onPress, bloomRoute, ...rest } = props;
+  const { children, onPress, style, bloomRoute, ...rest } = props;
 
   return (
     <Pressable
@@ -66,7 +67,7 @@ function HapticTabButton(props: BottomTabBarButtonProps & { bloomRoute?: string 
         if (bloomRoute) useTabBarBloomStore.getState().pulse(bloomRoute);
       }}
       onPress={onPress}
-      style={styles.tabButton}
+      style={[style, styles.tabButton]}
     >
       {children}
     </Pressable>
@@ -74,7 +75,7 @@ function HapticTabButton(props: BottomTabBarButtonProps & { bloomRoute?: string 
 }
 
 function SearchTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: () => void; bloomRoute?: string }) {
-  const { children, onPress, accessibilityState, onAlreadySelected, bloomRoute, ...rest } = props;
+  const { children, onPress, style, accessibilityState, onAlreadySelected, bloomRoute, ...rest } = props;
   const isSelected = accessibilityState?.selected ?? false;
 
   const handlePress = (e: Parameters<NonNullable<typeof onPress>>[0]) => {
@@ -95,7 +96,7 @@ function SearchTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: 
         if (bloomRoute) useTabBarBloomStore.getState().pulse(bloomRoute);
       }}
       onPress={handlePress}
-      style={styles.tabButton}
+      style={[style, styles.tabButton]}
     >
       {children}
     </Pressable>
@@ -103,7 +104,7 @@ function SearchTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: 
 }
 
 function VaultTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: () => void; bloomRoute?: string }) {
-  const { children, onPress, accessibilityState, onAlreadySelected, bloomRoute, ...rest } = props;
+  const { children, onPress, style, accessibilityState, onAlreadySelected, bloomRoute, ...rest } = props;
   const isSelected = accessibilityState?.selected ?? false;
   const lastTapRef = React.useRef(0);
 
@@ -129,7 +130,7 @@ function VaultTabButton(props: BottomTabBarButtonProps & { onAlreadySelected?: (
         if (bloomRoute) useTabBarBloomStore.getState().pulse(bloomRoute);
       }}
       onPress={handlePress}
-      style={styles.tabButton}
+      style={[style, styles.tabButton]}
     >
       {children}
     </Pressable>
@@ -256,7 +257,20 @@ export default function TabLayout() {
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 16 }}
             >
               <VybeWavesNeonIcon size={36} />
-              <Text style={{ color: '#fff', fontSize: 16, flex: 1, marginLeft: 16 }}>Vybe Waves</Text>
+              <Text
+                style={{
+                  fontSize: 16,
+                  flex: 1,
+                  marginLeft: 16,
+                  fontWeight: '700',
+                  color: DOCK_CYAN,
+                  textShadowColor: 'rgba(0, 229, 255, 0.5)',
+                  textShadowOffset: { width: 0, height: 0 },
+                  textShadowRadius: 4,
+                }}
+              >
+                Vybe Waves
+              </Text>
             </Pressable>
             <Pressable
               onPress={() => {
@@ -304,15 +318,16 @@ export default function TabLayout() {
             alignSelf: 'center',
             width: '100%',
             textTransform: 'uppercase',
-            ...(Platform.OS === 'ios' ? { fontVariant: ['small-caps' as const] } : {}),
+            textShadowColor: 'rgba(0, 229, 255, 0.45)',
+            textShadowOffset: { width: 0, height: 0 },
+            textShadowRadius: 4,
           },
           tabBarItemStyle: {
-            paddingVertical: 4,
+            paddingVertical: 6,
           },
           tabBarStyle: {
             position: 'absolute',
-            bottom: 1
-            ,
+            bottom: 16,
             left: 0,
             right: 0,
             backgroundColor: 'transparent',
@@ -322,6 +337,9 @@ export default function TabLayout() {
             elevation: 100000,
             alignItems: 'center',
             justifyContent: 'center',
+            /* Default RN tab bar uses 49pt content — too tight for below-icon labels; explicit height avoids clipping. */
+            height: TAB_BAR_HEIGHT + insets.bottom,
+            paddingTop: 6,
             paddingBottom: insets.bottom,
           },
           tabBarActiveTintColor: TAB_ACTIVE,

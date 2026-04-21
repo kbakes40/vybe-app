@@ -5,7 +5,7 @@
  * Tag hub HTML is parsed with regex (no DOM parser). Fan API uses Cookie + fan_id.
  */
 import type { Track } from '@/types/music';
-import { BANDCAMP_DISCOVER_ALBUM_SEEDS } from '@/constants/bandcampDiscoverSeeds';
+import { BANDCAMP_DISCOVER_ALBUM_SEEDS, BANDCAMP_JAZZ_ALBUM_SEEDS } from '@/constants/bandcampDiscoverSeeds';
 import { getActiveBandcampIdentity } from '@/lib/bandcampLocalConfig';
 
 const UA =
@@ -186,6 +186,11 @@ function pickSeedAlbumUrls(primaryTag: string, merge: string | undefined, cap: n
   const all = [...BANDCAMP_DISCOVER_ALBUM_SEEDS];
   const nudge = (primaryTag.length + (merge?.length ?? 0)) % 7;
   const rotated = [...all.slice(nudge), ...all.slice(0, nudge)];
+  /** Tag hubs fall back to seeds — jazz lives at end of global list; surface it for jazz/fusion tags. */
+  if (tagSlug(primaryTag) === 'jazz' || (merge && tagSlug(merge) === 'jazz')) {
+    const jazz = [...BANDCAMP_JAZZ_ALBUM_SEEDS];
+    return mergeAlternatingUnique(jazz, rotated, cap);
+  }
   if (!merge || tagSlug(merge) === tagSlug(primaryTag)) {
     return rotated.slice(0, cap);
   }
@@ -247,6 +252,24 @@ export async function fetchTrendingByTag(
     albumUrls = pickSeedAlbumUrls(tag, merge, cap);
   }
 
+  return fetchBandcampAlbumsFromUrls(albumUrls, { max: cap });
+}
+
+export type FetchBandcampFromUrlsOptions = {
+  /** Max album pages to fetch (default: length of list). */
+  max?: number;
+};
+
+/**
+ * Fetch album metadata + preview URLs from explicit Bandcamp `/album/...` URLs
+ * (used by Home deck so jazz picks are not truncated by global seed rotation).
+ */
+export async function fetchBandcampAlbumsFromUrls(
+  urls: readonly string[],
+  opts?: FetchBandcampFromUrlsOptions,
+): Promise<BandcampTagAlbum[]> {
+  const max = Math.min(urls.length, Math.max(1, opts?.max ?? urls.length));
+  const albumUrls = urls.slice(0, max);
   const out: BandcampTagAlbum[] = [];
   const chunk = 4;
   for (let i = 0; i < albumUrls.length; i += chunk) {
