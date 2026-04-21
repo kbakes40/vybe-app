@@ -48,13 +48,10 @@ import {
 } from '@/components/PlaylistCard';
 import { resolveShadowPlaylistVisual, inferEditorialEraLabel } from '@/lib/shadowPlaylistArtwork';
 import {
-  fetchYtmHomeBundle,
-  normalizeYtmThumb,
-  prewarmYtmFeed,
-  safeYtmBundle,
-  type YtmPlaylistTrack,
-} from '@/lib/api/ytMusic';
-import { getTasteSeedTracks } from '@/lib/tasteSeed';
+  fetchTrendingByTag,
+  bandcampTagAlbumToTrack,
+  type BandcampTagAlbum,
+} from '@/lib/bandcampService';
 import { clearCuratedPlaylistWarmSession } from '@/lib/curatedPlaylistWarmup';
 import { preResolveYoutubeVideoId } from '@/lib/youtubeResolvePreloadCache';
 import { preResolveSoundcloudStreamUrl } from '@/lib/soundcloudStreamPreloadCache';
@@ -701,34 +698,51 @@ interface SpotifyPlaylist {
   tracks: SpotifyPlaylistTrack[];
 }
 
-// All genres we can recommend — each has lowercase keywords to match against
-// the user's existing library, and a search query to use on YouTube Music.
-const GENRE_CATALOG: { name: string; keywords: string[]; query: string }[] = [
-  { name: 'Jazz',        keywords: ['jazz'],                       query: 'best jazz music playlist' },
-  { name: 'Classical',   keywords: ['classical', 'orchestra', 'symphony'], query: 'classical music essentials' },
-  { name: 'R&B',         keywords: ['r&b', 'rnb', 'soul'],         query: 'r&b soul music hits' },
-  { name: 'Latin',       keywords: ['latin', 'reggaeton', 'salsa'], query: 'latin music hits 2024' },
-  { name: 'Country',     keywords: ['country'],                    query: 'country music hits' },
-  { name: 'Reggae',      keywords: ['reggae', 'dancehall'],        query: 'reggae music playlist' },
-  { name: 'Blues',       keywords: ['blues'],                      query: 'blues music classics' },
-  { name: 'Metal',       keywords: ['metal', 'heavy metal'],       query: 'metal music playlist' },
-  { name: 'Punk',        keywords: ['punk', 'hardcore'],           query: 'punk rock music' },
-  { name: 'Folk',        keywords: ['folk', 'acoustic', 'singer-songwriter'], query: 'folk acoustic music' },
-  { name: 'Electronic',  keywords: ['electronic', 'edm', 'house', 'techno', 'trance'], query: 'electronic dance music hits' },
-  { name: 'Hip-Hop',     keywords: ['hip-hop', 'hip hop', 'rap', 'trap'], query: 'hip hop rap music 2024' },
-  { name: 'Pop',         keywords: ['pop'],                        query: 'pop music hits 2024' },
-  { name: 'Rock',        keywords: ['rock', 'indie rock', 'alternative rock'], query: 'rock music classics' },
-  { name: 'Indie',       keywords: ['indie', 'alternative'],       query: 'indie alternative music' },
-  { name: 'Afrobeats',   keywords: ['afrobeats', 'afro', 'afropop'], query: 'afrobeats music playlist' },
-  { name: 'K-Pop',       keywords: ['k-pop', 'kpop', 'korean pop'], query: 'kpop music hits' },
-  { name: 'Ambient',     keywords: ['ambient', 'chill', 'lo-fi', 'lofi'], query: 'ambient chill music' },
-  { name: 'Drill',       keywords: ['drill', 'uk drill'],          query: 'drill music playlist' },
-  { name: 'Funk',        keywords: ['funk', 'disco'],              query: 'funk disco music classics' },
-  { name: 'Gospel',      keywords: ['gospel', 'worship', 'christian'], query: 'gospel music playlist' },
-  { name: 'Bossa Nova',  keywords: ['bossa nova', 'bossa', 'samba'], query: 'bossa nova jazz music' },
-  { name: 'Psychedelic', keywords: ['psychedelic', 'psych rock'],  query: 'psychedelic rock music' },
-  { name: 'Emo',         keywords: ['emo', 'post-hardcore'],       query: 'emo music playlist' },
+/** Home “outside your library” shelves — keywords match taste; Bandcamp tag hub for art + previews. */
+type GenreCatalogEntry = { name: string; keywords: string[]; bandcampTag: string };
+
+const GENRE_CATALOG: GenreCatalogEntry[] = [
+  { name: 'Jazz',        keywords: ['jazz'],                       bandcampTag: 'jazz' },
+  { name: 'Classical',   keywords: ['classical', 'orchestra', 'symphony'], bandcampTag: 'classical' },
+  { name: 'R&B',         keywords: ['r&b', 'rnb', 'soul'],         bandcampTag: 'soul' },
+  { name: 'Latin',       keywords: ['latin', 'reggaeton', 'salsa'], bandcampTag: 'latin' },
+  { name: 'Country',     keywords: ['country'],                    bandcampTag: 'country' },
+  { name: 'Reggae',      keywords: ['reggae', 'dancehall'],        bandcampTag: 'reggae' },
+  { name: 'Blues',       keywords: ['blues'],                      bandcampTag: 'blues' },
+  { name: 'Metal',       keywords: ['metal', 'heavy metal'],       bandcampTag: 'metal' },
+  { name: 'Punk',        keywords: ['punk', 'hardcore'],           bandcampTag: 'punk' },
+  { name: 'Folk',        keywords: ['folk', 'acoustic', 'singer-songwriter'], bandcampTag: 'folk' },
+  { name: 'Electronic',  keywords: ['electronic', 'edm', 'house', 'techno', 'trance'], bandcampTag: 'electronic' },
+  { name: 'Hip-Hop',     keywords: ['hip-hop', 'hip hop', 'rap', 'trap'], bandcampTag: 'hip-hop' },
+  { name: 'Pop',         keywords: ['pop'],                        bandcampTag: 'pop' },
+  { name: 'Rock',        keywords: ['rock', 'indie rock', 'alternative rock'], bandcampTag: 'rock' },
+  { name: 'Indie',       keywords: ['indie', 'alternative'],       bandcampTag: 'indie' },
+  { name: 'Afrobeats',   keywords: ['afrobeats', 'afro', 'afropop'], bandcampTag: 'afrobeats' },
+  { name: 'K-Pop',       keywords: ['k-pop', 'kpop', 'korean pop'], bandcampTag: 'k-pop' },
+  { name: 'Lo-Fi',       keywords: ['lo-fi', 'lofi', 'chillhop', 'chill beats', 'beats'], bandcampTag: 'lofi' },
+  { name: 'Ambient',     keywords: ['ambient', 'drone', 'soundscape'], bandcampTag: 'ambient' },
+  { name: 'Drill',       keywords: ['drill', 'uk drill'],          bandcampTag: 'drill' },
+  { name: 'Funk',        keywords: ['funk', 'disco'],              bandcampTag: 'funk' },
+  { name: 'Gospel',      keywords: ['gospel', 'worship', 'christian'], bandcampTag: 'gospel' },
+  { name: 'Bossa Nova',  keywords: ['bossa nova', 'bossa', 'samba'], bandcampTag: 'bossa-nova' },
+  { name: 'Psychedelic', keywords: ['psychedelic', 'psych rock'],  bandcampTag: 'psychedelic' },
+  { name: 'Emo',         keywords: ['emo', 'post-hardcore'],       bandcampTag: 'emo' },
 ];
+
+const HOME_BANDCAMP_FALLBACK_NAMES = new Set([
+  'Jazz',
+  'Hip-Hop',
+  'Lo-Fi',
+  'Electronic',
+  'R&B',
+  'Funk',
+  'Ambient',
+]);
+const HOME_BANDCAMP_FALLBACK_GENRES = GENRE_CATALOG.filter((g) =>
+  HOME_BANDCAMP_FALLBACK_NAMES.has(g.name),
+);
+
+type HomeDiscoverBandcampRow = BandcampTagAlbum & { genre: string };
 
 // MMKV last-known-good cache for the home screen. Additive tier on top of the
 // in-memory React state — lets the UI paint instantly on app open while a
@@ -740,15 +754,14 @@ const HOME_KEYS = {
   spotifyPlaylists: 'spotifyPlaylists',
   ytmTracks: 'ytmTracks',
   ytmQueryLabel: 'ytmQueryLabel',
-  discoverGenreTracks: 'discoverGenreTracks',
+  discoverBandcampGenreV1: 'discoverBandcampGenreV1',
   discoverGenreLabel: 'discoverGenreLabel',
-  // Backend-sourced track feeds for From YouTube / From SoundCloud sections
-  ytTrendingTracks: 'ytTrendingTracks',
+  bandcampHomeTrendingV1: 'bandcampHomeTrendingV1',
+  bandcampSpotlightV1: 'bandcampSpotlightV1',
   scTrendingTracks: 'scTrendingTracks',
   // playlistId → first-track thumbnail for Era Hits cards
   eraArtwork: 'eraArtwork',
   ytmNewReleases: 'ytmNewReleases',
-  ytmTopVideos: 'ytmTopVideos',
   ytmMoodFocus: 'ytmMoodFocus',
   ytmMoodEnergy: 'ytmMoodEnergy',
   ytmMoodSleep: 'ytmMoodSleep',
@@ -998,99 +1011,88 @@ function HomeDownloadSleekRail({
   );
 }
 
-/** Top music videos — 16:9 Vybe Video rail (YouTube playback). */
-function HomeVybeVideoRail({
-  tracks,
+/** Bandcamp spotlight — square album art + preview playback. */
+function HomeBandcampSpotlightRail({
+  albums,
   playTrack,
 }: {
-  tracks: PlaylistTrack[];
+  albums: BandcampTagAlbum[];
   playTrack: (t: Track, q: Track[]) => void;
 }) {
-  const visibleTracks = tracks.filter((t) => !isDeadYoutubeQueueTitle(t.title));
-  if (visibleTracks.length === 0) return null;
-  const W = 168;
-  const H = Math.round((W * 9) / 16);
-  const queue: Track[] = visibleTracks.map((t) => ({
-    id: `yt-${t.videoId}`,
-    title: t.title,
-    artist: t.channelName,
-    artistId: '',
-    album: '',
-    albumId: '',
-    artwork: t.thumbnailUrl,
-    duration: 0,
-    isLiked: false,
-    source: 'youtube',
-    youtubeId: t.videoId,
-    audioUrl: '',
-  }));
+  if (albums.length === 0) return null;
+  const W = 152;
+  const queue = albums.map((a) => bandcampTagAlbumToTrack(a));
   return (
     <View style={{ marginTop: SECTION_GAP }}>
-      <SectionHeader title="Vybe Video" />
-      <Text className="text-white/50 text-sm px-5 mb-4">Top music videos</Text>
-      <DiscoveryRailSection sectionTitle="Vybe Video" actionType="horizontal_rail">
-      <ScrollView
-        horizontal
-        nestedScrollEnabled
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 20 }}
-        style={{ flexGrow: 0 }}
-      >
-        {visibleTracks.map((t) => {
-          const track = queue.find((q) => q.id === `yt-${t.videoId}`)!;
-          return (
-            <Pressable
-              key={t.videoId}
-              onPress={() => {
-                logUiTap('Vybe Video', 'playTrack');
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                playTrack(track, queue);
-              }}
-              className="mr-4"
-            >
-              <View
-                style={{
-                  width: W,
-                  height: H,
-                  borderRadius: 16,
-                  overflow: 'hidden',
-                  backgroundColor: '#0A0A0A',
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.12)',
+      <SectionHeader title="Bandcamp spotlight" />
+      <Text className="text-white/50 text-sm px-5 mb-4">Jazz, lo-fi, beats and more — full artwork</Text>
+      <DiscoveryRailSection sectionTitle="Bandcamp spotlight" actionType="horizontal_rail">
+        <ScrollView
+          horizontal
+          nestedScrollEnabled
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 20 }}
+          style={{ flexGrow: 0 }}
+        >
+          {albums.map((row) => {
+            const track = bandcampTagAlbumToTrack(row);
+            return (
+              <Pressable
+                key={row.id}
+                onPress={() => {
+                  logUiTap('Bandcamp spotlight', 'playTrack');
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  playTrack(track, queue);
                 }}
+                className="mr-4"
               >
-                <ShadowArtworkImage source={{ uri: t.thumbnailUrl }} style={{ width: W, height: H }} contentFit="cover" />
                 <View
-                  pointerEvents="none"
-                  style={[StyleSheet.absoluteFillObject, { alignItems: 'center', justifyContent: 'center' }]}
+                  style={{
+                    width: W,
+                    height: W,
+                    borderRadius: 16,
+                    overflow: 'hidden',
+                    backgroundColor: '#0A0A0A',
+                    borderWidth: 1,
+                    borderColor: 'rgba(255,255,255,0.12)',
+                  }}
                 >
+                  <ShadowArtworkImage
+                    source={{ uri: row.artUrl }}
+                    style={{ width: W, height: W }}
+                    contentFit="cover"
+                  />
                   <View
-                    style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: 22,
-                      backgroundColor: 'rgba(255,255,255,0.36)',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
+                    pointerEvents="none"
+                    style={[StyleSheet.absoluteFillObject, { alignItems: 'center', justifyContent: 'center' }]}
                   >
-                    <Play size={22} color="#fff" fill="#fff" style={{ marginLeft: 2 }} />
+                    <View
+                      style={{
+                        width: 44,
+                        height: 44,
+                        borderRadius: 22,
+                        backgroundColor: 'rgba(255,255,255,0.36)',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Play size={22} color="#fff" fill="#fff" style={{ marginLeft: 2 }} />
+                    </View>
+                  </View>
+                  <View style={{ position: 'absolute', top: 8, right: 8 }} pointerEvents="none">
+                    <SourceCornerBadge source="bandcamp" compact />
                   </View>
                 </View>
-                <View style={{ position: 'absolute', top: 8, right: 8 }} pointerEvents="none">
-                  <SourceCornerBadge source="youtube" compact />
-                </View>
-              </View>
-              <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: W }}>
-                {t.title}
-              </Text>
-              <Text style={{ width: W, color: '#888888', fontSize: 12 }} numberOfLines={1}>
-                {t.channelName}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+                <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: W }}>
+                  {row.albumTitle}
+                </Text>
+                <Text style={{ width: W, color: '#888888', fontSize: 12 }} numberOfLines={1}>
+                  {row.artistName}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
       </DiscoveryRailSection>
     </View>
   );
@@ -1139,17 +1141,16 @@ export default function HomeScreen() {
     const hit = homeMMKV.get<SpotifyPlaylist[]>(HOME_KEYS.spotifyPlaylists, TTL.CURATED);
     return hit?.value ?? [];
   });
-  const [discoverGenreTracks, setDiscoverGenreTracks] = useState<(PlaylistTrack & { genre: string })[]>(() => {
-    const hit = homeMMKV.get<(PlaylistTrack & { genre: string })[]>(HOME_KEYS.discoverGenreTracks, TTL.GENRE);
+  const [discoverGenreTracks, setDiscoverGenreTracks] = useState<HomeDiscoverBandcampRow[]>(() => {
+    const hit = homeMMKV.get<HomeDiscoverBandcampRow[]>(HOME_KEYS.discoverBandcampGenreV1, TTL.GENRE);
     return hit?.value ?? [];
   });
   const [discoverGenreLabel, setDiscoverGenreLabel] = useState(() => {
     const hit = homeMMKV.get<string>(HOME_KEYS.discoverGenreLabel, TTL.GENRE);
     return hit?.value ?? '';
   });
-  // Backend-sourced tracks for From YouTube / From SoundCloud sections
-  const [ytTrendingTracks, setYtTrendingTracks] = useState<PlaylistTrack[]>(() => {
-    const hit = homeMMKV.get<PlaylistTrack[]>(HOME_KEYS.ytTrendingTracks, TTL.GENRE);
+  const [bandcampHomeTrending, setBandcampHomeTrending] = useState<BandcampTagAlbum[]>(() => {
+    const hit = homeMMKV.get<BandcampTagAlbum[]>(HOME_KEYS.bandcampHomeTrendingV1, TTL.GENRE);
     return hit?.value ?? [];
   });
   const [scTrendingTracks, setScTrendingTracks] = useState<SCApiTrack[]>(() => {
@@ -1161,8 +1162,8 @@ export default function HomeScreen() {
     const hit = homeMMKV.get<SoundcloudCuratedPlaylist[]>(HOME_KEYS.scCuratedPlaylists, TTL.CURATED);
     return hit?.value ?? [];
   });
-  const [ytmTopVideos, setYtmTopVideos] = useState<PlaylistTrack[]>(() => {
-    const hit = homeMMKV.get<PlaylistTrack[]>(HOME_KEYS.ytmTopVideos, TTL.GENRE);
+  const [bandcampSpotlightAlbums, setBandcampSpotlightAlbums] = useState<BandcampTagAlbum[]>(() => {
+    const hit = homeMMKV.get<BandcampTagAlbum[]>(HOME_KEYS.bandcampSpotlightV1, TTL.GENRE);
     return hit?.value ?? [];
   });
   // playlistId → first-track artwork map for Era Hits (cached so the cards
@@ -1183,18 +1184,18 @@ export default function HomeScreen() {
       if (plHit?.value?.length) setCuratedPlaylists(plHit.value);
       const spHit = homeMMKV.get<SpotifyPlaylist[]>(HOME_KEYS.spotifyPlaylists, TTL.CURATED);
       if (spHit?.value?.length) setSpotifyPlaylists(spHit.value);
-      const dgHit = homeMMKV.get<(PlaylistTrack & { genre: string })[]>(HOME_KEYS.discoverGenreTracks, TTL.GENRE);
+      const dgHit = homeMMKV.get<HomeDiscoverBandcampRow[]>(HOME_KEYS.discoverBandcampGenreV1, TTL.GENRE);
       if (dgHit?.value?.length) setDiscoverGenreTracks(dgHit.value);
       const dglHit = homeMMKV.get<string>(HOME_KEYS.discoverGenreLabel, TTL.GENRE);
       if (dglHit?.value) setDiscoverGenreLabel(dglHit.value);
-      const ytHit = homeMMKV.get<PlaylistTrack[]>(HOME_KEYS.ytTrendingTracks, TTL.GENRE);
-      if (ytHit?.value?.length) setYtTrendingTracks(ytHit.value);
+      const bcTrendHit = homeMMKV.get<BandcampTagAlbum[]>(HOME_KEYS.bandcampHomeTrendingV1, TTL.GENRE);
+      if (bcTrendHit?.value?.length) setBandcampHomeTrending(bcTrendHit.value);
       const scHit = homeMMKV.get<SCApiTrack[]>(HOME_KEYS.scTrendingTracks, TTL.GENRE);
       if (scHit?.value?.length) setScTrendingTracks(scHit.value);
       const scpHit = homeMMKV.get<SoundcloudCuratedPlaylist[]>(HOME_KEYS.scCuratedPlaylists, TTL.CURATED);
       if (scpHit?.value?.length) setScCuratedPlaylists(scpHit.value);
-      const ytmHit = homeMMKV.get<PlaylistTrack[]>(HOME_KEYS.ytmTopVideos, TTL.GENRE);
-      if (ytmHit?.value?.length) setYtmTopVideos(ytmHit.value);
+      const bcSpotHit = homeMMKV.get<BandcampTagAlbum[]>(HOME_KEYS.bandcampSpotlightV1, TTL.GENRE);
+      if (bcSpotHit?.value?.length) setBandcampSpotlightAlbums(bcSpotHit.value);
       const eraHit = homeMMKV.get<Record<string, string>>(HOME_KEYS.eraArtwork, TTL.CURATED);
       if (eraHit?.value && Object.keys(eraHit.value).length > 0) setPlaylistThumbOverrides(eraHit.value);
     } catch {
@@ -1285,22 +1286,23 @@ export default function HomeScreen() {
     [discoveredTracks]
   );
 
-  // Return 2–3 genres the user hasn't explored based on their library
-  const getAbsentGenres = () => {
+  /** Up to 3 genre shelves — Bandcamp tag hubs (jazz / hip-hop / lofi & related). */
+  const getAbsentGenres = (): GenreCatalogEntry[] => {
     const userTags = new Set<string>();
-    [...allDownloads, ...recentTracks, ...discoveredTracks].forEach(t => {
-      [...(t.genreTags ?? []), ...(t.tags ?? [])].forEach(tag =>
-        userTags.add(tag.toLowerCase())
-      );
-      // Source-based heuristics
+    [...allDownloads, ...recentTracks, ...discoveredTracks].forEach((t) => {
+      [...(t.genreTags ?? []), ...(t.tags ?? [])].forEach((tag) => userTags.add(tag.toLowerCase()));
       if (t.source === 'soundcloud') userTags.add('electronic');
       if (t.source === 'youtube_music' || t.source === 'youtube') userTags.add('pop');
+      if (t.source === 'bandcamp') {
+        userTags.add('jazz');
+        userTags.add('hip-hop');
+        userTags.add('lofi');
+      }
     });
-    const absent = GENRE_CATALOG.filter(g =>
-      !g.keywords.some(kw => userTags.has(kw))
-    );
-    // Shuffle and pick 2
-    return absent.sort(() => Math.random() - 0.5);
+    const absent = GENRE_CATALOG.filter((g) => !g.keywords.some((kw) => userTags.has(kw)));
+    const shuffled = [...absent].sort(() => Math.random() - 0.5);
+    if (shuffled.length > 0) return shuffled.slice(0, 3);
+    return [...HOME_BANDCAMP_FALLBACK_GENRES].sort(() => Math.random() - 0.5).slice(0, 3);
   };
 
   // Era Hits artwork — independent effect so blank cards don't wait on the
@@ -1442,10 +1444,9 @@ export default function HomeScreen() {
         homeMMKV.set(HOME_KEYS.spotifyPlaylists, validSpotify);
       }
 
-      const taste = getTasteSeedTracks();
       const absentGenres = getAbsentGenres();
       const genreLabel =
-        absentGenres.length > 0 ? absentGenres.map(g => g.name).join(' & ') : '';
+        absentGenres.length > 0 ? absentGenres.map((g) => g.name).join(' & ') : '';
       if (genreLabel) {
         setDiscoverGenreLabel(genreLabel);
         homeMMKV.set(HOME_KEYS.discoverGenreLabel, genreLabel);
@@ -1454,85 +1455,61 @@ export default function HomeScreen() {
       const genreAll =
         absentGenres.length > 0
           ? Promise.all(
-              absentGenres.map(g =>
-                api
-                  .get<PlaylistTrack[]>(
-                    `/api/youtube/search?q=${encodeURIComponent(g.query)}&maxResults=20`,
-                  )
-                  .then(res => (res ?? []).map(t => ({ ...t, genre: g.name })))
-                  .catch(() => [] as (PlaylistTrack & { genre: string })[]),
+              absentGenres.map((g) =>
+                fetchTrendingByTag(g.bandcampTag, { maxAlbumUrls: 14 })
+                  .then((rows) => rows.map((row) => ({ ...row, genre: g.name })))
+                  .catch(() => [] as HomeDiscoverBandcampRow[]),
               ),
             )
-          : Promise.resolve([] as (PlaylistTrack & { genre: string })[][]);
-
-      const normPl = (rows: PlaylistTrack[]) =>
-        rows.map(r => normalizeYtmThumb(r as YtmPlaylistTrack));
-
-      const tastePersonalizedFallback = (() => {
-        const ytmArtist = recentTracks.find((t) => t.source === 'youtube_music')?.artist?.trim();
-        if (ytmArtist) return `${ytmArtist} new music`;
-        const anyArtist = recentTracks.map((t) => t.artist).find(Boolean);
-        if (anyArtist) return `${anyArtist} music`;
-        const discArtist = discoveredTracks.map((t) => t.artist).find(Boolean);
-        if (discArtist) return `${discArtist} music`;
-        return 'trending music 2024';
-      })();
+          : Promise.resolve([] as HomeDiscoverBandcampRow[][]);
 
       const settledMain = await Promise.allSettled([
-        fetchYtmHomeBundle(taste, tastePersonalizedFallback),
-        api
-          .get<PlaylistTrack[]>(
-            `/api/youtube/search?q=${encodeURIComponent('trending music videos')}&maxResults=15`,
-          )
-          .catch(() => null),
+        fetchTrendingByTag('lofi', { mergeTag: 'jazz', maxAlbumUrls: 16 }).catch(() => []),
+        fetchTrendingByTag('hip-hop', { mergeTag: 'electronic', maxAlbumUrls: 20 }).catch(() => []),
         api
           .get<SCApiTrack[]>(
             `/api/soundcloud/search?q=${encodeURIComponent('trending')}&maxResults=15`,
           )
           .catch(() => null),
-        Promise.resolve([] as PlaylistTrack[]),
         genreAll,
-        // SC-Ignition: curated SoundCloud playlists power the home tab's
-        // "New & Hot" + "Trending" rails. Backend resolves these from
-        // catalog/soundcloud-curated-playlists.json and returns playable rows.
         api
           .get<SoundcloudCuratedPlaylist[]>(`/api/soundcloud/playlists`)
           .catch(() => null),
       ]);
 
-      const ytmBundle = safeYtmBundle(
-        settledMain[0] as PromiseSettledResult<Awaited<ReturnType<typeof fetchYtmHomeBundle>>>,
-      );
-      const ytTrending =
-        settledMain[1].status === 'fulfilled' ? settledMain[1].value : null;
+      const bandcampSpotlight =
+        settledMain[0].status === 'fulfilled' ? settledMain[0].value : [];
+      const bandcampTrending =
+        settledMain[1].status === 'fulfilled' ? settledMain[1].value : [];
       const scTrending =
         settledMain[2].status === 'fulfilled' ? settledMain[2].value : null;
       const genreResults =
-        settledMain[4].status === 'fulfilled'
-          ? settledMain[4].value
-          : ([] as (PlaylistTrack & { genre: string })[][]);
+        settledMain[3].status === 'fulfilled'
+          ? settledMain[3].value
+          : ([] as HomeDiscoverBandcampRow[][]);
 
-      const tv = normPl(ytmBundle.topMusicVideos);
-      if (tv.length > 0) {
-        setYtmTopVideos(tv);
-        homeMMKV.set(HOME_KEYS.ytmTopVideos, tv);
+      if (Array.isArray(bandcampSpotlight) && bandcampSpotlight.length > 0) {
+        setBandcampSpotlightAlbums(bandcampSpotlight);
+        homeMMKV.set(HOME_KEYS.bandcampSpotlightV1, bandcampSpotlight);
       }
 
       if (absentGenres.length > 0 && genreResults.length > 0) {
-        const interleaved: (PlaylistTrack & { genre: string })[] = [];
-        const maxLen = Math.max(...genreResults.map(r => r.length));
+        const interleaved: HomeDiscoverBandcampRow[] = [];
+        const maxLen = Math.max(...genreResults.map((r) => r.length), 0);
         for (let i = 0; i < maxLen; i++) {
-          genreResults.forEach(r => {
+          genreResults.forEach((r) => {
             if (r[i]) interleaved.push(r[i]);
           });
         }
-        setDiscoverGenreTracks(interleaved);
-        homeMMKV.set(HOME_KEYS.discoverGenreTracks, interleaved);
+        if (interleaved.length > 0) {
+          setDiscoverGenreTracks(interleaved);
+          homeMMKV.set(HOME_KEYS.discoverBandcampGenreV1, interleaved);
+        }
       }
 
-      if (ytTrending && ytTrending.length > 0) {
-        setYtTrendingTracks(ytTrending);
-        homeMMKV.set(HOME_KEYS.ytTrendingTracks, ytTrending);
+      if (Array.isArray(bandcampTrending) && bandcampTrending.length > 0) {
+        setBandcampHomeTrending(bandcampTrending);
+        homeMMKV.set(HOME_KEYS.bandcampHomeTrendingV1, bandcampTrending);
       }
 
       // Era Hits — prefetch the full track list for each decade playlist and
@@ -1604,7 +1581,7 @@ export default function HomeScreen() {
       }
 
       const scPlaylistsResult =
-        settledMain[5]?.status === 'fulfilled' ? settledMain[5].value : null;
+        settledMain[4]?.status === 'fulfilled' ? settledMain[4].value : null;
       if (Array.isArray(scPlaylistsResult) && scPlaylistsResult.length > 0) {
         setScCuratedPlaylists(scPlaylistsResult);
         homeMMKV.set(HOME_KEYS.scCuratedPlaylists, scPlaylistsResult);
@@ -1686,34 +1663,20 @@ export default function HomeScreen() {
   );
 
   const discoverGenreQueue = useMemo(
-    () =>
-      discoverGenreTracks
-        .filter((x) => !isDeadYoutubeQueueTitle(x.title))
-        .map((x) => ({
-          id: `ytm-${x.videoId}`,
-          title: x.title,
-          artist: x.channelName,
-          artistId: '',
-          album: '',
-          albumId: '',
-          artwork: x.thumbnailUrl,
-          duration: 0,
-          isLiked: false,
-          source: 'youtube_music' as const,
-          audioUrl: '',
-          youtubeMusicId: x.videoId,
-        })),
+    () => discoverGenreTracks.map((row) => bandcampTagAlbumToTrack(row)),
     [discoverGenreTracks],
   );
 
-  const ytmFeedWarmSig = useMemo(
-    () => ytmTopVideos.map((t) => t.videoId).join(','),
-    [ytmTopVideos],
+  const bandcampSpotlightWarmSig = useMemo(
+    () => bandcampSpotlightAlbums.map((a) => a.id).join(','),
+    [bandcampSpotlightAlbums],
   );
 
   useEffect(() => {
-    void Promise.allSettled([prewarmYtmFeed(ytmTopVideos as YtmPlaylistTrack[])]);
-  }, [ytmFeedWarmSig]);
+    bandcampSpotlightAlbums.slice(0, 8).forEach((a) => {
+      if (a.artUrl) void Image.prefetch(a.artUrl);
+    });
+  }, [bandcampSpotlightWarmSig]);
 
   const heroArtists = useMemo(() =>
     [...new Set(quickPicks.slice(0, 3).map(t => t.artist))].join(', '),
@@ -2383,31 +2346,20 @@ export default function HomeScreen() {
           <View className="mt-8">
             <SectionHeader title="Discover Something Different" />
             <Text className="text-white/50 text-sm px-5 mb-4">
-              {discoverGenreLabel ? `Exploring ${discoverGenreLabel} — genres outside your library` : 'Genres outside your library'}
+              {discoverGenreLabel
+                ? `Bandcamp albums for ${discoverGenreLabel} — jazz, hip-hop, lo-fi & related`
+                : 'Bandcamp — jazz, hip-hop, lo-fi and more'}
             </Text>
             <DiscoveryRailSection sectionTitle="Discover Something Different" actionType="horizontal_rail">
             <FlashList
               data={discoverGenreTracks}
               horizontal
-              keyExtractor={(t) => `${t.videoId}-${t.genre}`}
+              keyExtractor={(t) => `${t.id}-${t.genre}`}
               estimatedItemSize={156}
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={{ paddingHorizontal: 20 }}
               renderItem={({ item: t }) => {
-                const track = {
-                  id: `ytm-${t.videoId}`,
-                  title: t.title,
-                  artist: t.channelName,
-                  artistId: '',
-                  album: '',
-                  albumId: '',
-                  artwork: t.thumbnailUrl,
-                  duration: 0,
-                  isLiked: false,
-                  source: 'youtube_music' as const,
-                  audioUrl: '',
-                  youtubeMusicId: t.videoId,
-                };
+                const track = bandcampTagAlbumToTrack(t);
                 return (
                   <Pressable
                     onPress={() => {
@@ -2419,7 +2371,7 @@ export default function HomeScreen() {
                   >
                     <View className="relative">
                       <ShadowArtworkImage
-                        source={{ uri: t.thumbnailUrl }}
+                        source={{ uri: t.artUrl }}
                         style={{ width: 140, height: 140, borderRadius: 8 }}
                         contentFit="cover"
                       />
@@ -2427,11 +2379,14 @@ export default function HomeScreen() {
                         colors={['transparent', 'rgba(0,0,0,0.85)']}
                         style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 70, borderBottomLeftRadius: 8, borderBottomRightRadius: 8, justifyContent: 'flex-end', padding: 8 }}
                       >
-                        <Text className="text-white font-semibold text-sm" numberOfLines={1}>{t.title}</Text>
-                        <Text className="text-white/60 text-xs" numberOfLines={1}>{t.channelName}</Text>
+                        <Text className="text-white font-semibold text-sm" numberOfLines={1}>{t.albumTitle}</Text>
+                        <Text className="text-white/60 text-xs" numberOfLines={1}>{t.artistName}</Text>
                       </LinearGradient>
                       <View style={{ position: 'absolute', top: 8, left: 8, backgroundColor: 'rgba(139,92,246,0.85)', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3 }}>
                         <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>{t.genre}</Text>
+                      </View>
+                      <View style={{ position: 'absolute', top: 8, right: 8 }}>
+                        <SourceCornerBadge source="bandcamp" compact />
                       </View>
                     </View>
                   </Pressable>
@@ -2646,14 +2601,14 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* From YouTube — trending music videos from backend */}
-        {ytTrendingTracks.length > 0 ? (
+        {/* From Bandcamp — tag hub albums (hip-hop / electronic blend) */}
+        {bandcampHomeTrending.length > 0 ? (
           <View style={{ marginTop: SECTION_GAP }}>
-            <SectionHeader title="From YouTube" />
+            <SectionHeader title="From Bandcamp" />
             <Text className="text-white/50 text-sm px-5 mb-4">
-              Music videos and more
+              Album art and preview streams — hip-hop, electronic, soul
             </Text>
-            <DiscoveryRailSection sectionTitle="From YouTube" actionType="horizontal_rail">
+            <DiscoveryRailSection sectionTitle="From Bandcamp" actionType="horizontal_rail">
             <ScrollView
               horizontal
               nestedScrollEnabled
@@ -2661,42 +2616,15 @@ export default function HomeScreen() {
               contentContainerStyle={{ paddingHorizontal: 20 }}
               style={{ flexGrow: 0 }}
             >
-              {ytTrendingTracks.map(t => {
-                const track = {
-                  id: `yt-${t.videoId}`,
-                  title: t.title,
-                  artist: t.channelName,
-                  artistId: '',
-                  album: '',
-                  albumId: '',
-                  artwork: t.thumbnailUrl,
-                  duration: 0,
-                  isLiked: false,
-                  source: 'youtube' as const,
-                  youtubeId: t.videoId,
-                  audioUrl: '',
-                };
-                const queueTracks = ytTrendingTracks.map(x => ({
-                  id: `yt-${x.videoId}`,
-                  title: x.title,
-                  artist: x.channelName,
-                  artistId: '',
-                  album: '',
-                  albumId: '',
-                  artwork: x.thumbnailUrl,
-                  duration: 0,
-                  isLiked: false,
-                  source: 'youtube' as const,
-                  youtubeId: x.videoId,
-                  audioUrl: '',
-                }));
-                const W = 168;
-                const H = Math.round((W * 9) / 16);
+              {bandcampHomeTrending.map((row) => {
+                const track = bandcampTagAlbumToTrack(row);
+                const queueTracks = bandcampHomeTrending.map((x) => bandcampTagAlbumToTrack(x));
+                const W = 152;
                 return (
                   <Pressable
-                    key={track.id}
+                    key={row.id}
                     onPress={() => {
-                      logUiTap('From YouTube', 'playTrack');
+                      logUiTap('From Bandcamp', 'playTrack');
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                       void playTrack(track, queueTracks);
                     }}
@@ -2705,7 +2633,7 @@ export default function HomeScreen() {
                     <View
                       style={{
                         width: W,
-                        height: H,
+                        height: W,
                         borderRadius: 16,
                         overflow: 'hidden',
                         backgroundColor: '#0A0A0A',
@@ -2714,8 +2642,8 @@ export default function HomeScreen() {
                       }}
                     >
                       <ShadowArtworkImage
-                        source={{ uri: track.artwork }}
-                        style={{ width: W, height: H }}
+                        source={{ uri: row.artUrl }}
+                        style={{ width: W, height: W }}
                         contentFit="cover"
                       />
                       <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { alignItems: 'center', justifyContent: 'center' }]}>
@@ -2733,14 +2661,14 @@ export default function HomeScreen() {
                         </View>
                       </View>
                       <View style={{ position: 'absolute', top: 8, right: 8 }} pointerEvents="none">
-                        <SourceCornerBadge source="youtube" compact />
+                        <SourceCornerBadge source="bandcamp" compact />
                       </View>
                     </View>
                     <Text className="text-white font-semibold text-sm mt-2" numberOfLines={1} style={{ width: W }}>
-                      {track.title}
+                      {row.albumTitle}
                     </Text>
                     <Text style={{ width: W, color: '#888888', fontSize: 12 }} numberOfLines={1}>
-                      {track.artist}
+                      {row.artistName}
                     </Text>
                   </Pressable>
                 );
@@ -2752,7 +2680,7 @@ export default function HomeScreen() {
 
         <HomePulseFeedBlock posts={pulseFeedPosts} playTrack={playTrack} />
 
-        <HomeVybeVideoRail tracks={ytmTopVideos} playTrack={playTrack} />
+        <HomeBandcampSpotlightRail albums={bandcampSpotlightAlbums} playTrack={playTrack} />
 
         {/* From SoundCloud — trending from backend */}
         {scTrendingTracks.length > 0 ? (

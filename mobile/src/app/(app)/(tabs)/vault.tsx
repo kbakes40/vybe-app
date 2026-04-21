@@ -61,6 +61,7 @@ import { useSubsonicStore } from '@/stores/subsonicStore';
 import { LibraryRadioSection } from '@/components/library/LibraryRadioSection';
 import { LibraryNavidromeSection } from '@/components/library/LibraryNavidromeSection';
 import { LibraryBandcampSection } from '@/components/library/LibraryBandcampSection';
+import { LibraryVinylSection } from '@/components/library/LibraryVinylSection';
 import { GenreBroadcastTowerIcon } from '@/components/genre/GenreBroadcastTowerIcon';
 
 const TRACK_TITLE_MACHINED: TextStyle = {
@@ -973,6 +974,7 @@ export default function LibraryScreen() {
           category beneath the Global Radio hero so the user can tap into a
           specific station without going through the /radio screen. */}
       <LibraryRadioSection />
+      <LibraryVinylSection />
       <LibraryNavidromeSection />
       <LibraryBandcampSection />
 
