@@ -7,7 +7,7 @@ import { DOCK_CYAN, OLED_BLACK } from '@/constants/machinedTheme';
 
 /** Five-tab doc — indicator tracks active slot. */
 const INDICATOR_W = 16;
-const INDICATOR_H = 2;
+const INDICATOR_H = 3;
 
 const SPRING = { damping: 22, stiffness: 300, mass: 0.55 };
 

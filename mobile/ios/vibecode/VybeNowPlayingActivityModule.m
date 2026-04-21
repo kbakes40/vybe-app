@@ -7,16 +7,14 @@
 RCT_EXTERN_METHOD(startNowPlaying:(NSString *)trackName
                   artistName:(NSString *)artistName
                   artworkUrl:(NSString *)artworkUrl
-                  duration:(double)duration
-                  albumTitle:(NSString *)albumTitle)
+                  duration:(double)duration)
 
 RCT_EXTERN_METHOD(updateNowPlaying:(BOOL)isPlaying
                   progress:(double)progress
                   elapsed:(double)elapsed
                   total:(double)total
                   trackName:(NSString *)trackName
-                  artistName:(NSString *)artistName
-                  albumTitle:(NSString *)albumTitle)
+                  artistName:(NSString *)artistName)
 
 RCT_EXTERN_METHOD(endNowPlaying)
 

@@ -1,5 +1,10 @@
 import type { Track } from '@/types/music';
-import { RADIO_PARADISE_BRAND_LOGO_URL, RADIO_PARADISE_NOW_PLAYING_URL, RADIO_PARADISE_STREAM_URL } from '@/constants/radioParadise';
+import {
+  RADIO_PARADISE_BRAND_LOGO_URL,
+  RADIO_PARADISE_LOSSLESS_STREAM_URL,
+  RADIO_PARADISE_NOW_PLAYING_URL,
+  RADIO_PARADISE_STREAM_URL,
+} from '@/constants/radioParadise';
 
 /**
  * Curated hi-fi / lossless-style relays for the Radio tab.
@@ -98,7 +103,7 @@ export const GLOBAL_RADIO_STATIONS: Record<GlobalRadioStationId, GlobalRadioStat
     id: 'paradise',
     pillLabel: 'PARADISE',
     streamUrl: RADIO_PARADISE_STREAM_URL,
-    requestedStreamUrl: RADIO_PARADISE_STREAM_URL,
+    requestedStreamUrl: RADIO_PARADISE_LOSSLESS_STREAM_URL,
     metadataSource: 'radioparadise_api',
     diChannelTag: 'RP PARADISE',
     brandArtworkUrl: RADIO_PARADISE_BRAND_LOGO_URL,
@@ -347,14 +352,14 @@ export const GLOBAL_RADIO_STATIONS: Record<GlobalRadioStationId, GlobalRadioStat
     id: 'vault_modern',
     pillLabel: 'MODERN',
     streamUrl: RADIO_PARADISE_STREAM_URL,
-    requestedStreamUrl: RADIO_PARADISE_STREAM_URL,
+    requestedStreamUrl: RADIO_PARADISE_LOSSLESS_STREAM_URL,
     metadataSource: 'radioparadise_api',
     diChannelTag: 'RP MAIN',
     brandArtworkUrl: RADIO_PARADISE_BRAND_LOGO_URL,
     islandAlbum: 'VAULT: MODERN',
     staticNowPlaying: {
       title: 'Radio Paradise',
-      artist: 'RP Main Mix · FLAC',
+      artist: 'RP Main Mix · AAC',
       artwork: RADIO_PARADISE_BRAND_LOGO_URL,
     },
     diLeading: 'default',

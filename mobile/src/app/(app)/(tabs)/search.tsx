@@ -581,7 +581,13 @@ export default function SearchScreen() {
                     >
                       <CategoryCard
                         category={item}
-                        onPress={() => handleGenrePress(item.name)}
+                        onPress={() => {
+                          if (item.id === 'c11') {
+                            router.push('/(app)/radio' as never);
+                            return;
+                          }
+                          handleGenrePress(item.name);
+                        }}
                         lockedTileHeight={tileH}
                       />
                     </View>

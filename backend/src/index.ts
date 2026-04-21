@@ -18,6 +18,7 @@ addExcludedDomains([
   "ggpht.com",
   "github.com",
   "githubusercontent.com",
+  "bcbits.com",
 ]);
 
 import { Hono } from "hono";
@@ -51,6 +52,7 @@ import { libraryRouter } from "./routes/library";
 import { socialRouter } from "./routes/social";
 import { searchRouter } from "./routes/search";
 import { vaultRouter } from "./routes/vault";
+import { bandcampRouter } from "./routes/bandcamp";
 import { logger } from "hono/logger";
 import { routeShield } from "./lib/route-shield";
 
@@ -248,11 +250,12 @@ app.route("/api/library", libraryRouter);
 app.route("/api/social", socialRouter);
 app.route("/api/search", searchRouter);
 app.route("/api/vault", vaultRouter);
+app.route("/api/bandcamp", bandcampRouter);
 
 // Build marker — bumped to force Railway to pick up new commits.
 // If you see this in Railway logs, the new code IS deployed.
 const BUILD_MARKER =
-  "vybe-backend@2026-04-20T02 [SC/discovery onError + 200 empty JSON; startup DB ping; YT key quarantine now also covers 403 quotaExceeded across all 4 hardened call sites]";
+  "vybe-backend@2026-04-20T04 [Bandcamp audio proxy + POST /session + GET /stream/:token]";
 console.log("[boot]", BUILD_MARKER);
 app.get("/api/_build", (c) => c.json({ marker: BUILD_MARKER }));
 

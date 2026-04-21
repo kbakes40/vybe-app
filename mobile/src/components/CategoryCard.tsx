@@ -17,6 +17,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { Category } from '@/types/music';
 import { GenreSaxophoneIcon } from '@/components/genre/GenreSaxophoneIcon';
+import { GenreBroadcastTowerIcon } from '@/components/genre/GenreBroadcastTowerIcon';
 import { CATEGORY_TILE_GRADIENT, VIBRANT_BLUE } from '@/constants/machinedTheme';
 
 type IconComp = React.ComponentType<{ size?: number; color?: string; strokeWidth?: number }>;
@@ -55,6 +56,8 @@ function getGenreVisual(category: Category): GenreVisual {
       return { Icon: Sparkles, neon };
     case 'c10':
       return { Icon: History, neon };
+    case 'c11':
+      return { Icon: GenreBroadcastTowerIcon, neon };
     default:
       return { Icon: AudioWaveform, neon };
   }

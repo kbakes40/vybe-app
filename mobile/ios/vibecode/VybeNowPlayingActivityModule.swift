@@ -39,12 +39,12 @@ class VybeNowPlayingActivityModule: RCTEventEmitter {
     return false
   }
 
+  /// Lock-screen / Island **seed** metadata (4-arg bridge for older binaries).
   @objc func startNowPlaying(
     _ trackName: String,
     artistName: String,
     artworkUrl: String,
-    duration: Double,
-    albumTitle: String
+    duration: Double
   ) {
     print("--- NATIVE ACTIVITY REQUESTED ---")
     isActive = true
@@ -56,12 +56,7 @@ class VybeNowPlayingActivityModule: RCTEventEmitter {
     var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
     info[MPMediaItemPropertyTitle] = trackName
     info[MPMediaItemPropertyArtist] = artistName
-    let album = albumTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !album.isEmpty {
-      info[MPMediaItemPropertyAlbumTitle] = album
-    } else {
-      info.removeValue(forKey: MPMediaItemPropertyAlbumTitle)
-    }
+    info.removeValue(forKey: MPMediaItemPropertyAlbumTitle)
     info[MPMediaItemPropertyPlaybackDuration] = duration
     info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
     info[MPNowPlayingInfoPropertyMediaType] = NSNumber(value: MPMediaType.music.rawValue)
@@ -75,25 +70,21 @@ class VybeNowPlayingActivityModule: RCTEventEmitter {
     loadArtworkAsync(urlString: artworkUrl)
   }
 
+  /// Six-arg bridge — matches older Vybe binaries (no separate `albumTitle`).
+  /// JS can fold genre / vault lines into `artistName` if needed.
   @objc func updateNowPlaying(
     _ isPlaying: Bool,
     progress: Double,
     elapsed: Double,
     total: Double,
     trackName: String,
-    artistName: String,
-    albumTitle: String
+    artistName: String
   ) {
     guard isActive else { return }
     var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
     info[MPMediaItemPropertyTitle] = trackName
     info[MPMediaItemPropertyArtist] = artistName
-    let album = albumTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !album.isEmpty {
-      info[MPMediaItemPropertyAlbumTitle] = album
-    } else {
-      info.removeValue(forKey: MPMediaItemPropertyAlbumTitle)
-    }
+    info.removeValue(forKey: MPMediaItemPropertyAlbumTitle)
     info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
     info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
     if total > 0 { info[MPMediaItemPropertyPlaybackDuration] = total }

@@ -28,6 +28,8 @@ import * as Haptics from 'expo-haptics';
 import { Check, Pause, Play, SkipForward } from 'lucide-react-native';
 import { usePlaybackController } from '@/stores/playbackController';
 import { RADIO_PARADISE_BRAND_LOGO_URL } from '@/constants/radioParadise';
+import { ARCHIVE_BRAND_LOGO_URL, ARCHIVE_DI_TAG } from '@/constants/archive';
+import { BANDCAMP_BRAND_LOGO_URL } from '@/constants/bandcamp';
 import { useDynamicIslandSignal } from '@/stores/dynamicIslandStore';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import { useThemeStore } from '@/stores/themeStore';
@@ -176,26 +178,44 @@ export function DynamicIsland() {
 
   const isPlaying = playbackState === 'playing' && !!currentTrack;
   const isLiveRadio = currentSource === 'global_radio' || currentSource === 'radio_paradise';
+  const isArchiveTrack = currentSource === 'archive';
+  const isBandcampTrack = currentSource === 'bandcamp';
   const chillLead = isLiveRadio && currentTrack?.globalRadioDiLeading === 'chill';
   const diTag = currentTrack?.globalRadioDiTag;
+  const archiveDiTag = currentTrack?.archiveDiTag ?? (isArchiveTrack ? ARCHIVE_DI_TAG : null);
   /** Slim pill: RP mark / station art / chill glyph. */
   const rpIslandThumb =
     isLiveRadio &&
     (currentTrack?.globalRadioStationId === 'paradise' ||
       currentTrack?.globalRadioStationId === 'vault_modern');
+  /** Archive Live Vault: always show the IA pillars logo on the compact pill. */
+  const archiveIslandThumb = isArchiveTrack;
+  /** Bandcamp: brand mark on the slim pill (preview tier); expanded keeps cover art. */
+  const bandcampIslandThumb = isBandcampTrack;
   const metaThumbUri = chillLead
     ? null
-    : rpIslandThumb
-      ? RADIO_PARADISE_BRAND_LOGO_URL
-      : currentTrack?.artwork;
-  const expandedArtUri =
-    rpIslandThumb
-      ? currentTrack?.artwork || RADIO_PARADISE_BRAND_LOGO_URL
-      : currentTrack?.artwork;
+    : archiveIslandThumb
+      ? ARCHIVE_BRAND_LOGO_URL
+      : bandcampIslandThumb
+        ? BANDCAMP_BRAND_LOGO_URL
+        : rpIslandThumb
+          ? RADIO_PARADISE_BRAND_LOGO_URL
+          : currentTrack?.artwork;
+  // Expanded view keeps the concert's per-item art so users can still
+  // see *which* show is playing; falls back to the brand mark.
+  const expandedArtUri = archiveIslandThumb
+    ? currentTrack?.artwork || ARCHIVE_BRAND_LOGO_URL
+    : bandcampIslandThumb
+      ? currentTrack?.artwork || BANDCAMP_BRAND_LOGO_URL
+      : rpIslandThumb
+        ? currentTrack?.artwork || RADIO_PARADISE_BRAND_LOGO_URL
+        : currentTrack?.artwork;
   const metaArtistLine =
     isLiveRadio && diTag
       ? `${diTag} · ${currentTrack?.artist ?? ''}`.replace(/\s·\s$/, '')
-      : currentTrack?.artist ?? '';
+      : isArchiveTrack && archiveDiTag
+        ? `${archiveDiTag} · ${currentTrack?.artist ?? ''}`.replace(/\s·\s$/, '')
+        : currentTrack?.artist ?? '';
 
   const losslessTag = useMemo(
     () => getIslandLosslessTag(currentTrack ?? undefined, currentSource ?? undefined),
@@ -756,6 +776,11 @@ export function DynamicIsland() {
                       {losslessTag}
                     </Text>
                   ) : null}
+                  {currentTrack?.bandcampVaultReady ? (
+                    <Text style={styles.metaVaultReadyBadge} accessibilityLabel="FLAC available in your Bandcamp vault">
+                      VAULT_READY
+                    </Text>
+                  ) : null}
                 </View>
                 {healingStreamActive && isStreamResolving ? (
                   <Animated.Text
@@ -815,6 +840,11 @@ export function DynamicIsland() {
                   {losslessTag ? (
                     <Text style={styles.expandedFormatBadge} accessibilityLabel={`${losslessTag} stream`}>
                       {losslessTag}
+                    </Text>
+                  ) : null}
+                  {currentTrack?.bandcampVaultReady ? (
+                    <Text style={styles.expandedVaultReadyBadge} accessibilityLabel="FLAC available in your Bandcamp vault">
+                      VAULT_READY
                     </Text>
                   ) : null}
                 </View>
@@ -985,7 +1015,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   metaRow: {
-    paddingHorizontal: 14,
+    // MACHINED_SYMMETRY — 10pt symmetrical gutter so the artwork / heartbeat
+    // sit an equal distance from the pill's inner wall. Reads as a deliberate
+    // "engineered" inset vs the previous 14pt which made the chrome feel loose.
+    paddingHorizontal: 10,
     width: '100%',
     height: '100%',
     justifyContent: 'center',
@@ -994,7 +1027,9 @@ const styles = StyleSheet.create({
   metaThumb: {
     width: 22,
     height: 22,
-    borderRadius: 5,
+    // Nested capsule — art radius (7) < effective pill radius (22 at h=44) so
+    // the corners feel concentric rather than coincidentally rounded.
+    borderRadius: 7,
     backgroundColor: '#111',
   },
   metaThumbFallback: {
@@ -1023,7 +1058,9 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     minWidth: 0,
     maxWidth: Math.round(SCREEN_W * 0.58),
-    marginLeft: 10,
+    // +4pt from the 10pt baseline — clears the artwork's new 7pt inner radius
+    // so the Title line doesn't visually hug the corner glyph.
+    marginLeft: 14,
     marginRight: 8,
   },
   metaTitle: {
@@ -1055,6 +1092,20 @@ const styles = StyleSheet.create({
     fontSize: 8,
     fontWeight: '900',
     letterSpacing: 1.1,
+    textTransform: 'uppercase',
+  },
+  metaVaultReadyBadge: {
+    marginLeft: 5,
+    paddingHorizontal: 3,
+    paddingVertical: 1,
+    borderRadius: 3,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(0,229,255,0.45)',
+    backgroundColor: 'rgba(0,229,255,0.12)',
+    color: PILL_CYAN,
+    fontSize: 7,
+    fontWeight: '900',
+    letterSpacing: 0.55,
     textTransform: 'uppercase',
   },
   healingLine: {
@@ -1125,6 +1176,20 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '900',
     letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  expandedVaultReadyBadge: {
+    marginLeft: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(0,229,255,0.5)',
+    backgroundColor: 'rgba(0,229,255,0.14)',
+    color: PILL_CYAN,
+    fontSize: 8,
+    fontWeight: '900',
+    letterSpacing: 0.7,
     textTransform: 'uppercase',
   },
   expandedSourceBadge: {

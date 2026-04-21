@@ -23,7 +23,7 @@ type Row = { id: string; title: string; subtitle: string };
 const STATION_LIST: Record<GlobalRadioStationId, Row[]> = {
   global_hub: [],
   paradise: [
-    { id: 'rp-main', title: 'RP Main Mix', subtitle: 'Radio Paradise · FLAC' },
+    { id: 'rp-main', title: 'RP Main Mix', subtitle: 'Radio Paradise · AAC' },
   ],
   hiphop: [
     { id: 'lot', title: 'The Lot Radio', subtitle: 'NYC · thelotradio.com/stream' },

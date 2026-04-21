@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
@@ -12,8 +13,13 @@ import Animated, {
 } from 'react-native-reanimated';
 import { AudioWaveform } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import { Image } from 'expo-image';
 import { VybeWavesNeonIcon } from '@/assets/icons/VybeNeonSourceIcons';
+import { BANDCAMP_BRAND_LOGO_URL } from '@/constants/bandcamp';
 import { DOCK_CYAN, OLED_BLACK } from '@/constants/machinedTheme';
+import { hasCredentials } from '@/lib/subsonic/subsonicClient';
+import { useSubsonicStore } from '@/stores/subsonicStore';
+import { logUiTap } from '@/lib/uiTapLog';
 
 const CHIP = 140;
 
@@ -96,6 +102,11 @@ function SourceChip({
 }
 
 export function DiscoverSourceRail() {
+  const router = useRouter();
+  const credentialsRevision = useSubsonicStore((s) => s.credentialsRevision);
+  const navConfigured = hasCredentials();
+  void credentialsRevision;
+
   return (
     <View style={styles.wrap}>
       <Text style={styles.sectionTitle}>SOURCES</Text>
@@ -106,13 +117,17 @@ export function DiscoverSourceRail() {
         style={{ flexGrow: 0 }}
       >
         <SourceChip
-          label="mStream"
-          sub="Coming soon"
+          label="Navidrome"
+          sub="Self-hosted library"
           accent={DOCK_CYAN}
-          pulse
-          accessibilityLabel="mStream source"
-          cornerMark={<Text style={styles.mMark}>m</Text>}
+          pulse={!navConfigured}
+          accessibilityLabel="Navidrome library source"
+          cornerMark={<Text style={styles.mMark}>N</Text>}
           icon={<AudioWaveform size={40} color={DOCK_CYAN} strokeWidth={2.4} />}
+          onPress={() => {
+            logUiTap('Discover sources', 'open_navidrome');
+            router.push('/(app)/(tabs)/vault' as never);
+          }}
         />
         <SourceChip
           label="SoundCloud"
@@ -120,6 +135,24 @@ export function DiscoverSourceRail() {
           accent="rgba(255,255,255,0.28)"
           accessibilityLabel="SoundCloud source"
           icon={<VybeWavesNeonIcon size={52} />}
+        />
+        <SourceChip
+          label="Bandcamp"
+          sub="Tag charts · collection"
+          accent="#58A7C6"
+          accessibilityLabel="Bandcamp source"
+          cornerMark={<Text style={styles.mMark}>B</Text>}
+          icon={
+            <Image
+              source={{ uri: BANDCAMP_BRAND_LOGO_URL }}
+              style={{ width: 52, height: 28 }}
+              contentFit="contain"
+            />
+          }
+          onPress={() => {
+            logUiTap('Discover sources', 'open_bandcamp');
+            router.push('/(app)/(tabs)/vault' as never);
+          }}
         />
       </ScrollView>
     </View>

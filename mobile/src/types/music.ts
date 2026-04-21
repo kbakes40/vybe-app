@@ -6,7 +6,13 @@ export type TrackSource =
   | 'freepd'
   | 'radio_paradise'
   /** Internet radio / hi-fi relays (see `GlobalRadioClient`). */
-  | 'global_radio';
+  | 'global_radio'
+  /** Self-hosted Subsonic-compatible server (e.g., Navidrome over Cloudflare tunnel). */
+  | 'navidrome'
+  /** Internet Archive Live Music Archive (etree, FLAC only — see `archiveService`). */
+  | 'archive'
+  /** Bandcamp preview streams + fan collection (see `bandcampService`). */
+  | 'bandcamp';
 
 export interface Track {
   id: string;
@@ -67,6 +73,24 @@ export interface Track {
   globalRadioFirePulse?: 'normal' | 'max';
   /** MPNowPlaying / Dynamic Island album line (e.g. `VAULT: 80S`, `GLOBAL · NTS`). */
   globalRadioIslandAlbum?: string;
+
+  /** `archive` — Internet Archive item identifier (e.g. `gd1977-05-08.sbd.hicks.4982.sbeok.shnf`). */
+  archiveIdentifier?: string;
+  /** Concert date in `YYYY-MM-DD` form (pulled from IA `date` field). */
+  archiveDate?: string;
+  /** Venue string as recorded in IA metadata (`venue` / `coverage`). */
+  archiveVenue?: string;
+  /** Band / creator as recorded in IA metadata (`creator`). */
+  archiveCreator?: string;
+  /** FLAC filename within the IA item (for deep-links / re-resolve). */
+  archiveFilename?: string;
+  /** Pill chip text — defaults to `ARCHIVE · LIVE`. */
+  archiveDiTag?: string;
+
+  /** Bandcamp — album/track page URL for deep links / preview resolve. */
+  bandcampTralbumUrl?: string;
+  /** Purchased in fan collection — FLAC / lossless download available on Bandcamp. */
+  bandcampVaultReady?: boolean;
 }
 
 export interface RelatedTrack extends Track {

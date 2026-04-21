@@ -172,6 +172,42 @@ export function GlyphFocusCross({ size = 32, color = MUTED }: GlyphProps) {
   );
 }
 
+/** Radio — antenna + concentric broadcast arcs. */
+export function GlyphRadioBroadcast({ size = 32, color = MUTED }: GlyphProps) {
+  const w = size;
+  const h = size;
+  const cx = w / 2;
+  const cy = h * 0.6;
+  const r = w * 0.08;
+  return (
+    <Svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+      <Circle cx={cx} cy={cy} r={r} fill={color} stroke="none" />
+      <Path
+        d={`M ${cx - w * 0.2} ${cy - h * 0.02} Q ${cx} ${cy - h * 0.3} ${cx + w * 0.2} ${cy - h * 0.02}`}
+        fill="none"
+        stroke={color}
+        strokeWidth={STROKE}
+        strokeLinecap="round"
+      />
+      <Path
+        d={`M ${cx - w * 0.32} ${cy - h * 0.06} Q ${cx} ${cy - h * 0.46} ${cx + w * 0.32} ${cy - h * 0.06}`}
+        fill="none"
+        stroke={color}
+        strokeWidth={STROKE}
+        strokeLinecap="round"
+        strokeOpacity={0.7}
+      />
+      <Path
+        d={`M ${cx} ${cy - r} L ${cx} ${h * 0.12}`}
+        fill="none"
+        stroke={color}
+        strokeWidth={STROKE}
+        strokeLinecap="round"
+      />
+    </Svg>
+  );
+}
+
 /** Fast — velocity ticks. */
 export function GlyphFastVelocity({ size = 32, color = MUTED }: GlyphProps) {
   const w = size;
@@ -209,6 +245,8 @@ export function vibeChipGlyph(id: string, active: boolean) {
       return <GlyphFocusCross size={s} color={color} />;
     case 'fast':
       return <GlyphFastVelocity size={s} color={color} />;
+    case 'radio':
+      return <GlyphRadioBroadcast size={s} color={color} />;
     default:
       return <GlyphSineWave size={s} color={color} />;
   }

@@ -3,27 +3,60 @@
  *
  * - **Module key:** `NativeModules.VybeNowPlayingActivity` (spelling **Vybe**, not `Vibe`;
  *   no `Module` suffix — matches `@objc(VybeNowPlayingActivity)` in Swift).
- * - **JS entry:** `startNowPlayingActivity()` in this file calls the native selector
- *   **`startNowPlaying`** (see `VybeNowPlayingActivityModule.m`). There is **no**
- *   native method named `startNowPlayingActivity`; do not rename the Swift export
- *   without updating `RCT_EXTERN_METHOD` + this file.
+ * - **JS entry:** `startNowPlaying` = 4 args; **`updateNowPlaying`** = 6 args
+ *   (`isPlaying`, `progress`, `elapsed`, `total`, `trackName`, `artistName`).
+ *   On load we wrap the native methods to **truncate** extra args so a stale JS
+ *   chunk (e.g. still passing `albumTitle`) cannot crash the bridge against older
+ *   native binaries.
  * - **ActivityKit `VybeActivityAttributes`:** used only by **download** Live Activities
  *   (`VybeDownloadActivity`). This bridge uses **MPNowPlayingInfoCenter**, not that struct.
  */
 import { NativeModules, Platform } from 'react-native';
 import { usePillLockStore } from '@/stores/pillLockStore';
 
-const { VybeNowPlayingActivity, VybeDownloadActivity } = NativeModules as {
-  VybeNowPlayingActivity?: {
-    startNowPlaying: (...a: unknown[]) => Promise<void>;
-    updateNowPlaying: (...a: unknown[]) => void;
-    endNowPlaying: () => void;
-    terminateAllNowPlayingMetadata?: () => void;
-    /** Theme accent — persisted for native chrome / future Live Activity theming (not MPNowPlaying tint). */
-    updateAccentColor?: (hex: string) => void;
-  };
+type VybeNowPlayingActivityModule = {
+  startNowPlaying: (...a: unknown[]) => Promise<void>;
+  updateNowPlaying: (...a: unknown[]) => void;
+  endNowPlaying: () => void;
+  terminateAllNowPlayingMetadata?: () => void;
+  /** Theme accent — persisted for native chrome / future Live Activity theming (not MPNowPlaying tint). */
+  updateAccentColor?: (hex: string) => void;
+};
+
+const nmTyped = NativeModules as {
+  VybeNowPlayingActivity?: VybeNowPlayingActivityModule;
   VybeDownloadActivity?: { terminateAllActivities?: () => Promise<void> };
 };
+
+const islandArityPatchApplied = new WeakSet<object>();
+
+/** Older JS sometimes passed an extra `albumTitle` / 5th `start` arg — native rejects. */
+function patchVybeNowPlayingActivityArityOnce(): void {
+  if (Platform.OS !== 'ios') return;
+  const mod = nmTyped.VybeNowPlayingActivity as object | undefined;
+  if (!mod || islandArityPatchApplied.has(mod)) return;
+  try {
+    const m = mod as VybeNowPlayingActivityModule;
+    if (typeof m.updateNowPlaying === 'function') {
+      const rawUpdate = m.updateNowPlaying.bind(m);
+      m.updateNowPlaying = (...args: unknown[]) => {
+        void rawUpdate(...args.slice(0, 6));
+      };
+    }
+    if (typeof m.startNowPlaying === 'function') {
+      const rawStart = m.startNowPlaying.bind(m);
+      m.startNowPlaying = (...args: unknown[]) => rawStart(...args.slice(0, 4)) as Promise<void>;
+    }
+    islandArityPatchApplied.add(mod);
+  } catch {
+    /* NativeModules may be non-extensible on some builds — rely on correct call sites. */
+  }
+}
+
+patchVybeNowPlayingActivityArityOnce();
+
+const VybeNowPlayingActivity = nmTyped.VybeNowPlayingActivity;
+const VybeDownloadActivity = nmTyped.VybeDownloadActivity;
 const isAvailable = Platform.OS === 'ios' && !!VybeNowPlayingActivity;
 
 if (__DEV__ && Platform.OS === 'ios') {
@@ -59,7 +92,6 @@ let pendingUpdate: {
   duration: number;
   trackName: string;
   artistName: string;
-  albumTitle: string;
 } | null = null;
 let throttleTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -80,7 +112,6 @@ function flushThrottledUpdate() {
       p.duration,
       p.trackName,
       p.artistName,
-      p.albumTitle,
     );
   } catch {}
 }
@@ -96,7 +127,6 @@ export async function startNowPlayingActivity(
   artistName: string,
   artworkURL: string,
   duration: number,
-  albumTitle?: string,
 ): Promise<void> {
   if (!isAvailable) {
     if (__DEV__) console.log('[NowPlaying] start BLOCKED: bridge unavailable', { platform: Platform.OS, hasModule: !!VybeNowPlayingActivity });
@@ -112,7 +142,6 @@ export async function startNowPlayingActivity(
       artist: artistName,
       artLen: (artworkURL ?? '').length,
       duration,
-      album: albumTitle ?? '',
     });
   }
   try {
@@ -121,7 +150,6 @@ export async function startNowPlayingActivity(
       artistName,
       artworkURL ?? '',
       Math.max(0, duration),
-      albumTitle ?? '',
     );
     if (__DEV__) console.log('[NowPlaying] startNowPlaying OK');
   } catch (e) {
@@ -140,7 +168,6 @@ export function updateNowPlayingActivity(
   duration: number,
   trackName: string,
   artistName: string,
-  albumTitle?: string,
 ): void {
   if (!isAvailable || !isIslandSurfaceAllowed()) return;
   pendingUpdate = {
@@ -150,7 +177,6 @@ export function updateNowPlayingActivity(
     duration: Math.max(0, duration),
     trackName,
     artistName,
-    albumTitle: albumTitle ?? '',
   };
   const now = Date.now();
   if (now - lastNativeUpdateAt >= NATIVE_UPDATE_MIN_MS) {

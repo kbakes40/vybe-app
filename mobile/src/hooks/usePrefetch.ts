@@ -1,5 +1,5 @@
-import { useCallback } from 'react';
-import { useFocusEffect } from 'expo-router';
+import { useCallback, useEffect } from 'react';
+import { useNavigation } from '@react-navigation/native';
 import {
   cancelNativePrefetchQueue,
   ensurePrefetchListeners,
@@ -10,16 +10,35 @@ import type { Track } from '@/types/music';
 /**
  * Clears the native prefetch queue when the current screen loses focus
  * (e.g. user leaves Search / Discover tabs).
+ *
+ * Uses React Navigation focus/blur listeners instead of `expo-router`'s
+ * `useFocusEffect` fork — that fork has been associated with Hermes
+ * `TypeError: _b.call is not a function` when optional navigation isn't ready.
  */
 export function useCancelPrefetchOnBlur(): void {
-  useFocusEffect(
-    useCallback(() => {
+  const navigation = useNavigation();
+
+  useEffect(() => {
+    const onFocus = () => {
       ensurePrefetchListeners();
-      return () => {
-        cancelNativePrefetchQueue();
-      };
-    }, []),
-  );
+    };
+    const onBlur = () => {
+      cancelNativePrefetchQueue();
+    };
+
+    if (navigation.isFocused()) {
+      onFocus();
+    }
+
+    const unsubFocus = navigation.addListener('focus', onFocus);
+    const unsubBlur = navigation.addListener('blur', onBlur);
+
+    return () => {
+      unsubFocus();
+      unsubBlur();
+      cancelNativePrefetchQueue();
+    };
+  }, [navigation]);
 }
 
 export function usePrefetch(): {

@@ -7,6 +7,7 @@
  */
 
 import { Image } from 'react-native';
+import type { AVPlaybackStatus } from 'expo-av';
 import type { Track } from '@/types/music';
 import {
   resolveYoutubeEnvelopeForPlaybackWithBudget,
@@ -30,6 +31,110 @@ export const YOUTUBE_AV_PLAYER_HEADERS: Record<string, string> = {
 
 export function createYoutubeAvPlaybackSource(playUri: string): { uri: string; headers: Record<string, string> } {
   return { uri: playUri, headers: YOUTUBE_AV_PLAYER_HEADERS };
+}
+
+/** Match Bandcamp tag/album fetches — bcbits streams often 403 without browser-ish headers. */
+const BANDCAMP_STREAM_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+
+/**
+ * Direct `*.bcbits.com` preview URL + headers (used when backend has no
+ * `/api/bandcamp` deploy or proxy load fails with 404 / JSON body).
+ */
+export function bandcampDirectPlaybackSource(track: Track): { uri: string; headers: Record<string, string> } {
+  const stream = track.audioUrl?.trim() ?? '';
+  const tr = track.bandcampTralbumUrl?.trim();
+  let referer = 'https://bandcamp.com/';
+  let origin = 'https://bandcamp.com';
+  if (tr) {
+    try {
+      const u = new URL(tr);
+      origin = u.origin;
+      referer = `${u.origin}${u.pathname.endsWith('/') ? u.pathname : `${u.pathname}/`}`;
+    } catch {
+      /* keep defaults */
+    }
+  }
+  return {
+    uri: stream,
+    headers: {
+      'User-Agent': BANDCAMP_STREAM_UA,
+      Referer: referer,
+      Origin: origin,
+    },
+  };
+}
+
+/**
+ * Bandcamp previews: play through the Vybe backend (`/api/bandcamp/audio`) so
+ * expo-av hits our origin (Range / TLS friendly). Direct `*.bcbits.com` URLs
+ * often fail or 403 on device. Falls back to direct URL + headers if no backend.
+ */
+export function createBandcampAvPlaybackSource(
+  track: Track,
+): { uri: string; headers?: Record<string, string> } {
+  const stream = track.audioUrl?.trim() ?? '';
+  if (!stream.startsWith('http')) {
+    return { uri: stream };
+  }
+
+  const backend = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '').trim();
+  if (backend) {
+    const ref = (track.bandcampTralbumUrl ?? 'https://bandcamp.com').trim();
+    const q = new URLSearchParams();
+    q.set('url', stream);
+    q.set('ref', ref);
+    return { uri: `${backend}/api/bandcamp/audio?${q.toString()}` };
+  }
+
+  return bandcampDirectPlaybackSource(track);
+}
+
+/** Long signed bcbits URLs in a query string can exceed iOS URL limits — use POST session + short path. */
+const MAX_BANDCAMP_PROXY_URI_CHARS = 3800;
+
+/**
+ * Resolves the expo-av source for Bandcamp previews (proxy or direct). Prefer this over
+ * {@link createBandcampAvPlaybackSource} for playback so oversized proxy URLs become `/stream/:token`.
+ */
+export async function resolveBandcampAvPlaybackSourceAsync(
+  track: Track,
+): Promise<{ uri: string; headers?: Record<string, string> }> {
+  const base = createBandcampAvPlaybackSource(track);
+  if (base.headers) return base;
+  if (base.uri.length <= MAX_BANDCAMP_PROXY_URI_CHARS) return base;
+
+  const backend = (process.env.EXPO_PUBLIC_BACKEND_URL ?? '').replace(/\/$/, '').trim();
+  const stream = track.audioUrl?.trim() ?? '';
+  const ref = (track.bandcampTralbumUrl ?? 'https://bandcamp.com').trim();
+
+  try {
+    const res = await fetch(`${backend}/api/bandcamp/session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ url: stream, ref }),
+    });
+    if (!res.ok) {
+      console.warn('[Bandcamp] session POST failed', res.status);
+      return base;
+    }
+    const data = (await res.json()) as { token?: string };
+    if (!data.token || typeof data.token !== 'string') return base;
+    return { uri: `${backend}/api/bandcamp/stream/${data.token}` };
+  } catch (e) {
+    console.warn('[Bandcamp] session POST error', e);
+    return base;
+  }
+}
+
+/** Safe duration for progress UI — avoids NaN when `track.duration` is missing. */
+export function durationMillisFromPlaybackStatus(status: AVPlaybackStatus, track: Track): number {
+  if (!status.isLoaded) return 0;
+  const dm = status.durationMillis;
+  if (typeof dm === 'number' && Number.isFinite(dm) && dm > 0) return dm;
+  const td = track.duration;
+  if (typeof td === 'number' && Number.isFinite(td) && td > 0) return td * 1000;
+  return 0;
 }
 
 /**

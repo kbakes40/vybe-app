@@ -41,6 +41,9 @@ import {
 import { MachinedGradientText } from '@/components/MachinedGradientText';
 import { ShadowArtworkImage } from '@/components/ShadowArtworkImage';
 import { DiscoverSourceRail } from '@/components/discover/DiscoverSourceRail';
+import { DiscoverNavidromeRail } from '@/components/discover/DiscoverNavidromeRail';
+import { DiscoverNavidromeCollectionsRow } from '@/components/discover/DiscoverNavidromeCollectionsRow';
+import { DiscoverBandcampRail } from '@/components/discover/DiscoverBandcampRail';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
 import { useLouisOledChrome } from '@/hooks/useLouisOledChrome';
 import { DiscoveryRailSection } from '@/components/Discovery/Section';
@@ -71,10 +74,58 @@ const VIBE_CHIPS: { id: string; label: string; keywords: string[] }[] = [
   { id: 'gym', label: 'Gym', keywords: ['gym', 'workout', 'lift', 'trap', 'bass', 'power', 'energy'] },
   { id: 'late', label: 'Late Night', keywords: ['night', 'late', 'midnight', 'nocturnal', 'after dark'] },
   { id: 'focus', label: 'Focus', keywords: ['focus', 'study', 'concentration', 'instrumental', 'deep work'] },
+  { id: 'radio', label: 'Radio', keywords: [] },
 ];
 
 function ensureArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
+}
+
+/** Discover vibe chip → Bandcamp tag hub slug (`/tag/...`). */
+function bandcampTagForVibe(vibeId: string): string {
+  switch (vibeId) {
+    case 'chill':
+      return 'ambient';
+    case 'fast':
+      return 'drum-and-bass';
+    case 'phonk':
+      return 'phonk';
+    case 'gym':
+      return 'hardcore';
+    case 'late':
+      return 'lo-fi';
+    case 'focus':
+      return 'instrumental';
+    case 'radio':
+      return 'electronic';
+    case 'all':
+    default:
+      return 'electronic';
+  }
+}
+
+/** Second Bandcamp tag blended into the Discover rail (alternating with primary). */
+function bandcampMergeTagForVibe(vibeId: string): string | undefined {
+  switch (vibeId) {
+    case 'chill':
+      return 'downtempo';
+    case 'fast':
+      return 'jungle';
+    case 'phonk':
+      return 'hip-hop';
+    case 'gym':
+      return 'metal';
+    case 'late':
+      return 'jazz';
+    case 'focus':
+      return 'classical';
+    case 'radio':
+      return 'rock';
+    case 'all':
+      return 'indie';
+    default:
+      return 'indie';
+  }
 }
 
 function inferVibes(...parts: (string | undefined | null)[]): string[] {
@@ -1252,31 +1303,12 @@ function buildCrateTiles(args: {
 
   shuffleInPlace(tiles);
 
-  // Build live-radio station tiles (Radio-Browser) and interleave 1 for every
-  // 3 tracks so the feed reads as a unified "Vibe" stream.
-  const stationTiles: CrateTile[] = safeRadioStations.map((station) => {
-    const stationTrack = stationToTrack(station);
-    const firstLetter = (station.name.trim().charAt(0) || '•').toUpperCase();
-    return {
-      id: `crate-rb-${station.id}`,
-      kind: 'station',
-      title: station.name,
-      artwork: station.faviconUrl ?? '',
-      mediaHeight: squareH,
-      layoutHeight: squareH + TITLE_BLOCK,
-      vibes: inferVibes(station.name, (station.tags ?? []).join(' '), station.country),
-      badge: 'stream',
-      peekTrack: null,
-      peekQueue: [],
-      artist: firstLetter,
-      station,
-      onPress: () => {
-        logUiTap('Discover crates', 'play_radio_station');
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        void playTrack(stationTrack, [stationTrack]);
-      },
-    };
-  });
+  // Live radio stations moved to the Library tab's Radio section to de-clutter
+  // Discover. Keeping the signature stable (no interleave) so the masonry layout
+  // code below still type-checks; see components/library/LibraryRadioSection.tsx.
+  const stationTiles: CrateTile[] = [];
+  void safeRadioStations;
+  void stationToTrack;
 
   if (stationTiles.length === 0) return tiles;
 
@@ -1793,6 +1825,10 @@ export default function DiscoverScreen() {
             onPress={() => {
               logUiTap(`Vibe: ${chip.label}`, 'vibe_chip');
               void Haptics.selectionAsync();
+              if (chip.id === 'radio') {
+                router.push('/(app)/radio' as never);
+                return;
+              }
               setVibeChip(chip.id);
             }}
             style={[styles.chip, vibeChip === chip.id && styles.chipSelected]}
@@ -1848,8 +1884,21 @@ export default function DiscoverScreen() {
             ListHeaderComponent={
               <>
                 <DiscoverSourceRail />
+                <DiscoveryRailSection sectionTitle="Navidrome" actionType="horizontal_rail">
+                  <DiscoverNavidromeRail playTrack={playTrack} refreshNonce={discoverFeedNonce} />
+                </DiscoveryRailSection>
+                <DiscoveryRailSection sectionTitle="Bandcamp" actionType="horizontal_rail">
+                  <DiscoverBandcampRail
+                    tag={bandcampTagForVibe(vibeChip)}
+                    mergeTag={bandcampMergeTagForVibe(vibeChip)}
+                    refreshNonce={discoverFeedNonce}
+                  />
+                </DiscoveryRailSection>
                 <DiscoveryRailSection sectionTitle="Discover collections" actionType="horizontal_rail">
                   <DiscoverScCollectionsRow feed={scDiscoverFeed} playTrack={playTrack} />
+                </DiscoveryRailSection>
+                <DiscoveryRailSection sectionTitle="Vault collections" actionType="horizontal_rail">
+                  <DiscoverNavidromeCollectionsRow playTrack={playTrack} refreshNonce={discoverFeedNonce} />
                 </DiscoveryRailSection>
                 <DiscoveryRailSection sectionTitle="SoundCloud vault" actionType="horizontal_rail">
                   <DiscoverVaultExclusivesRail

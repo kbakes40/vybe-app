@@ -1139,7 +1139,6 @@ export default function SettingsScreen() {
                   'ForceStartPill',
                   'https://i.scdn.co/image/ab67616d00001e020f8a5c94e0b47d4bdcbe8c2a',
                   180,
-                  'Diagnostic',
                 );
                 void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
               }}

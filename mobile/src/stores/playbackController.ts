@@ -24,7 +24,10 @@ import {
 import type { YoutubeHealMeta } from '@/lib/youtubeResolvePreloadCache';
 import {
   classifySoundcloudStreamError,
+  resolveBandcampAvPlaybackSourceAsync,
+  bandcampDirectPlaybackSource,
   createYoutubeAvPlaybackSource,
+  durationMillisFromPlaybackStatus,
   extractYoutubeVideoId,
   normalizeSoundcloudTrackForPlayback,
   normalizeYoutubeTrackForPlayback,
@@ -398,6 +401,12 @@ async function autoFillQueue(seedTrack: Track, currentQueue: Track[], playNext =
 // Now Playing Live Activity update interval
 let nowPlayingInterval: ReturnType<typeof setInterval> | null = null;
 
+/** Native island bridge has no album field — fold genre / vault line into artist. */
+function artistLineForNativeIsland(track: Track): string {
+  const island = track.globalRadioIslandAlbum?.trim();
+  return island ? `${track.artist} · ${island}` : track.artist;
+}
+
 function startNowPlayingInterval() {
   stopNowPlayingInterval();
   nowPlayingInterval = setInterval(() => {
@@ -410,8 +419,7 @@ function startNowPlayingInterval() {
       progress,
       duration,
       currentTrack.title,
-      currentTrack.artist,
-      currentTrack.globalRadioIslandAlbum,
+      artistLineForNativeIsland(currentTrack),
     );
     // Update lock screen / Apple TV Now Playing info center + re-anchor
     // the native keep-alive timer so it doesn't drift. This is the main
@@ -519,8 +527,7 @@ async function refreshRadioParadiseNowPlayingIfActive(expectedTrackId: string) {
     st.progress,
     st.duration || 0,
     nextTrack.title,
-    nextTrack.artist,
-    nextTrack.globalRadioIslandAlbum,
+    artistLineForNativeIsland(nextTrack),
   );
 }
 
@@ -889,13 +896,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
     });
 
     // Start / update Now Playing Live Activity (Dynamic Island)
-    void startNowPlayingActivity(
-      track.title,
-      track.artist,
-      track.artwork ?? '',
-      track.duration || 0,
-      track.globalRadioIslandAlbum,
-    );
+    void startNowPlayingActivity(track.title, track.artist, track.artwork ?? '', track.duration || 0);
     startNowPlayingInterval();
     if (
       track.globalRadioMetadataSource === 'radioparadise_api' ||
@@ -955,7 +956,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
             if (currentTrack?.id !== track.id) return;
             if (status.isLoaded) {
               const progressSec = status.positionMillis / 1000;
-              const rawDurationSec = (status.durationMillis ?? track.duration * 1000) / 1000;
+              const rawDurationSec = durationMillisFromPlaybackStatus(status, track) / 1000;
 
               // Only override when we're confident the container lied
               // (> 1.5x real). Protects SoundCloud and non-YT downloads.
@@ -1557,7 +1558,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
             if (status.isLoaded) {
               const progressSec = status.positionMillis / 1000;
-              const durationSec = (status.durationMillis ?? track.duration * 1000) / 1000;
+              const durationSec = durationMillisFromPlaybackStatus(status, track) / 1000;
 
               set({
                 progress: progressSec,
@@ -1594,12 +1595,13 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
 
           let sound: InstanceType<typeof Audio.Sound>;
           let loadedOk = false;
+          let nativeLoadStatus: AVPlaybackStatus | undefined;
 
           if (source === 'global_radio') {
             sound = new Audio.Sound();
             soundForRepeat = sound;
             sound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
-            await sound.loadAsync(
+            nativeLoadStatus = await sound.loadAsync(
               { uri: track.audioUrl },
               {
                 shouldPlay: false,
@@ -1607,8 +1609,7 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
                 progressUpdateIntervalMillis: 500,
               },
             );
-            const st0 = await sound.getStatusAsync();
-            loadedOk = st0.isLoaded;
+            loadedOk = nativeLoadStatus.isLoaded;
             if (loadedOk) {
               const grId = track.globalRadioStationId as GlobalRadioStationId | undefined;
               const grDef = grId ? getGlobalRadioStation(grId) : null;
@@ -1625,14 +1626,81 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
               await sound.playAsync();
             }
           } else {
-            const created = await Audio.Sound.createAsync(
-              { uri: track.audioUrl },
-              { shouldPlay: true, volume: get().volume },
-              onPlaybackStatusUpdate,
-            );
-            sound = created.sound;
-            soundForRepeat = sound;
-            loadedOk = created.status.isLoaded;
+            const bandcampRemote =
+              source === 'bandcamp' &&
+              typeof track.audioUrl === 'string' &&
+              track.audioUrl.startsWith('http');
+            const playbackSource = bandcampRemote
+              ? await resolveBandcampAvPlaybackSourceAsync(track)
+              : { uri: track.audioUrl };
+
+            if (bandcampRemote) {
+              // Proxy MP3: load first (createAsync+shouldPlay often hangs until full buffer).
+              const loadBandcampIntoSound = async (
+                s: InstanceType<typeof Audio.Sound>,
+                src: { uri: string; headers?: Record<string, string> },
+              ) =>
+                s.loadAsync(src, {
+                  shouldPlay: false,
+                  volume: get().volume,
+                  progressUpdateIntervalMillis: 300,
+                });
+
+              sound = new Audio.Sound();
+              soundForRepeat = sound;
+              sound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
+              try {
+                nativeLoadStatus = await loadBandcampIntoSound(sound, playbackSource);
+                loadedOk = nativeLoadStatus.isLoaded;
+              } catch (e) {
+                if (__DEV__) console.warn('[PlaybackController] Bandcamp proxy load threw', e);
+                nativeLoadStatus = undefined;
+                loadedOk = false;
+              }
+
+              const usedVybeProxy =
+                typeof playbackSource.uri === 'string' &&
+                playbackSource.uri.includes('/api/bandcamp/');
+              const canDirectFallback =
+                usedVybeProxy &&
+                typeof track.audioUrl === 'string' &&
+                track.audioUrl.startsWith('https://') &&
+                /\.bcbits\.com\//i.test(track.audioUrl);
+
+              if (!loadedOk && canDirectFallback) {
+                await sound.unloadAsync().catch(() => {});
+                if (!isStillCurrent()) return;
+                const direct = bandcampDirectPlaybackSource(track);
+                sound = new Audio.Sound();
+                soundForRepeat = sound;
+                sound.setOnPlaybackStatusUpdate(onPlaybackStatusUpdate);
+                nativeLoadStatus = await loadBandcampIntoSound(sound, direct);
+                loadedOk = nativeLoadStatus.isLoaded;
+              }
+
+              if (!isStillCurrent()) {
+                await sound.unloadAsync().catch(() => {});
+                return;
+              }
+              if (loadedOk) {
+                await waitForNetworkAudioBufferAhead(sound, 1200, 14_000);
+                if (!isStillCurrent()) {
+                  await sound.unloadAsync().catch(() => {});
+                  return;
+                }
+                await sound.playAsync();
+              }
+            } else {
+              const created = await Audio.Sound.createAsync(
+                playbackSource,
+                { shouldPlay: true, volume: get().volume },
+                onPlaybackStatusUpdate,
+              );
+              sound = created.sound;
+              soundForRepeat = sound;
+              nativeLoadStatus = created.status;
+              loadedOk = created.status.isLoaded;
+            }
           }
 
           if (!isStillCurrent()) {
@@ -1644,8 +1712,18 @@ export const usePlaybackController = create<PlaybackControllerState>((set, get) 
             vybeSound = sound;
             set({ playbackState: 'playing' });
           } else {
-            console.error('[PlaybackController] Audio failed to load (global_radio or native)');
-            set({ playbackState: 'error', error: 'Failed to load audio' });
+            const nativeErr =
+              nativeLoadStatus &&
+              !nativeLoadStatus.isLoaded &&
+              'error' in nativeLoadStatus &&
+              nativeLoadStatus.error
+                ? nativeLoadStatus.error
+                : '';
+            console.error('[PlaybackController] Audio failed to load', nativeErr || '(no native error string)');
+            set({
+              playbackState: 'error',
+              error: nativeErr ? `Failed to load audio: ${nativeErr}` : 'Failed to load audio',
+            });
           }
         } else {
           console.error('[PlaybackController] No audioUrl for track:', track.id);

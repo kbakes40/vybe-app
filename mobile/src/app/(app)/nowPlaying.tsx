@@ -528,7 +528,9 @@ function NowPlayingScrubberRow() {
           </Animated.View>
         </View>
       </GestureDetector>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 }}>
+      {/* +2pt breathing room over the scrubber — OLED crisps the timecode at
+          the expense of proximity to the fill bar, so give it a touch more air. */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
         <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>
           {formatDuration(Math.floor(displayProgress))}
         </Text>
@@ -826,6 +828,15 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
     if (__DEV__) {
       console.log('[NowPlaying] center button', { willPause: shouldPause, source: currentSource, playbackState });
     }
+    // GLOBAL_RADIO_RETRY — when the stream errored out (dead host / -1003,
+    // tunnel down, transient network), `play()` just tries to resume the
+    // failed AVPlayerItem and is effectively a no-op. Fully re-init via
+    // `playTrack` so the center button becomes a real retry instead of a
+    // dead tap. Same behavior the user gets by re-tapping the card.
+    if (isError && currentTrack) {
+      await playTrack(currentTrack, queue.length > 0 ? queue : [currentTrack]);
+      return;
+    }
     if (shouldPause) {
       await pause();
     } else {
@@ -993,11 +1004,14 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                 /* YouTube Music — 16:9 for thumbnails (crops letterbox), square for album art */
                 <Animated.View
                   style={[ARTWORK_STATIC_STYLE, {
+                    // BACKLIGHT — subtle cyan halo (opacity 0.3 / radius 15) so
+                    // the artwork reads as the hero, not the glow. Previous
+                    // 0.92/34 made the frame feel like a spotlight.
                     shadowColor: MACHINED_BLUE,
                     shadowOffset: { width: 0, height: 0 },
-                    shadowOpacity: 0.92,
-                    shadowRadius: 34,
-                    elevation: 26,
+                    shadowOpacity: 0.3,
+                    shadowRadius: 15,
+                    elevation: 12,
                     borderRadius: ARTWORK_OUTER_RADIUS,
                     borderWidth: 1,
                     borderColor: ARTWORK_EDGE,
@@ -1033,9 +1047,9 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                   style={[ARTWORK_STATIC_STYLE, {
                     shadowColor: MACHINED_BLUE,
                     shadowOffset: { width: 0, height: 0 },
-                    shadowOpacity: 0.92,
-                    shadowRadius: 34,
-                    elevation: 26,
+                    shadowOpacity: 0.3,
+                    shadowRadius: 15,
+                    elevation: 12,
                     borderRadius: ARTWORK_OUTER_RADIUS,
                     borderWidth: 1,
                     borderColor: ARTWORK_EDGE,
@@ -1049,9 +1063,9 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                   style={[ARTWORK_STATIC_STYLE, {
                     shadowColor: MACHINED_BLUE,
                     shadowOffset: { width: 0, height: 0 },
-                    shadowOpacity: 0.92,
-                    shadowRadius: 34,
-                    elevation: 26,
+                    shadowOpacity: 0.3,
+                    shadowRadius: 15,
+                    elevation: 12,
                     borderRadius: ARTWORK_OUTER_RADIUS,
                     borderWidth: 1,
                     borderColor: ARTWORK_EDGE,
@@ -1087,9 +1101,9 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                   style={[ARTWORK_STATIC_STYLE, {
                     shadowColor: MACHINED_BLUE,
                     shadowOffset: { width: 0, height: 0 },
-                    shadowOpacity: 0.9,
-                    shadowRadius: 32,
-                    elevation: 22,
+                    shadowOpacity: 0.3,
+                    shadowRadius: 15,
+                    elevation: 12,
                     borderRadius: ARTWORK_OUTER_RADIUS,
                     borderWidth: 1,
                     borderColor: ARTWORK_EDGE,
@@ -1276,7 +1290,9 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
               <View style={{ marginBottom: sheetLayout ? 100 : 0 }}>
                 <NowPlayingScrubberRow />
 
-                {/* Controls */}
+                {/* Controls — MACHINED_TRANSPORT: satellite icons share the
+                    DOCK_CYAN stroke for a unified engineered look. Active
+                    shuffle/repeat flip to purple so state is still legible. */}
                 <View className="flex-row items-center justify-between mt-4">
                   <Pressable
                     onPress={() => {
@@ -1285,11 +1301,15 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                     }}
                     className="p-3"
                   >
-                    <Shuffle size={24} color={isShuffled ? '#8B5CF6' : '#fff'} />
+                    <Shuffle
+                      size={24}
+                      color={isShuffled ? '#8B5CF6' : MACHINED_BLUE}
+                      strokeWidth={2.2}
+                    />
                   </Pressable>
 
                   <Pressable onPress={previous} className="p-3">
-                    <SkipBack size={32} color="#fff" fill="#fff" />
+                    <SkipBack size={32} color={MACHINED_BLUE} fill={MACHINED_BLUE} strokeWidth={2.2} />
                   </Pressable>
 
                   <View style={{ width: 88, height: 88, alignItems: 'center', justifyContent: 'center' }}>
@@ -1371,7 +1391,7 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                   </View>
 
                   <Pressable onPress={handleSkip} className="p-3">
-                    <SkipForward size={32} color="#fff" fill="#fff" />
+                    <SkipForward size={32} color={MACHINED_BLUE} fill={MACHINED_BLUE} strokeWidth={2.2} />
                   </Pressable>
 
                   <Pressable
@@ -1382,14 +1402,19 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                     className="p-3"
                   >
                     {repeatMode === 'one' ? (
-                      <Repeat1 size={24} color='#8B5CF6' />
+                      <Repeat1 size={24} color='#8B5CF6' strokeWidth={2.2} />
                     ) : (
-                      <Repeat size={24} color={repeatMode === 'all' ? '#8B5CF6' : '#fff'} />
+                      <Repeat
+                        size={24}
+                        color={repeatMode === 'all' ? '#8B5CF6' : MACHINED_BLUE}
+                        strokeWidth={2.2}
+                      />
                     )}
                   </Pressable>
                 </View>
 
-                {/* Bottom Actions — icon cells share height so Queue / AirPlay / Share stay vertically aligned */}
+                {/* Bottom Actions — strict 24pt grid so Queue / AirPlay / Share
+                    sit on a shared horizontal baseline inside their 48pt cells. */}
                 <View className="flex-row items-center justify-between mt-6">
                   <Pressable
                     style={nowPlayingChromeStyles.bottomIconCell}
@@ -1401,7 +1426,7 @@ export function NowPlayingScreenContent({ sheetLayout = false }: { sheetLayout?:
                     style={nowPlayingChromeStyles.bottomIconCell}
                     onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); showRoutePicker(); }}
                   >
-                    <Airplay size={22} color="#fff" />
+                    <Airplay size={24} color="#fff" />
                   </Pressable>
                   <Pressable style={nowPlayingChromeStyles.bottomIconCell} onPress={handleShareTrack}>
                     <Share2 size={24} color="#fff" />

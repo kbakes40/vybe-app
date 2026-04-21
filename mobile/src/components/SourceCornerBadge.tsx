@@ -7,7 +7,9 @@ export type SourceCornerBadgeSource =
   | 'youtube_music'
   | 'youtube'
   | 'vybe'
-  | 'stream';
+  | 'stream'
+  | 'navidrome'
+  | 'bandcamp';
 
 type Props = { source?: SourceCornerBadgeSource | string; compact?: boolean };
 
@@ -92,6 +94,24 @@ export function SourceCornerBadge({ source, compact }: Props) {
     return (
       <GlassBadgeShell compact={compact}>
         <Text style={{ ...textStyle, letterSpacing: compact ? 0.45 : 0.65 }}>STREAM</Text>
+      </GlassBadgeShell>
+    );
+  }
+  if (s === 'navidrome') {
+    return (
+      <GlassBadgeShell compact={compact}>
+        <Text style={{ ...textStyle, letterSpacing: compact ? 0.5 : 0.65, color: '#A5F3FC' }}>
+          {compact ? 'ND' : 'VAULT'}
+        </Text>
+      </GlassBadgeShell>
+    );
+  }
+  if (s === 'bandcamp') {
+    return (
+      <GlassBadgeShell compact={compact}>
+        <Text style={{ ...textStyle, letterSpacing: compact ? 0.45 : 0.55, color: '#58A7C6' }}>
+          {compact ? 'BC' : 'BC'}
+        </Text>
       </GlassBadgeShell>
     );
   }

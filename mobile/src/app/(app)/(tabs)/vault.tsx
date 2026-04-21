@@ -51,9 +51,17 @@ import { ShadowArtworkImage } from '@/components/ShadowArtworkImage';
 import { useFastVerticalScrollMotion } from '@/hooks/useFastScrollMotion';
 import { MachinedGradientText } from '@/components/MachinedGradientText';
 import { VaultImportCard } from '@/components/VaultImportCard';
-import { VIBRANT_BLUE, GRAPHITE_GREY } from '@/constants/machinedTheme';
+import { VIBRANT_BLUE, GRAPHITE_GREY, DOCK_CYAN } from '@/constants/machinedTheme';
 import { tabScreenContentContainerPaddingBottom } from '@/constants/Layout';
 import { useLouisOledChrome } from '@/hooks/useLouisOledChrome';
+import { LibraryConnectionBadge } from '@/components/library/LibraryConnectionBadge';
+import { NavidromeConnectModal } from '@/components/library/NavidromeConnectModal';
+import { hasCredentials } from '@/lib/subsonic/subsonicClient';
+import { useSubsonicStore } from '@/stores/subsonicStore';
+import { LibraryRadioSection } from '@/components/library/LibraryRadioSection';
+import { LibraryNavidromeSection } from '@/components/library/LibraryNavidromeSection';
+import { LibraryBandcampSection } from '@/components/library/LibraryBandcampSection';
+import { GenreBroadcastTowerIcon } from '@/components/genre/GenreBroadcastTowerIcon';
 
 const TRACK_TITLE_MACHINED: TextStyle = {
   color: VIBRANT_BLUE,
@@ -320,6 +328,9 @@ export default function LibraryScreen() {
   const [playlistName, setPlaylistName] = useState('');
   const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set());
   const [trackSearchQuery, setTrackSearchQuery] = useState('');
+  const [showNavidromeConnect, setShowNavidromeConnect] = useState(false);
+  const navCredentialsRevision = useSubsonicStore((s) => s.credentialsRevision);
+  const isNavidromeConfigured = useMemo(() => hasCredentials(), [navCredentialsRevision]);
   const likedTracks = usePlaybackController(s => s.likedTracks);
   const playTrack = usePlaybackController(s => s.playTrack);
   const currentTrack = usePlaybackController(s => s.currentTrack);
@@ -797,7 +808,9 @@ export default function LibraryScreen() {
 
   const libraryHomeListHeader = (
     <View>
-      {/* Full-width Liked Songs hero */}
+      {/* Full-width Liked Songs hero — top slot in the library home stack so
+          the user's personal collection is the first thing they see, with
+          Global Radio + live stations slotting in beneath. */}
       <View style={{ paddingHorizontal: 16, marginTop: 6 }}>
         <Pressable
           onPress={() => {
@@ -876,6 +889,92 @@ export default function LibraryScreen() {
           </LinearGradient>
         </Pressable>
       </View>
+
+      {/* Full-width Global Radio hero — sibling to Liked Songs, cyan-themed
+          so it reads as the "broadcast" counterpart. Routes to the Global
+          Radio screen; the live-stations rail below deep-links to specific
+          Radio-Browser stations. */}
+      <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
+        <Pressable
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            router.push('/(app)/radio' as never);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Open Global Radio"
+        >
+          <LinearGradient
+            colors={['rgba(0,229,255,0.16)', '#000000']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={{
+              borderRadius: 16,
+              borderWidth: 1,
+              borderColor: 'rgba(0,229,255,0.28)',
+              paddingVertical: 22,
+              paddingHorizontal: 18,
+              flexDirection: 'row',
+              alignItems: 'center',
+            }}
+          >
+            <View
+              style={{
+                width: 72,
+                height: 72,
+                borderRadius: 18,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: 'rgba(0,0,0,0.45)',
+                shadowColor: DOCK_CYAN,
+                shadowOffset: { width: 0, height: 0 },
+                shadowOpacity: 0.55,
+                shadowRadius: 12,
+                elevation: 8,
+              }}
+            >
+              <GenreBroadcastTowerIcon size={40} color={DOCK_CYAN} strokeWidth={1.85} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 16 }}>
+              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 20, letterSpacing: -0.35 }}>
+                Global Radio
+              </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginTop: 5 }}>
+                Live stations · worldwide
+              </Text>
+            </View>
+            <View
+              style={{
+                marginLeft: 8,
+                width: 54,
+                height: 54,
+                borderRadius: 27,
+                overflow: 'hidden',
+                borderWidth: 1,
+                borderColor: 'rgba(0,229,255,0.35)',
+                backgroundColor: '#000000',
+              }}
+            >
+              <View
+                style={{
+                  flex: 1,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: 'rgba(0,229,255,0.18)',
+                }}
+              >
+                <Play size={22} color={DOCK_CYAN} fill={DOCK_CYAN} style={{ marginLeft: 3 }} />
+              </View>
+            </View>
+          </LinearGradient>
+        </Pressable>
+      </View>
+
+      {/* Horizontal rail of live stations — kept as a separate "Radio"
+          category beneath the Global Radio hero so the user can tap into a
+          specific station without going through the /radio screen. */}
+      <LibraryRadioSection />
+      <LibraryNavidromeSection />
+      <LibraryBandcampSection />
 
       {suggestedYtm.length > 0 ? (
         <View style={{ marginTop: 22 }}>
@@ -1241,6 +1340,27 @@ export default function LibraryScreen() {
                 <Plus size={26} color="#fff" />
               </Pressable>
             </View>
+
+            <LibraryConnectionBadge />
+
+            {!isNavidromeConfigured ? (
+              <Pressable
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  setShowNavidromeConnect(true);
+                }}
+                style={{ marginTop: 4, marginBottom: 6, paddingVertical: 8, paddingHorizontal: 4 }}
+              >
+                <Text style={{ color: DOCK_CYAN, fontWeight: '800', fontSize: 13 }}>Connect Navidrome</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.48)', fontSize: 12, fontWeight: '600', marginTop: 2 }}>
+                  Add your server URL on this device (no env tab needed)
+                </Text>
+              </Pressable>
+            ) : null}
+            <NavidromeConnectModal
+              visible={showNavidromeConnect}
+              onDismiss={() => setShowNavidromeConnect(false)}
+            />
 
             <ScrollView
               horizontal

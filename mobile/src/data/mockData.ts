@@ -556,6 +556,7 @@ export const categories: Category[] = [
   { id: 'c8', name: 'Lo-Fi', gradientColors: ['#14B8A6', '#10B981'] },
   { id: 'c9', name: 'AI Sounds', gradientColors: ['#8B5CF6', '#3B82F6'] },
   { id: 'c10', name: 'Throwbacks', gradientColors: ['#F472B6', '#FB923C'] },
+  { id: 'c11', name: 'Global Radio', gradientColors: ['#0891B2', '#00E5FF'] },
 ];
 
 export const getTrackById = (id: string): Track | undefined => {
